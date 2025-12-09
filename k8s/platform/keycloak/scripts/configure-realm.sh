@@ -1,0 +1,236 @@
+#!/bin/bash
+set -e
+
+# Keycloak Realm Configuration Script
+# Creates the agent-sandbox realm with Boundary client and demo users
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
+ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
+ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin123!@#}"
+
+# Realm configuration
+REALM_NAME="agent-sandbox"
+CLIENT_ID="boundary"
+CLIENT_SECRET="boundary-client-secret-change-me"
+
+# Boundary redirect URIs (update with your Boundary URLs)
+BOUNDARY_URL="${BOUNDARY_URL:-http://localhost:9200}"
+REDIRECT_URIS="[\"${BOUNDARY_URL}/v1/auth-methods/oidc:authenticate:callback\"]"
+
+echo "========================================="
+echo "Configuring Keycloak Realm"
+echo "========================================="
+echo ""
+echo "Keycloak URL: ${KEYCLOAK_URL}"
+echo "Realm: ${REALM_NAME}"
+echo "Client ID: ${CLIENT_ID}"
+echo ""
+
+# Check if jq is available
+if ! command -v jq &> /dev/null; then
+    echo "Warning: jq is not installed. Install it for better output formatting."
+fi
+
+# Function to get admin token
+get_admin_token() {
+    echo "Authenticating as admin..."
+    local response
+    response=$(curl -s -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=${ADMIN_USER}" \
+        -d "password=${ADMIN_PASS}" \
+        -d "grant_type=password" \
+        -d "client_id=admin-cli")
+
+    if command -v jq &> /dev/null; then
+        echo "$response" | jq -r '.access_token'
+    else
+        echo "$response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4
+    fi
+}
+
+# Get admin token
+echo "1. Obtaining admin access token..."
+ACCESS_TOKEN=$(get_admin_token)
+
+if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+    echo "Error: Failed to obtain access token"
+    echo "Please ensure:"
+    echo "  1. Keycloak is running and accessible at ${KEYCLOAK_URL}"
+    echo "  2. Admin credentials are correct"
+    echo "  3. Port-forwarding is active: kubectl port-forward -n keycloak svc/keycloak 8080:8080"
+    exit 1
+fi
+
+echo "Successfully authenticated!"
+echo ""
+
+# Create realm
+echo "2. Creating realm: ${REALM_NAME}..."
+curl -s -X POST "${KEYCLOAK_URL}/admin/realms" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"realm\": \"${REALM_NAME}\",
+        \"enabled\": true,
+        \"displayName\": \"Agent Sandbox Platform\",
+        \"loginTheme\": \"keycloak\",
+        \"accessTokenLifespan\": 3600,
+        \"ssoSessionIdleTimeout\": 1800,
+        \"ssoSessionMaxLifespan\": 36000
+    }" || echo "Realm may already exist"
+
+echo "Realm created/updated!"
+echo ""
+
+# Create Boundary OIDC client
+echo "3. Creating OIDC client: ${CLIENT_ID}..."
+curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"clientId\": \"${CLIENT_ID}\",
+        \"name\": \"Boundary OIDC Client\",
+        \"description\": \"OIDC client for HashiCorp Boundary authentication\",
+        \"enabled\": true,
+        \"protocol\": \"openid-connect\",
+        \"publicClient\": false,
+        \"directAccessGrantsEnabled\": false,
+        \"standardFlowEnabled\": true,
+        \"implicitFlowEnabled\": false,
+        \"serviceAccountsEnabled\": false,
+        \"authorizationServicesEnabled\": false,
+        \"redirectUris\": ${REDIRECT_URIS},
+        \"webOrigins\": [\"${BOUNDARY_URL}\"],
+        \"attributes\": {
+            \"access.token.lifespan\": \"3600\",
+            \"client.secret.creation.time\": \"$(date +%s)\"
+        }
+    }" || echo "Client may already exist"
+
+echo "OIDC client created/updated!"
+echo ""
+
+# Get client UUID for setting secret
+echo "4. Setting client secret..."
+CLIENT_UUID=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r '.[0].id')
+
+if [ -n "$CLIENT_UUID" ] && [ "$CLIENT_UUID" != "null" ]; then
+    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\": \"secret\", \"value\": \"${CLIENT_SECRET}\"}"
+    echo "Client secret set!"
+else
+    echo "Warning: Could not retrieve client UUID to set secret"
+fi
+
+echo ""
+
+# Create groups
+echo "5. Creating user groups..."
+for group in "admins" "developers" "readonly"; do
+    echo "  - Creating group: ${group}"
+    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"name\": \"${group}\"
+        }" || echo "    Group may already exist"
+done
+
+echo "Groups created!"
+echo ""
+
+# Create demo users
+echo "6. Creating demo users..."
+
+# Helper function to create user
+create_user() {
+    local username=$1
+    local email=$2
+    local first_name=$3
+    local last_name=$4
+    local password=$5
+    local group=$6
+
+    echo "  - Creating user: ${email}"
+
+    # Create user
+    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"username\": \"${username}\",
+            \"email\": \"${email}\",
+            \"firstName\": \"${first_name}\",
+            \"lastName\": \"${last_name}\",
+            \"enabled\": true,
+            \"emailVerified\": true
+        }" 2>&1 | grep -q "409" && echo "    User already exists" || true
+
+    # Get user ID
+    local user_id
+    user_id=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?username=${username}" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r '.[0].id')
+
+    if [ -n "$user_id" ] && [ "$user_id" != "null" ]; then
+        # Set password
+        curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/reset-password" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"type\": \"password\",
+                \"value\": \"${password}\",
+                \"temporary\": false
+            }"
+
+        # Add to group
+        local group_id
+        group_id=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r ".[] | select(.name==\"${group}\") | .id")
+
+        if [ -n "$group_id" ] && [ "$group_id" != "null" ]; then
+            curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/groups/${group_id}" \
+                -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+                -H "Content-Type: application/json"
+        fi
+
+        echo "    User configured successfully!"
+    fi
+}
+
+# Create users with different roles
+create_user "admin" "admin@example.com" "Admin" "User" "Admin123!@#" "admins"
+create_user "developer" "developer@example.com" "Developer" "User" "Dev123!@#" "developers"
+create_user "readonly" "readonly@example.com" "ReadOnly" "User" "Read123!@#" "readonly"
+
+echo ""
+echo "========================================="
+echo "Configuration Complete!"
+echo "========================================="
+echo ""
+echo "Realm: ${REALM_NAME}"
+echo "Realm URL: ${KEYCLOAK_URL}/realms/${REALM_NAME}"
+echo ""
+echo "OIDC Configuration:"
+echo "  Client ID: ${CLIENT_ID}"
+echo "  Client Secret: ${CLIENT_SECRET}"
+echo "  Issuer: ${KEYCLOAK_URL}/realms/${REALM_NAME}"
+echo "  Authorization Endpoint: ${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/auth"
+echo "  Token Endpoint: ${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/token"
+echo "  UserInfo Endpoint: ${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/userinfo"
+echo "  JWKS URI: ${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/certs"
+echo ""
+echo "Demo Users:"
+echo "  admin@example.com / Admin123!@# (admins group)"
+echo "  developer@example.com / Dev123!@# (developers group)"
+echo "  readonly@example.com / Read123!@# (readonly group)"
+echo ""
+echo "Next Steps:"
+echo "  1. Configure Boundary OIDC auth method with above credentials"
+echo "  2. Test login with demo users"
+echo "  3. Update CLIENT_SECRET in production deployments"
+echo ""

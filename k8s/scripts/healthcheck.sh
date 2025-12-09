@@ -222,6 +222,49 @@ else
     check_fail "Boundary worker status: $BOUNDARY_WORKER_STATUS"
 fi
 
+# Check OIDC auth method if Boundary is running
+if [[ "$BOUNDARY_CTRL_STATUS" == "Running" ]]; then
+    RECOVERY_KEY=$(kubectl get secret boundary-kms-keys -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.data.BOUNDARY_RECOVERY_KEY}' 2>/dev/null | base64 -d || echo "")
+    CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+    if [[ -n "$RECOVERY_KEY" ]] && [[ -n "$CONTROLLER_POD" ]]; then
+        # Get org scope ID
+        ORG_ID=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
+            env BOUNDARY_ADDR=http://127.0.0.1:9200 \
+            boundary scopes list -format=json \
+            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | \
+            jq -r '.items[] | select(.name=="DevOps") | .id' 2>/dev/null || echo "")
+
+        if [[ -n "$ORG_ID" ]]; then
+            # Check for OIDC auth method
+            OIDC_AUTH=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
+                env BOUNDARY_ADDR=http://127.0.0.1:9200 \
+                boundary auth-methods list -scope-id="$ORG_ID" -format=json \
+                -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | \
+                jq -r '.items[] | select(.type=="oidc") | .id' 2>/dev/null || echo "")
+
+            if [[ -n "$OIDC_AUTH" ]]; then
+                check_pass "Boundary OIDC auth method configured"
+
+                # Check managed groups
+                MANAGED_GROUPS=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
+                    env BOUNDARY_ADDR=http://127.0.0.1:9200 \
+                    boundary managed-groups list -auth-method-id="$OIDC_AUTH" -format=json \
+                    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | \
+                    jq -r '.items | length' 2>/dev/null || echo "0")
+
+                if [[ "$MANAGED_GROUPS" -ge 3 ]]; then
+                    check_pass "Boundary managed groups configured ($MANAGED_GROUPS groups)"
+                else
+                    check_warn "Boundary managed groups incomplete (found $MANAGED_GROUPS, expected 3)"
+                fi
+            else
+                check_warn "Boundary OIDC auth not configured (run configure-oidc-auth.sh)"
+            fi
+        fi
+    fi
+fi
+
 # ==========================================
 # Vault Secrets Operator
 # ==========================================
