@@ -1,0 +1,51 @@
+==========================================
+  Agent Sandbox Platform Healthcheck
+==========================================
+
+Checking all platform components...
+
+--- Kubernetes Cluster ---
+✅ PASS: Kubernetes cluster reachable
+
+--- Agent Sandbox (DevEnv) ---
+✅ PASS: Namespace 'devenv' exists
+✅ PASS: Sandbox CR 'claude-code-sandbox' exists
+✅ PASS: Sandbox pod 'claude-code-sandbox' running
+✅ PASS: Claude Code installed (2.0.62 (Claude Code))
+✅ PASS: Terraform installed (1.13.5)
+✅ PASS: TFE_TOKEN environment variable set
+✅ PASS: GITHUB_TOKEN set from Vault
+
+--- HashiCorp Vault ---
+✅ PASS: Namespace 'vault' exists
+✅ PASS: Vault pod running
+✅ PASS: Vault unsealed and ready
+✅ PASS: KV secrets engine enabled
+✅ PASS: SSH secrets engine enabled
+ℹ️  INFO: Terraform secrets engine not configured (optional - static TFE_TOKEN used via KV)
+
+--- HashiCorp Boundary ---
+✅ PASS: Namespace 'boundary' exists
+✅ PASS: Boundary controller running
+✅ PASS: Boundary worker running
+
+--- Vault Secrets Operator ---
+✅ PASS: Namespace 'vault-secrets-operator-system' exists
+✅ PASS: VSO controller manager running
+✅ PASS: VaultConnection is valid
+✅ PASS: Vault secrets synced to devenv namespace
+
+--- Secrets and Certificates ---
+✅ PASS: Vault SSH CA secret exists
+✅ PASS: Vault TLS CA secret exists
+ℹ️  INFO: TFE dynamic token not configured (optional - static TFE_TOKEN used via KV)
+
+==========================================
+  Healthcheck Summary
+==========================================
+
+Passed: 22
+Warnings: 0
+Failed: 0
+
+HEALTH: HEALTHY - All systems operational

@@ -98,8 +98,12 @@ else
     check_fail "Sandbox pod status: $SANDBOX_POD_STATUS"
 fi
 
-# Check Claude Code installation
-if kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- which claude &>/dev/null; then
+# Check Claude Code installation (npm global bin may not be in PATH for kubectl exec)
+CLAUDE_BIN="/usr/local/share/npm-global/bin/claude"
+if kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- test -x "$CLAUDE_BIN" &>/dev/null; then
+    CLAUDE_VERSION=$(kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- "$CLAUDE_BIN" --version 2>/dev/null || echo "unknown")
+    check_pass "Claude Code installed ($CLAUDE_VERSION)"
+elif kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- which claude &>/dev/null; then
     CLAUDE_VERSION=$(kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- claude --version 2>/dev/null || echo "unknown")
     check_pass "Claude Code installed ($CLAUDE_VERSION)"
 else
