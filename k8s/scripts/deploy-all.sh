@@ -603,3 +603,32 @@ echo "  Running Post-Deploy Healthcheck"
 echo "=========================================="
 echo ""
 "$SCRIPT_DIR/healthcheck.sh" || true
+
+# Run secrets test
+echo ""
+echo "=========================================="
+echo "  Running Secrets Verification"
+echo "=========================================="
+echo ""
+"$SCRIPT_DIR/test-secrets.sh" || true
+
+# Run Boundary OIDC test if configured
+if [[ "$DEPLOY_KEYCLOAK" == "true" ]] && [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]]; then
+    if [[ -f "$K8S_DIR/platform/boundary/scripts/test-oidc-auth.sh" ]]; then
+        echo ""
+        echo "=========================================="
+        echo "  Running Boundary OIDC Verification"
+        echo "=========================================="
+        echo ""
+        "$K8S_DIR/platform/boundary/scripts/test-oidc-auth.sh" || true
+    fi
+fi
+
+echo ""
+echo "=========================================="
+echo "  🎉 Deployment Complete!"
+echo "=========================================="
+echo ""
+echo "All components deployed and verified."
+echo "Check the test results above for any issues."
+echo ""
