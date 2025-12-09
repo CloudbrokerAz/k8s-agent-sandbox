@@ -282,8 +282,83 @@ run_boundary targets add-host-sources \
 echo "✅ Added host set to target"
 
 echo ""
-echo "Step 9: Create Role for Admin"
-echo "-----------------------------"
+echo "Step 9: Configure Vault SSH Credential Brokering"
+echo "------------------------------------------------"
+
+# Check if Vault is available and SSH engine is configured
+VAULT_NAMESPACE="${VAULT_NAMESPACE:-vault}"
+VAULT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+
+if [[ -n "$VAULT_TOKEN" ]]; then
+    # Check if Vault SSH engine is enabled
+    SSH_ENGINE=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_TOKEN' vault secrets list -format=json" 2>/dev/null | jq -r '."ssh/"' || echo "")
+
+    if [[ -n "$SSH_ENGINE" ]] && [[ "$SSH_ENGINE" != "null" ]]; then
+        echo "✅ Vault SSH secrets engine detected"
+
+        # Get Vault address for Boundary to reach
+        VAULT_SVC="http://vault.vault.svc.cluster.local:8200"
+
+        # Create Vault credential store
+        CRED_STORE_RESULT=$(run_boundary credential-stores create vault \
+            -name="vault-creds" \
+            -description="Vault credential store for SSH certificates" \
+            -scope-id="$PROJECT_ID" \
+            -vault-address="$VAULT_SVC" \
+            -vault-token="$VAULT_TOKEN" \
+            -format=json \
+            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+
+        CRED_STORE_ID=$(echo "$CRED_STORE_RESULT" | jq -r '.item.id // empty')
+        if [[ -n "$CRED_STORE_ID" ]]; then
+            echo "✅ Created Vault credential store ($CRED_STORE_ID)"
+
+            # Create SSH certificate credential library
+            CRED_LIB_RESULT=$(run_boundary credential-libraries create vault-ssh-certificate \
+                -name="ssh-certs" \
+                -description="Vault SSH certificate signing" \
+                -credential-store-id="$CRED_STORE_ID" \
+                -vault-path="ssh/sign/devenv-access" \
+                -username="node" \
+                -key-type="ed25519" \
+                -format=json \
+                -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+
+            CRED_LIB_ID=$(echo "$CRED_LIB_RESULT" | jq -r '.item.id // empty')
+            if [[ -n "$CRED_LIB_ID" ]]; then
+                echo "✅ Created SSH certificate credential library ($CRED_LIB_ID)"
+
+                # Add credential brokering to SSH target
+                run_boundary targets add-credential-sources \
+                    -id="$TARGET_ID" \
+                    -brokered-credential-source="$CRED_LIB_ID" \
+                    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
+                echo "✅ Attached SSH credentials to target (brokered)"
+
+                VAULT_SSH_CONFIGURED="true"
+            else
+                echo "⚠️  Failed to create SSH credential library"
+                VAULT_SSH_CONFIGURED="false"
+            fi
+        else
+            echo "⚠️  Failed to create Vault credential store"
+            echo "   (This may be due to network policy or Vault token issues)"
+            VAULT_SSH_CONFIGURED="false"
+        fi
+    else
+        echo "ℹ️  Vault SSH secrets engine not enabled"
+        echo "   Run: ./platform/vault/scripts/configure-ssh-engine.sh"
+        VAULT_SSH_CONFIGURED="false"
+    fi
+else
+    echo "ℹ️  Vault token not found - skipping credential brokering"
+    echo "   (SSH access will work with manual authentication)"
+    VAULT_SSH_CONFIGURED="false"
+fi
+
+echo ""
+echo "Step 10: Create Role for Admin"
+echo "------------------------------"
 
 # Create admin role in project scope
 ROLE_RESULT=$(run_boundary roles create \
@@ -324,12 +399,15 @@ Password:       $ADMIN_PASSWORD
   Configuration IDs
 ==========================================
 
-Organization:   $ORG_ID
-Project:        $PROJECT_ID
-Host Catalog:   $CATALOG_ID
-Host:           $HOST_ID
-Host Set:       $HOSTSET_ID
-Target (SSH):   $TARGET_ID
+Organization:       $ORG_ID
+Project:            $PROJECT_ID
+Host Catalog:       $CATALOG_ID
+Host:               $HOST_ID
+Host Set:           $HOSTSET_ID
+Target (SSH):       $TARGET_ID
+Credential Store:   ${CRED_STORE_ID:-not configured}
+Credential Library: ${CRED_LIB_ID:-not configured}
+Vault SSH:          ${VAULT_SSH_CONFIGURED:-false}
 
 ==========================================
   Usage
@@ -355,9 +433,9 @@ Target (SSH):   $TARGET_ID
 EOF
 chmod 600 "$CREDS_FILE"
 
-# Step 10: Optionally configure OIDC if Keycloak is available
+# Step 11: Optionally configure OIDC if Keycloak is available
 echo ""
-echo "Step 10: Check for Keycloak (Optional OIDC)"
+echo "Step 11: Check for Keycloak (Optional OIDC)"
 echo "-------------------------------------------"
 
 KEYCLOAK_STATUS=$(kubectl get pod -l app=keycloak -n keycloak -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")

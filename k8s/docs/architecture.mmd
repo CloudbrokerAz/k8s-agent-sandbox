@@ -1,0 +1,129 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#326CE5', 'primaryTextColor': '#fff', 'primaryBorderColor': '#326CE5', 'lineColor': '#326CE5', 'secondaryColor': '#006BFF', 'tertiaryColor': '#fff'}}}%%
+flowchart TB
+    subgraph External["External Access"]
+        User["User<br/>(Developer)"]
+        VSCode["VS Code<br/>Remote SSH"]
+        BoundaryCLI["Boundary CLI"]
+        VaultCLI["Vault CLI"]
+    end
+
+    subgraph K8s["Kubernetes Cluster"]
+        subgraph devenv["devenv namespace"]
+            DevEnv["Agent Sandbox<br/>StatefulSet<br/>(devenv-0, devenv-1, ...)"]
+            DevEnvSVC["devenv Service<br/>:22 SSH"]
+            DevEnvSecrets["devenv-vault-secrets<br/>(VSO Synced)"]
+            TFEToken["tfe-dynamic-token<br/>(Vault Dynamic)"]
+            SSHCA["vault-ssh-ca<br/>(CA Public Key)"]
+            VaultTLSCA["vault-tls-ca<br/>(TLS Certificate)"]
+        end
+
+        subgraph vault["vault namespace"]
+            VaultPod["Vault<br/>StatefulSet"]
+            VaultSVC["vault Service<br/>:8200 API"]
+            subgraph VaultEngines["Secrets Engines"]
+                KV["KV v2<br/>secret/"]
+                SSH["SSH CA<br/>ssh/"]
+                TFE["Terraform<br/>terraform/"]
+            end
+        end
+
+        subgraph boundary["boundary namespace"]
+            Postgres["PostgreSQL<br/>StatefulSet"]
+            Controller["Boundary Controller<br/>:9200 API<br/>:9201 Cluster"]
+            Worker["Boundary Worker<br/>:9202 Proxy"]
+            subgraph BoundaryConfig["Configuration"]
+                Scopes["Scopes<br/>(DevOps/Agent-Sandbox)"]
+                Targets["SSH Target<br/>(devenv-ssh)"]
+                CredStore["Vault Credential Store"]
+                CredLib["SSH Cert Library"]
+            end
+        end
+
+        subgraph keycloak["keycloak namespace"]
+            KeycloakDB["PostgreSQL<br/>StatefulSet"]
+            KeycloakPod["Keycloak<br/>Deployment"]
+            KeycloakSVC["keycloak Service<br/>:8080 HTTP"]
+            subgraph KeycloakConfig["OIDC Configuration"]
+                Realm["boundary Realm"]
+                Client["OIDC Client"]
+                Users["Demo Users<br/>(admin, developer, readonly)"]
+                Groups["Groups<br/>(admins, developers, readers)"]
+            end
+        end
+
+        subgraph vso["vault-secrets-operator-system namespace"]
+            VSOController["VSO Controller<br/>Manager"]
+        end
+    end
+
+    %% User Access Flows
+    User --> BoundaryCLI
+    User --> VaultCLI
+    User --> VSCode
+
+    %% Boundary Access Flow
+    BoundaryCLI -->|"1. Authenticate"| Controller
+    Controller -->|"2. Session Info"| BoundaryCLI
+    BoundaryCLI -->|"3. Connect"| Worker
+    Worker -->|"4. SSH Proxy"| DevEnvSVC
+    DevEnvSVC --> DevEnv
+
+    %% VS Code SSH Flow
+    VSCode -->|"Port Forward"| DevEnvSVC
+
+    %% Credential Brokering Flow
+    CredStore -->|"Token"| VaultSVC
+    CredLib -->|"ssh/sign/devenv-access"| SSH
+    Targets --> CredLib
+    Worker -->|"Fetch SSH Cert"| CredStore
+
+    %% OIDC Authentication Flow
+    Controller -->|"OIDC Auth"| KeycloakSVC
+    KeycloakSVC --> KeycloakPod
+    KeycloakPod --> KeycloakDB
+    KeycloakPod --> Realm
+    Realm --> Client
+    Realm --> Users
+    Realm --> Groups
+
+    %% Vault Secrets Operator Flow
+    VSOController -->|"Watch VaultStaticSecret"| devenv
+    VSOController -->|"Fetch Secrets"| VaultSVC
+    VSOController -->|"Create/Update"| DevEnvSecrets
+
+    %% Vault Internal
+    VaultPod --> KV
+    VaultPod --> SSH
+    VaultPod --> TFE
+    VaultSVC --> VaultPod
+
+    %% DevEnv Secret Consumption
+    DevEnv -->|"GITHUB_TOKEN"| DevEnvSecrets
+    DevEnv -->|"TFE_TOKEN"| TFEToken
+    DevEnv -->|"SSH CA Trust"| SSHCA
+    DevEnv -->|"TLS Trust"| VaultTLSCA
+
+    %% Boundary Internal
+    Controller --> Postgres
+    Controller --> Scopes
+    Scopes --> Targets
+    Targets --> CredStore
+    CredStore --> CredLib
+
+    %% Styles
+    classDef user fill:#4CAF50,stroke:#388E3C,color:#fff
+    classDef external fill:#2196F3,stroke:#1565C0,color:#fff
+    classDef vault fill:#FFD700,stroke:#FFA000,color:#000
+    classDef boundary fill:#F06292,stroke:#C2185B,color:#fff
+    classDef keycloak fill:#00BCD4,stroke:#00838F,color:#fff
+    classDef devenv fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef vso fill:#FF9800,stroke:#E65100,color:#fff
+    classDef secret fill:#E8F5E9,stroke:#4CAF50,color:#000
+
+    class User,VSCode,BoundaryCLI,VaultCLI external
+    class VaultPod,VaultSVC,KV,SSH,TFE vault
+    class Controller,Worker,Postgres,Scopes,Targets,CredStore,CredLib boundary
+    class KeycloakPod,KeycloakDB,KeycloakSVC,Realm,Client,Users,Groups keycloak
+    class DevEnv,DevEnvSVC devenv
+    class VSOController vso
+    class DevEnvSecrets,TFEToken,SSHCA,VaultTLSCA secret

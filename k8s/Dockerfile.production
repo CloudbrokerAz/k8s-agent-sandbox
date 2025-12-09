@@ -20,11 +20,12 @@ ARG TZ=UTC \
 COPY --from=docker.io/astral/uv:latest /uv /uvx /usr/local/bin/
 COPY --from=docker.io/library/golang:1.24-bookworm /usr/local/go /usr/local/go
 
-# Install system packages
+# Install system packages including SSH server for remote development
 RUN apt update && apt install -y --no-install-recommends \
     ca-certificates less git procps sudo zsh man-db unzip gnupg2 gh \
     iptables ipset iproute2 dnsutils aggregate \
     python3 python3-pip python3-venv python3-full \
+    openssh-server openssh-client netcat-openbsd \
     jq curl locales wget && \
     sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
     locale-gen en_US.UTF-8 && \
@@ -53,11 +54,16 @@ ENV TZ="$TZ" \
 
 WORKDIR /workspace
 
-# Configure sudo
+# Configure sudo and SSH prerequisites
 RUN groupadd -f wheel && \
     usermod -aG wheel node && \
     echo "%wheel ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/wheel-group && \
-    chmod 0440 /etc/sudoers.d/wheel-group
+    chmod 0440 /etc/sudoers.d/wheel-group && \
+    # SSH directory setup (sshd config done at K8s runtime via container command)
+    mkdir -p /var/run/sshd /home/node/.ssh && \
+    chmod 0755 /var/run/sshd && \
+    chown -R node:node /home/node/.ssh && \
+    chmod 700 /home/node/.ssh
 
 # Copy library scripts for Terraform tools installation
 COPY .devcontainer/base-image/library-scripts/*.sh /tmp/library-scripts/
@@ -128,5 +134,9 @@ RUN echo '{\
 # Add clauded alias
 RUN echo 'alias clauded="claude --dangerously-skip-permissions"' >> /home/node/.zshrc
 
-# Keep container running (for Kubernetes deployment)
+# Expose SSH port for remote development
+EXPOSE 22
+
+# Keep container running (SSH setup done via K8s StatefulSet command)
+# For local development, use devcontainer features for SSH
 CMD ["/bin/zsh", "-c", "tail -f /dev/null"]

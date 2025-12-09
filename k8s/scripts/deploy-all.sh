@@ -596,32 +596,24 @@ echo "  ✅ Keycloak"
 fi
 echo ""
 
-# Run healthcheck
+# Run all verification tests
 echo ""
 echo "=========================================="
-echo "  Running Post-Deploy Healthcheck"
+echo "  Running Platform Verification Tests"
 echo "=========================================="
 echo ""
-"$SCRIPT_DIR/healthcheck.sh" || true
 
-# Run secrets test
-echo ""
-echo "=========================================="
-echo "  Running Secrets Verification"
-echo "=========================================="
-echo ""
-"$SCRIPT_DIR/test-secrets.sh" || true
-
-# Run Boundary OIDC test if configured
-if [[ "$DEPLOY_KEYCLOAK" == "true" ]] && [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]]; then
-    if [[ -f "$K8S_DIR/platform/boundary/scripts/test-oidc-auth.sh" ]]; then
-        echo ""
-        echo "=========================================="
-        echo "  Running Boundary OIDC Verification"
-        echo "=========================================="
-        echo ""
-        "$K8S_DIR/platform/boundary/scripts/test-oidc-auth.sh" || true
-    fi
+# Run the comprehensive test suite
+if [[ -f "$SCRIPT_DIR/tests/run-all-tests.sh" ]]; then
+    "$SCRIPT_DIR/tests/run-all-tests.sh" || true
+else
+    # Fallback to individual tests if run-all-tests.sh not found
+    echo "Running individual tests..."
+    "$SCRIPT_DIR/tests/healthcheck.sh" || true
+    "$SCRIPT_DIR/tests/test-secrets.sh" || true
+    "$SCRIPT_DIR/tests/test-boundary.sh" || true
+    [[ "$DEPLOY_KEYCLOAK" == "true" ]] && "$SCRIPT_DIR/tests/test-keycloak.sh" || true
+    [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && "$SCRIPT_DIR/tests/test-oidc-auth.sh" || true
 fi
 
 echo ""
