@@ -167,21 +167,43 @@ kubectl exec -it -n devenv devenv-2 -- /bin/bash  # User 3
 
 ```
                            Agent Sandbox Platform
-┌────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│  ┌─────────────────┐    ┌─────────────────┐    ┌────────────────┐ │
-│  │  Agent Sandbox  │    │      Vault      │    │    Boundary    │ │
-│  │   (devenv-0)    │◄───│  Secrets Mgmt   │    │  Secure Access │ │
-│  │   (devenv-1)    │    │  - KV v2        │    │  - Controller  │ │
-│  │   (devenv-N)    │    │  - SSH Certs    │    │  - Worker      │ │
-│  └────────┬────────┘    │  - TFE Tokens   │    └────────────────┘ │
-│           │              └────────▲────────┘                        │
-│           │                       │                                 │
-│           │              ┌────────┴────────┐                       │
-│           └──────────────│      VSO        │                       │
-│              (synced)    │  Secret Sync    │                       │
-│                          └─────────────────┘                       │
-└────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                                                                          │
+│   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐ │
+│   │   Vault     │   │  Boundary   │   │  Keycloak   │   │    VSO      │ │
+│   │  (secrets)  │   │  (access)   │   │   (OIDC)    │   │   (sync)    │ │
+│   │   :8200     │   │   :9200     │   │   :8080     │   │             │ │
+│   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘ │
+│          │                 │                 │                 │        │
+│          │                 │    OIDC Auth    │                 │        │
+│          │                 │◄───────────────►│                 │        │
+│          │                 │                                   │        │
+│          │                 │ SSH Proxy                         │        │
+│          │                 ▼                                   │        │
+│   ┌──────┴─────────────────────────────────────────────────────┴──────┐ │
+│   │                        devenv namespace                           │ │
+│   │                                                                   │ │
+│   │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐           │ │
+│   │   │  devenv-0   │   │  devenv-1   │   │  devenv-N   │           │ │
+│   │   │             │   │             │   │             │           │ │
+│   │   │ Claude Code │   │ Claude Code │   │ Claude Code │           │ │
+│   │   │ Terraform   │   │ Terraform   │   │ Terraform   │           │ │
+│   │   │ AWS CLI     │   │ AWS CLI     │   │ AWS CLI     │           │ │
+│   │   │ Bun + Tools │   │ Bun + Tools │   │ Bun + Tools │           │ │
+│   │   │             │   │             │   │             │           │ │
+│   │   │ /workspace  │   │ /workspace  │   │ /workspace  │           │ │
+│   │   │  (PVC)      │   │  (PVC)      │   │  (PVC)      │           │ │
+│   │   └─────────────┘   └─────────────┘   └─────────────┘           │ │
+│   │                                                                   │ │
+│   │   Secrets (auto-synced from Vault):                              │ │
+│   │   - GITHUB_TOKEN, TFE_TOKEN, LANGFUSE_*, AWS_*                   │ │
+│   └───────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
+
+User Access Flow:
+1. User → Boundary (OIDC auth via Keycloak)
+2. Boundary Worker → DevEnv Pod (SSH proxy)
+3. VSCode Remote SSH → Full IDE experience
 ```
 
 ## Common Tasks

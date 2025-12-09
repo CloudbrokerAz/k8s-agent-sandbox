@@ -44,10 +44,10 @@ flowchart TB
             KeycloakPod["Keycloak<br/>Deployment"]
             KeycloakSVC["keycloak Service<br/>:8080 HTTP"]
             subgraph KeycloakConfig["OIDC Configuration"]
-                Realm["boundary Realm"]
-                Client["OIDC Client"]
-                Users["Demo Users<br/>(admin, developer, readonly)"]
-                Groups["Groups<br/>(admins, developers, readers)"]
+                Realm["agent-sandbox Realm"]
+                Client["boundary OIDC Client"]
+                Users["Demo Users<br/>(admin@example.com,<br/>developer@example.com,<br/>readonly@example.com)"]
+                Groups["Groups<br/>(admins, developers, readonly)"]
             end
         end
 
@@ -61,15 +61,21 @@ flowchart TB
     User --> VaultCLI
     User --> VSCode
 
-    %% Boundary Access Flow
-    BoundaryCLI -->|"1. Authenticate"| Controller
-    Controller -->|"2. Session Info"| BoundaryCLI
-    BoundaryCLI -->|"3. Connect"| Worker
-    Worker -->|"4. SSH Proxy"| DevEnvSVC
+    %% Boundary Authentication Flow
+    BoundaryCLI -->|"1. Authenticate OIDC"| Controller
+    Controller -->|"2. OIDC Redirect"| KeycloakSVC
+    KeycloakSVC -->|"3. Validate & Return Token"| Controller
+    Controller -->|"4. Session Token"| BoundaryCLI
+
+    %% Boundary SSH Access Flow (via Worker)
+    BoundaryCLI -->|"5. Connect SSH"| Controller
+    Controller -->|"6. Authorize Session"| Worker
+    Worker -->|"7. SSH Proxy"| DevEnvSVC
     DevEnvSVC --> DevEnv
 
-    %% VS Code SSH Flow
-    VSCode -->|"Port Forward"| DevEnvSVC
+    %% VS Code SSH via Boundary (through local proxy)
+    VSCode -->|"SSH to localhost:2222"| BoundaryCLI
+    BoundaryCLI -->|"Tunnel via Worker"| Worker
 
     %% Credential Brokering Flow
     CredStore -->|"Token"| VaultSVC

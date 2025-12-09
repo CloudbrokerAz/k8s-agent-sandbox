@@ -3,69 +3,207 @@
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Kubernetes Cluster                          │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │                    Namespace: devenv                          │ │
-│  │                                                               │ │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │ │
-│  │  │   devenv-0   │  │   devenv-1   │  │   devenv-2   │      │ │
-│  │  │              │  │              │  │              │      │ │
-│  │  │  ┌────────┐  │  │  ┌────────┐  │  │  ┌────────┐  │      │ │
-│  │  │  │  Pod   │  │  │  │  Pod   │  │  │  │  Pod   │  │      │ │
-│  │  │  │        │  │  │  │        │  │  │  │        │  │      │ │
-│  │  │  │ Claude │  │  │  │ Claude │  │  │  │ Claude │  │      │ │
-│  │  │  │  Code  │  │  │  │  Code  │  │  │  │  Code  │  │      │ │
-│  │  │  │   +    │  │  │  │   +    │  │  │  │   +    │  │      │ │
-│  │  │  │Terraform│ │  │  │Terraform│ │  │  │Terraform│ │      │ │
-│  │  │  │   +    │  │  │  │   +    │  │  │  │   +    │  │      │ │
-│  │  │  │  Tools │  │  │  │  Tools │  │  │  │  Tools │  │      │ │
-│  │  │  └────┬───┘  │  │  └────┬───┘  │  │  └────┬───┘  │      │ │
-│  │  │       │      │  │       │      │  │       │      │      │ │
-│  │  │  ┌────▼───┐  │  │  ┌────▼───┐  │  │  ┌────▼───┐  │      │ │
-│  │  │  │  PVCs  │  │  │  │  PVCs  │  │  │  │  PVCs  │  │      │ │
-│  │  │  │ ├─────┤ │  │  │ ├─────┤ │  │  │ ├─────┤ │      │ │
-│  │  │  │ │Workspace││  │  │Workspace││  │  │Workspace││      │ │
-│  │  │  │ │ 10Gi │ │  │  │ 10Gi │ │  │  │ 10Gi │ │      │ │
-│  │  │  │ ├─────┤ │  │  │ ├─────┤ │  │  │ ├─────┤ │      │ │
-│  │  │  │ │History││ │  │ │History││ │  │ │History││      │ │
-│  │  │  │ │ 1Gi  │ │  │  │ 1Gi  │ │  │  │ 1Gi  │ │      │ │
-│  │  │  │ ├─────┤ │  │  │ ├─────┤ │  │  │ ├─────┤ │      │ │
-│  │  │  │ │Config││ │  │ │Config││ │  │ │Config││      │ │
-│  │  │  │ │ 1Gi  │ │  │  │ 1Gi  │ │  │  │ 1Gi  │ │      │ │
-│  │  │  │ └─────┘ │  │  │ └─────┘ │  │  │ └─────┘ │      │ │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘      │ │
-│  │                                                               │ │
-│  │  ┌──────────────────────────────────────────────────┐       │ │
-│  │  │          Service: devenv (ClusterIP)             │       │ │
-│  │  │  Exposes: SSH (22), HTTP (8080)                  │       │ │
-│  │  └──────────────────────────────────────────────────┘       │ │
-│  │                                                               │ │
-│  │  ┌──────────────────────────────────────────────────┐       │ │
-│  │  │          Secret: devenv-secrets                  │       │ │
-│  │  │  - GITHUB_TOKEN                                  │       │ │
-│  │  │  - TFE_TOKEN                                     │       │ │
-│  │  │  - AWS credentials                               │       │ │
-│  │  └──────────────────────────────────────────────────┘       │ │
-│  │                                                               │ │
-│  │  ┌──────────────────────────────────────────────────┐       │ │
-│  │  │       NetworkPolicy: devenv-isolation            │       │ │
-│  │  │  Ingress: Allow from namespace                   │       │ │
-│  │  │  Egress: Allow DNS + Internet                    │       │ │
-│  │  └──────────────────────────────────────────────────┘       │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │  External Access │
-                    │                  │
-                    │  kubectl exec    │
-                    │  port-forward    │
-                    │  ingress         │
-                    └──────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                              Kubernetes Cluster                                   │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐ │
+│  │                         Platform Services                                   │ │
+│  │                                                                            │ │
+│  │  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   │ │
+│  │  │   Vault     │   │  Boundary   │   │  Keycloak   │   │    VSO      │   │ │
+│  │  │  (vault)    │   │ (boundary)  │   │ (keycloak)  │   │   (vso)     │   │ │
+│  │  │             │   │             │   │             │   │             │   │ │
+│  │  │ ┌─────────┐ │   │ ┌─────────┐ │   │ ┌─────────┐ │   │ ┌─────────┐ │   │ │
+│  │  │ │ Secrets │ │   │ │Controller│ │   │ │  OIDC   │ │   │ │  Sync   │ │   │ │
+│  │  │ │  - KV   │ │   │ │  :9200  │ │   │ │Provider │ │   │ │ Secrets │ │   │ │
+│  │  │ │  - SSH  │ │   │ │  :9201  │ │   │ │  :8080  │ │   │ │ to K8s  │ │   │ │
+│  │  │ │  - TFE  │ │   │ ├─────────┤ │   │ └─────────┘ │   │ └─────────┘ │   │ │
+│  │  │ └─────────┘ │   │ │ Worker  │ │   │             │   │             │   │ │
+│  │  │   :8200    │   │ │  :9202  │ │   │ PostgreSQL  │   │  Helm Chart │   │ │
+│  │  └──────┬──────┘   │ └─────────┘ │   └──────┬──────┘   └──────┬──────┘   │ │
+│  │         │          └──────┬──────┘          │                 │          │ │
+│  └─────────┼─────────────────┼─────────────────┼─────────────────┼──────────┘ │
+│            │                 │                 │                 │            │
+│            ▼                 ▼                 ▼                 ▼            │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │                        Namespace: devenv                               │  │
+│  │                                                                        │  │
+│  │   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐                │  │
+│  │   │  devenv-0   │   │  devenv-1   │   │  devenv-N   │                │  │
+│  │   │             │   │             │   │             │                │  │
+│  │   │ Claude Code │   │ Claude Code │   │ Claude Code │                │  │
+│  │   │ Terraform   │   │ Terraform   │   │ Terraform   │                │  │
+│  │   │ Bun + Tools │   │ Bun + Tools │   │ Bun + Tools │                │  │
+│  │   │             │   │             │   │             │                │  │
+│  │   │ PVCs:       │   │ PVCs:       │   │ PVCs:       │                │  │
+│  │   │ - workspace │   │ - workspace │   │ - workspace │                │  │
+│  │   │ - history   │   │ - history   │   │ - history   │                │  │
+│  │   │ - config    │   │ - config    │   │ - config    │                │  │
+│  │   └─────────────┘   └─────────────┘   └─────────────┘                │  │
+│  │                                                                        │  │
+│  │   Secrets (auto-synced from Vault via VSO):                           │  │
+│  │   ┌──────────────────────────────────────────────────┐               │  │
+│  │   │ devenv-vault-secrets: GITHUB_TOKEN, LANGFUSE_*   │               │  │
+│  │   │ tfe-dynamic-token: TFE_TOKEN (auto-renewed)      │               │  │
+│  │   └──────────────────────────────────────────────────┘               │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## User Authentication Flow
+
+```
+┌──────────┐
+│   User   │
+└────┬─────┘
+     │
+     │ 1. boundary authenticate oidc
+     ▼
+┌─────────────────┐     2. Redirect to Keycloak     ┌─────────────────┐
+│    Boundary     │ ──────────────────────────────► │    Keycloak     │
+│   Controller    │                                 │  (agent-sandbox │
+│    :9200        │                                 │     realm)      │
+└────────┬────────┘                                 └────────┬────────┘
+         │                                                   │
+         │                     3. User logs in               │
+         │                     (admin@example.com)           │
+         │                                                   │
+         │ ◄─────────────────────────────────────────────────┘
+         │    4. ID Token + Groups (admins/developers/readonly)
+         │
+         │ 5. Create session, return auth token
+         ▼
+┌─────────────────┐
+│  Authenticated  │
+│     Session     │
+└────────┬────────┘
+         │
+         │ 6. boundary connect ssh -target-id=<devenv>
+         ▼
+┌─────────────────┐     7. Proxy connection     ┌─────────────────┐
+│    Boundary     │ ──────────────────────────► │   DevEnv Pod    │
+│     Worker      │                             │   (devenv-0)    │
+│    :9202        │                             │     :22 SSH     │
+└─────────────────┘                             └─────────────────┘
+```
+
+## Secrets Flow (Vault + VSO)
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                         Secrets Flow                                   │
+│                                                                       │
+│  ┌─────────────┐                      ┌─────────────────────────────┐│
+│  │   Admin     │  vault kv put        │         Vault               ││
+│  │   User      │ ────────────────────►│                             ││
+│  └─────────────┘  secret/devenv/creds │  ┌───────────────────────┐  ││
+│                                        │  │ secret/devenv/        │  ││
+│                                        │  │   - GITHUB_TOKEN      │  ││
+│                                        │  │   - LANGFUSE_*        │  ││
+│                                        │  └───────────────────────┘  ││
+│                                        │                             ││
+│                                        │  ┌───────────────────────┐  ││
+│                                        │  │ terraform/tfe/creds   │  ││
+│                                        │  │   - Dynamic TFE Token │  ││
+│                                        │  └───────────────────────┘  ││
+│                                        └──────────────┬──────────────┘│
+│                                                       │               │
+│                   Kubernetes Auth                     │               │
+│                   (ServiceAccount)                    │               │
+│                                                       ▼               │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │                    VSO Controller                                │ │
+│  │                                                                  │ │
+│  │   VaultStaticSecret ──► Poll every 30s ──► K8s Secret          │ │
+│  │   VaultDynamicSecret ──► Auto-renew ──► K8s Secret             │ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+│                                        │                              │
+│                                        ▼                              │
+│  ┌─────────────────────────────────────────────────────────────────┐ │
+│  │                    devenv namespace                              │ │
+│  │                                                                  │ │
+│  │   ┌─────────────────────┐    ┌─────────────────────┐           │ │
+│  │   │ devenv-vault-secrets│    │  tfe-dynamic-token  │           │ │
+│  │   │   (K8s Secret)      │    │    (K8s Secret)     │           │ │
+│  │   └──────────┬──────────┘    └──────────┬──────────┘           │ │
+│  │              │                          │                       │ │
+│  │              ▼                          ▼                       │ │
+│  │   ┌───────────────────────────────────────────────────────────┐│ │
+│  │   │              DevEnv Pod (devenv-0)                        ││ │
+│  │   │                                                           ││ │
+│  │   │   env:                                                    ││ │
+│  │   │     GITHUB_TOKEN: (from devenv-vault-secrets)             ││ │
+│  │   │     TFE_TOKEN: (from tfe-dynamic-token)                   ││ │
+│  │   │     TF_TOKEN_app_terraform_io: (from tfe-dynamic-token)   ││ │
+│  │   │     LANGFUSE_*: (from devenv-vault-secrets)               ││ │
+│  │   └───────────────────────────────────────────────────────────┘│ │
+│  └─────────────────────────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+## Network Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Network Topology                              │
+│                                                                      │
+│  External                                                            │
+│  ────────                                                            │
+│                                                                      │
+│  ┌──────────┐                                                        │
+│  │  User    │                                                        │
+│  │ Workstation                                                       │
+│  └────┬─────┘                                                        │
+│       │                                                              │
+│       │ kubectl port-forward / boundary connect                      │
+│       ▼                                                              │
+│  ═══════════════════════════════════════════════════════════════════│
+│                         Cluster Network                              │
+│  ═══════════════════════════════════════════════════════════════════│
+│       │                                                              │
+│       ├───────────────────┬───────────────────┬──────────────────┐  │
+│       ▼                   ▼                   ▼                  ▼  │
+│  ┌─────────┐        ┌─────────┐        ┌─────────┐        ┌─────────┐
+│  │ Vault   │        │Boundary │        │Keycloak │        │ DevEnv  │
+│  │ :8200   │        │ :9200   │        │  :8080  │        │ :22     │
+│  │         │        │ :9201   │        │         │        │         │
+│  │         │        │ :9202   │        │         │        │         │
+│  └────┬────┘        └────┬────┘        └────┬────┘        └────┬────┘
+│       │                  │                  │                  │    │
+│       │                  │                  │                  │    │
+│  Internal Service Discovery (*.svc.cluster.local)                   │
+│  ─────────────────────────────────────────────────────────────────  │
+│       │                  │                  │                  │    │
+│       │                  │                  │                  │    │
+│       │    ┌─────────────┴─────────────┐    │                  │    │
+│       │    │     OIDC Authentication   │    │                  │    │
+│       │    │  boundary ◄──────────────►│    │                  │    │
+│       │    │           keycloak.keycloak.svc:8080               │    │
+│       │    └───────────────────────────┘                       │    │
+│       │                                                        │    │
+│       │    ┌─────────────────────────────────────────────────┐│    │
+│       │    │              Session Proxy                       ││    │
+│       │    │  boundary-worker ──────────────────────► devenv  ││    │
+│       │    │  :9202                                    :22    ││    │
+│       │    └─────────────────────────────────────────────────┘│    │
+│       │                                                        │    │
+│       │    ┌─────────────────────────────────────────────────┐│    │
+│       │    │              Secret Sync (VSO)                   ││    │
+│       │    │  VSO ◄──────────────────────────────────► Vault  ││    │
+│       │    │      vault.vault.svc:8200                        ││    │
+│       │    └─────────────────────────────────────────────────┘│    │
+│       │                                                        │    │
+│       ▼                                                        │    │
+│  ┌──────────────────────────────────────────────────────────┐  │    │
+│  │                    Egress (Internet)                      │  │    │
+│  │   DevEnv pods can reach:                                  │  │    │
+│  │   - github.com (git operations)                           │  │    │
+│  │   - app.terraform.io (TFC/TFE)                            │  │    │
+│  │   - registry.terraform.io (providers)                     │  │    │
+│  │   - api.anthropic.com (Claude)                            │  │    │
+│  │   - *.amazonaws.com (AWS APIs)                            │  │    │
+│  └──────────────────────────────────────────────────────────┘  │    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Component Breakdown
@@ -136,8 +274,117 @@ User → Ingress → Load Balancer → Service → Pod
 1. **Namespace Isolation**: All resources in dedicated `devenv` namespace
 2. **NetworkPolicy**: Restricts traffic to/from pods
 3. **RBAC**: (Optional) Limit service account permissions
-4. **SecurityContext**: Non-root user (UID 1000), dropped capabilities
-5. **Secrets**: Encrypted at rest (K8s default)
+4. **SecurityContext**: Relaxed for development (runs as root), can be tightened for production
+5. **Secrets**: Encrypted at rest (K8s default), synced via VSO from Vault
+6. **Identity-Based Access**: Boundary + Keycloak OIDC for user authentication
+7. **Session Recording**: Boundary provides audit logs for all connections
+
+## VSCode Remote SSH via Boundary
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                     VSCode Remote SSH Flow via Boundary                         │
+│                                                                                │
+│  ┌──────────────────────┐                                                      │
+│  │   Developer Machine   │                                                      │
+│  │                      │                                                      │
+│  │  ┌────────────────┐  │                                                      │
+│  │  │  VSCode IDE    │  │                                                      │
+│  │  │  + Remote SSH  │  │                                                      │
+│  │  │   Extension    │  │                                                      │
+│  │  └───────┬────────┘  │                                                      │
+│  │          │           │                                                      │
+│  │          │ SSH to localhost:2222                                            │
+│  │          ▼           │                                                      │
+│  │  ┌────────────────┐  │                                                      │
+│  │  │ Boundary       │  │  1. User authenticates via OIDC (Keycloak)          │
+│  │  │ Desktop Client │  │  2. Receives session token                          │
+│  │  │ (or CLI)       │  │  3. Opens local proxy on localhost:2222             │
+│  │  └───────┬────────┘  │                                                      │
+│  └──────────┼───────────┘                                                      │
+│             │                                                                  │
+│             │ Secure tunnel (TLS)                                              │
+│             ▼                                                                  │
+│  ┌──────────────────────────────────────────────────────────────────────────┐ │
+│  │                         Kubernetes Cluster                                │ │
+│  │                                                                          │ │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                      boundary namespace                            │  │ │
+│  │  │                                                                    │  │ │
+│  │  │  ┌──────────────────┐          ┌──────────────────┐               │  │ │
+│  │  │  │ Boundary         │          │ Boundary         │               │  │ │
+│  │  │  │ Controller       │◄────────►│ Worker           │               │  │ │
+│  │  │  │                  │  cluster │                  │               │  │ │
+│  │  │  │ - Auth (OIDC)    │  comms   │ - Session proxy  │               │  │ │
+│  │  │  │ - Session mgmt   │  :9201   │ - Target connect │               │  │ │
+│  │  │  │ - Audit logs     │          │                  │               │  │ │
+│  │  │  │   :9200          │          │   :9202          │               │  │ │
+│  │  │  └────────┬─────────┘          └────────┬─────────┘               │  │ │
+│  │  │           │                             │                          │  │ │
+│  │  │           │  4. Validate session        │ 5. Proxy SSH traffic    │  │ │
+│  │  │           ▼                             ▼                          │  │ │
+│  │  │  ┌──────────────────┐                                              │  │ │
+│  │  │  │ Keycloak         │                                              │  │ │
+│  │  │  │ (OIDC Provider)  │                                              │  │ │
+│  │  │  │   :8080          │                                              │  │ │
+│  │  │  └──────────────────┘                                              │  │ │
+│  │  └───────────────────────────────────────────────────────────────────┘  │ │
+│  │                                    │                                     │ │
+│  │                                    │ SSH connection                      │ │
+│  │                                    ▼                                     │ │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │ │
+│  │  │                       devenv namespace                             │  │ │
+│  │  │                                                                    │  │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐    │  │ │
+│  │  │  │                    DevEnv Pod (devenv-0)                  │    │  │ │
+│  │  │  │                                                           │    │  │ │
+│  │  │  │   6. SSH Server accepts connection                        │    │  │ │
+│  │  │  │      (authenticated via Vault SSH CA or keys)             │    │  │ │
+│  │  │  │                                                           │    │  │ │
+│  │  │  │   7. VSCode Remote SSH Extension installs                 │    │  │ │
+│  │  │  │      vscode-server in /home/node/.vscode-server           │    │  │ │
+│  │  │  │                                                           │    │  │ │
+│  │  │  │   8. Developer has full IDE access to:                    │    │  │ │
+│  │  │  │      /workspace (persistent - PVC)                        │    │  │ │
+│  │  │  │                                                           │    │  │ │
+│  │  │  │   Installed Tools:                                        │    │  │ │
+│  │  │  │   - Claude Code (AI assistant)                            │    │  │ │
+│  │  │  │   - Terraform                                             │    │  │ │
+│  │  │  │   - AWS CLI                                               │    │  │ │
+│  │  │  │   - Bun                                                   │    │  │ │
+│  │  │  │   - Git, Go, Python, Node.js                              │    │  │ │
+│  │  │  └──────────────────────────────────────────────────────────┘    │  │ │
+│  │  └───────────────────────────────────────────────────────────────────┘  │ │
+│  └──────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────────────┘
+
+Connection Steps:
+1. boundary authenticate oidc -auth-method-id=<keycloak-oidc>
+   → Opens browser for Keycloak login
+   → Returns session token
+
+2. boundary connect ssh -target-id=<devenv-target> -listen-port=2222
+   → Opens local proxy on localhost:2222
+   → Traffic is proxied through Boundary worker to devenv pod
+
+3. VSCode Remote SSH connects to localhost:2222
+   → SSH session is established through Boundary tunnel
+   → VSCode installs/runs vscode-server in the pod
+   → Full IDE experience with terminal, extensions, debugging
+```
+
+## Mermaid Diagrams
+
+For interactive/rendered diagrams, see the `.mmd` files in the `docs/` directory:
+
+- **[docs/architecture.mmd](docs/architecture.mmd)** - Complete platform architecture with all components
+- **[docs/secrets-sync-flow.mmd](docs/secrets-sync-flow.mmd)** - VSO secrets synchronization flow
+- **[docs/ssh-credential-flow.mmd](docs/ssh-credential-flow.mmd)** - SSH authentication via Boundary/Keycloak
+
+These can be rendered using:
+- VS Code Mermaid extension
+- GitHub (automatically renders `.mmd` files)
+- [Mermaid Live Editor](https://mermaid.live/)
 
 ## Data Flow
 
