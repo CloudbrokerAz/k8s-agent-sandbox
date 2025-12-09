@@ -7,7 +7,7 @@ metadata:
     app: devenv
 spec:
   serviceName: devenv
-  replicas: 1  # Start with 1, scale as needed per user
+  replicas: 1
   selector:
     matchLabels:
       app: devenv
@@ -16,29 +16,84 @@ spec:
       labels:
         app: devenv
     spec:
-      # Security context for non-privileged execution (OpenShift compatible)
+      # Relaxed security context for development environment
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000  # node user
-        fsGroup: 1000
-        # For OpenShift, add:
-        # fsGroupChangePolicy: "OnRootMismatch"
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
 
       containers:
       - name: devenv
-        image: YOUR_DOCKERHUB_USERNAME/terraform-devenv:latest  # Replace with your image
+        image: srlynch1/terraform-ai-tools:latest
         imagePullPolicy: Always
+
+        # Startup script to install tools
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            echo "========================================="
+            echo "Agent Sandbox starting..."
+            echo "========================================="
+
+            # Create workspace directories
+            echo "[1/4] Creating directories..."
+            mkdir -p /workspace /commandhistory
+            echo "  ✓ Directories created"
+
+            # Install Claude Code
+            echo "[2/4] Installing Claude Code..."
+            if command -v claude &> /dev/null; then
+              echo "  ✓ Claude Code already installed: $(claude --version 2>/dev/null || echo 'installed')"
+            else
+              echo "  - Installing via npm..."
+              npm install -g @anthropic-ai/claude-code 2>&1 | tail -10
+              if command -v claude &> /dev/null; then
+                echo "  ✓ Claude Code installed successfully"
+              else
+                echo "  ✗ Claude Code install failed (will retry on next startup)"
+              fi
+            fi
+
+            # Install Bun
+            echo "[3/4] Installing Bun..."
+            if command -v bun &> /dev/null; then
+              echo "  ✓ Bun already installed: $(bun --version 2>/dev/null)"
+            else
+              echo "  - Installing Bun..."
+              curl -fsSL https://bun.sh/install | bash 2>&1 | tail -5
+              export BUN_INSTALL="$HOME/.bun"
+              export PATH="$BUN_INSTALL/bin:$PATH"
+              if command -v bun &> /dev/null; then
+                echo "  ✓ Bun installed successfully"
+              else
+                echo "  ✗ Bun install failed"
+              fi
+            fi
+
+            # Install ccstatusline
+            echo "[4/4] Installing ccstatusline..."
+            if command -v bun &> /dev/null; then
+              bunx ccstatusline@latest 2>&1 | tail -3 || echo "  - ccstatusline setup skipped"
+            else
+              npx ccstatusline@latest 2>&1 | tail -3 || echo "  - ccstatusline setup skipped"
+            fi
+
+            echo "========================================="
+            echo "Agent Sandbox ready!"
+            echo "Access: kubectl exec -it devenv-0 -n devenv -- /bin/bash"
+            echo "========================================="
+
+            # Keep container running
+            tail -f /dev/null
 
         # Environment variables from secrets
         env:
         - name: GITHUB_TOKEN
           valueFrom:
             secretKeyRef:
-              name: devenv-secrets
+              name: devenv-vault-secrets
               key: GITHUB_TOKEN
               optional: true
-        # TFE_TOKEN from Vault dynamic secret (preferred)
-        # Falls back to static secret if dynamic not available
         - name: TFE_TOKEN
           valueFrom:
             secretKeyRef:
@@ -51,42 +106,28 @@ spec:
               name: tfe-dynamic-token
               key: TFE_TOKEN
               optional: true
-        - name: AWS_ACCESS_KEY_ID
-          valueFrom:
-            secretKeyRef:
-              name: devenv-secrets
-              key: AWS_ACCESS_KEY_ID
-              optional: true
-        - name: AWS_SECRET_ACCESS_KEY
-          valueFrom:
-            secretKeyRef:
-              name: devenv-secrets
-              key: AWS_SECRET_ACCESS_KEY
-              optional: true
-        - name: AWS_SESSION_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: devenv-secrets
-              key: AWS_SESSION_TOKEN
-              optional: true
         - name: LANGFUSE_HOST
           valueFrom:
             secretKeyRef:
-              name: devenv-secrets
+              name: devenv-vault-secrets
               key: LANGFUSE_HOST
               optional: true
         - name: LANGFUSE_PUBLIC_KEY
           valueFrom:
             secretKeyRef:
-              name: devenv-secrets
+              name: devenv-vault-secrets
               key: LANGFUSE_PUBLIC_KEY
               optional: true
         - name: LANGFUSE_SECRET_KEY
           valueFrom:
             secretKeyRef:
-              name: devenv-secrets
+              name: devenv-vault-secrets
               key: LANGFUSE_SECRET_KEY
               optional: true
+        - name: VAULT_ADDR
+          value: "https://vault.vault.svc.cluster.local:8200"
+        - name: VAULT_CACERT
+          value: "/vault-ca/vault-ca.crt"
         - name: CLAUDE_CONFIG_DIR
           value: "/home/node/.claude"
         - name: NODE_OPTIONS
@@ -109,38 +150,33 @@ spec:
           mountPath: /commandhistory
         - name: claude-config
           mountPath: /home/node/.claude
+        - name: vault-ca
+          mountPath: /vault-ca
+          readOnly: true
 
-        # Security context for container (OpenShift compatible)
+        # Relaxed security context for development
         securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          # For Docker-in-Docker support (if absolutely needed):
-          # capabilities:
-          #   add:
-          #   - NET_ADMIN
-          #   - NET_RAW
-          # Note: This requires cluster admin privileges and SecurityContextConstraints on OpenShift
+          privileged: false
+          allowPrivilegeEscalation: true
 
-        # Liveness and readiness probes
+        # Simple health checks
         livenessProbe:
           exec:
-            command:
-            - /bin/zsh
-            - -c
-            - "ps aux | grep -v grep | grep tail || exit 1"
+            command: ["/bin/bash", "-c", "echo healthy"]
           initialDelaySeconds: 30
           periodSeconds: 30
 
         readinessProbe:
           exec:
-            command:
-            - /bin/zsh
-            - -c
-            - "test -f /workspace/.ready || touch /workspace/.ready"
+            command: ["/bin/bash", "-c", "echo ready"]
           initialDelaySeconds: 10
           periodSeconds: 10
+
+      volumes:
+      - name: vault-ca
+        secret:
+          secretName: vault-tls-ca
+          optional: true
 
       # Termination grace period
       terminationGracePeriodSeconds: 30
