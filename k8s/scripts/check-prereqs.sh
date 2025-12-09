@@ -373,7 +373,7 @@ else
     if [[ "$CHECK_ONLY" == "true" ]]; then
         echo "MISSING"
         echo "  Install: apt install openssl / brew install openssl"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         echo "MISSING - installing..."
         if install_openssl; then
