@@ -58,27 +58,44 @@ if ! command -v jq &> /dev/null; then
     echo "Warning: jq is not installed. Install it for better output formatting."
 fi
 
-# Function to make API calls (supports in-cluster via kubectl run)
-api_call() {
-    local method="$1"
-    local endpoint="$2"
-    local data="${3:-}"
-    local auth_header="${4:-}"
+# -----------------------------------------------------------------------------
+# Wrapper function for curl that works both locally and in-cluster
+# Uses a persistent curl pod for in-cluster mode to avoid per-call overhead
+# -----------------------------------------------------------------------------
+CURL_POD_NAME="keycloak-curl-helper"
 
+cleanup_curl_pod() {
     if [[ "$IN_CLUSTER" == "true" ]]; then
-        # Use kubectl run with curl for in-cluster calls
-        local curl_args="-s -X $method"
-        [[ -n "$auth_header" ]] && curl_args="$curl_args -H 'Authorization: Bearer $auth_header'"
-        [[ -n "$data" ]] && curl_args="$curl_args -H 'Content-Type: application/json' -d '$data'"
+        kubectl delete pod "$CURL_POD_NAME" -n "$KEYCLOAK_NAMESPACE" --ignore-not-found=true &>/dev/null
+    fi
+}
 
-        kubectl run keycloak-api-call-$RANDOM --image=curlimages/curl --rm -i --restart=Never --quiet -- \
-            sh -c "curl $curl_args '${KEYCLOAK_URL}${endpoint}'" 2>/dev/null | grep -v "^pod "
+# Ensure cleanup on exit
+trap cleanup_curl_pod EXIT
+
+setup_curl_pod() {
+    if [[ "$IN_CLUSTER" == "true" ]]; then
+        # Delete any existing pod
+        kubectl delete pod "$CURL_POD_NAME" -n "$KEYCLOAK_NAMESPACE" --ignore-not-found=true &>/dev/null
+
+        # Create a persistent curl pod that sleeps
+        kubectl run "$CURL_POD_NAME" -n "$KEYCLOAK_NAMESPACE" \
+            --image=curlimages/curl \
+            --restart=Never \
+            --command -- sleep 3600 &>/dev/null
+
+        # Wait for pod to be ready
+        kubectl wait --for=condition=Ready pod/"$CURL_POD_NAME" -n "$KEYCLOAK_NAMESPACE" --timeout=60s &>/dev/null
+    fi
+}
+
+kc_curl() {
+    if [[ "$IN_CLUSTER" == "true" ]]; then
+        # Use kubectl exec to run curl in the persistent pod
+        kubectl exec -n "$KEYCLOAK_NAMESPACE" "$CURL_POD_NAME" -- curl "$@" 2>/dev/null
     else
         # Direct curl for local calls
-        local curl_cmd="curl -s -X $method"
-        [[ -n "$auth_header" ]] && curl_cmd="$curl_cmd -H 'Authorization: Bearer $auth_header'"
-        [[ -n "$data" ]] && curl_cmd="$curl_cmd -H 'Content-Type: application/json' -d '$data'"
-        eval "$curl_cmd '${KEYCLOAK_URL}${endpoint}'"
+        curl "$@"
     fi
 }
 
@@ -86,7 +103,7 @@ api_call() {
 get_admin_token() {
     echo "Authenticating as admin..."
     local response
-    response=$(curl -s -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+    response=$(kc_curl -s -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=${ADMIN_USER}" \
         -d "password=${ADMIN_PASS}" \
@@ -99,6 +116,14 @@ get_admin_token() {
         echo "$response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4
     fi
 }
+
+# Setup curl pod for in-cluster mode
+if [[ "$IN_CLUSTER" == "true" ]]; then
+    echo "Setting up in-cluster curl helper pod..."
+    setup_curl_pod
+    echo "Curl helper pod ready!"
+    echo ""
+fi
 
 # Get admin token
 echo "1. Obtaining admin access token..."
@@ -118,7 +143,7 @@ echo ""
 
 # Create realm
 echo "2. Creating realm: ${REALM_NAME}..."
-curl -s -X POST "${KEYCLOAK_URL}/admin/realms" \
+kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{
@@ -136,7 +161,7 @@ echo ""
 
 # Create Boundary OIDC client
 echo "3. Creating OIDC client: ${CLIENT_ID}..."
-curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{
@@ -164,11 +189,11 @@ echo ""
 
 # Get client UUID for setting secret
 echo "4. Setting client secret..."
-CLIENT_UUID=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
+CLIENT_UUID=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r '.[0].id')
 
 if [ -n "$CLIENT_UUID" ] && [ "$CLIENT_UUID" != "null" ]; then
-    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
+    kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
         -H "Authorization: Bearer ${ACCESS_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "{\"type\": \"secret\", \"value\": \"${CLIENT_SECRET}\"}"
@@ -183,7 +208,7 @@ echo ""
 echo "5. Creating user groups..."
 for group in "admins" "developers" "readonly"; do
     echo "  - Creating group: ${group}"
-    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
+    kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
         -H "Authorization: Bearer ${ACCESS_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "{
@@ -209,7 +234,7 @@ create_user() {
     echo "  - Creating user: ${email}"
 
     # Create user
-    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users" \
+    kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users" \
         -H "Authorization: Bearer ${ACCESS_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "{
@@ -223,12 +248,12 @@ create_user() {
 
     # Get user ID
     local user_id
-    user_id=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?username=${username}" \
+    user_id=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?username=${username}" \
         -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r '.[0].id')
 
     if [ -n "$user_id" ] && [ "$user_id" != "null" ]; then
         # Set password
-        curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/reset-password" \
+        kc_curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/reset-password" \
             -H "Authorization: Bearer ${ACCESS_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{
@@ -239,11 +264,11 @@ create_user() {
 
         # Add to group
         local group_id
-        group_id=$(curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
+        group_id=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
             -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r ".[] | select(.name==\"${group}\") | .id")
 
         if [ -n "$group_id" ] && [ "$group_id" != "null" ]; then
-            curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/groups/${group_id}" \
+            kc_curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/groups/${group_id}" \
                 -H "Authorization: Bearer ${ACCESS_TOKEN}" \
                 -H "Content-Type: application/json"
         fi

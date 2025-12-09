@@ -10,6 +10,7 @@ resources:
   - 03-postgres.yaml
   - 04-deployment.yaml
   - 05-service.yaml
+  - 06-realm-init.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: agent-sandbox-platform

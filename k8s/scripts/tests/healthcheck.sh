@@ -24,6 +24,7 @@ VSO_NAMESPACE="${VSO_NAMESPACE:-vault-secrets-operator-system}"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 PASSED=0
@@ -43,6 +44,10 @@ check_fail() {
 check_warn() {
     echo -e "${YELLOW}⚠️  WARN${NC}: $1"
     WARNINGS=$((WARNINGS + 1))
+}
+
+check_info() {
+    echo -e "${BLUE}ℹ️  INFO${NC}: $1"
 }
 
 echo "=========================================="
@@ -109,13 +114,6 @@ else
     check_warn "Terraform not found"
 fi
 
-# Check AWS CLI
-if kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- aws --version &>/dev/null; then
-    check_pass "AWS CLI installed"
-else
-    check_warn "AWS CLI not found"
-fi
-
 # Check environment variables
 if kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv TFE_TOKEN &>/dev/null; then
     check_pass "TFE_TOKEN environment variable set"
@@ -179,11 +177,11 @@ if [[ -n "$VAULT_TOKEN" ]]; then
         check_warn "SSH secrets engine not configured (run configure-ssh-engine.sh)"
     fi
 
-    # Check Terraform engine
+    # Check Terraform engine (optional - for dynamic token rotation)
     if kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_TOKEN' vault secrets list" 2>/dev/null | grep -q "terraform/"; then
-        check_pass "Terraform secrets engine enabled"
+        check_pass "Terraform secrets engine enabled (dynamic tokens)"
     else
-        check_warn "Terraform secrets engine not configured (run configure-tfe-engine.sh)"
+        check_info "Terraform secrets engine not configured (optional - static TFE_TOKEN used via KV)"
     fi
 else
     check_warn "Cannot check secrets engines - no Vault token found"
@@ -287,7 +285,7 @@ else
 fi
 
 # Check VaultConnection
-VC_READY=$(kubectl get vaultconnection default -n "$DEVENV_NAMESPACE" -o jsonpath='{.status.valid}' 2>/dev/null || echo "false")
+VC_READY=$(kubectl get vaultconnection vault-connection -n "$DEVENV_NAMESPACE" -o jsonpath='{.status.valid}' 2>/dev/null || echo "false")
 if [[ "$VC_READY" == "true" ]]; then
     check_pass "VaultConnection is valid"
 else
@@ -321,11 +319,11 @@ else
     check_warn "Vault TLS CA secret not found (run export-vault-ca.sh)"
 fi
 
-# Check TFE dynamic token secret
+# Check TFE dynamic token secret (optional - static TFE_TOKEN in devenv-vault-secrets is primary)
 if kubectl get secret tfe-dynamic-token -n "$DEVENV_NAMESPACE" &>/dev/null; then
-    check_pass "TFE dynamic token secret exists"
+    check_pass "TFE dynamic token secret exists (Vault dynamic tokens)"
 else
-    check_warn "TFE dynamic token not configured (run configure-tfe-engine.sh)"
+    check_info "TFE dynamic token not configured (optional - static TFE_TOKEN used via KV)"
 fi
 
 # ==========================================

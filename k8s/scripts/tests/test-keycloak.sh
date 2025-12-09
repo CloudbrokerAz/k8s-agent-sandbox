@@ -67,7 +67,7 @@ else
 fi
 
 # Check PostgreSQL PVC
-if kubectl get pvc -l app=keycloak-postgres -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Bound"; then
+if kubectl get pvc -l app.kubernetes.io/component=database -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Bound"; then
     test_pass "PostgreSQL PVC bound"
 else
     test_warn "PostgreSQL PVC not bound"

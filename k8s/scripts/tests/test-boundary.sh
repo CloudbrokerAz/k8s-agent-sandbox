@@ -84,8 +84,9 @@ fi
 # Check controller health endpoint
 CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [[ -n "$CONTROLLER_POD" ]]; then
-    HEALTH=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- wget -q -O- http://127.0.0.1:9203/health 2>/dev/null || echo "")
-    if echo "$HEALTH" | grep -q "ok"; then
+    HEALTH=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- wget -q -O- http://127.0.0.1:9203/health 2>/dev/null || echo "FAILED")
+    # Boundary health endpoint returns {} when healthy
+    if [[ "$HEALTH" == "{}" ]] || echo "$HEALTH" | grep -q "ok"; then
         test_pass "Controller health endpoint responding"
     else
         test_warn "Controller health endpoint not responding"

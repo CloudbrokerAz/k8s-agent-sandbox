@@ -1,0 +1,228 @@
+# Realm initialization Job
+# Configures the agent-sandbox realm after Keycloak startup
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-init
+  namespace: keycloak
+data:
+  init-realm.sh: |
+    #!/bin/bash
+    set -e
+
+    KEYCLOAK_URL="http://keycloak.keycloak.svc.cluster.local:8080"
+    REALM_NAME="agent-sandbox"
+    CLIENT_ID="boundary"
+    CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-boundary-client-secret-change-me}"
+    BOUNDARY_URL="${BOUNDARY_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
+
+    echo "========================================="
+    echo "  Keycloak Realm Initialization"
+    echo "========================================="
+    echo ""
+
+    # Wait for Keycloak to be ready
+    echo "Waiting for Keycloak to be ready..."
+    until curl -sf "$KEYCLOAK_URL/health/ready" >/dev/null 2>&1; do
+        echo "  Keycloak not ready, waiting 5s..."
+        sleep 5
+    done
+    echo "Keycloak is ready!"
+    echo ""
+
+    # Get admin token
+    echo "1. Obtaining admin access token..."
+    TOKEN=$(curl -sf -X POST "$KEYCLOAK_URL/realms/master/protocol/openid-connect/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=$KEYCLOAK_ADMIN" \
+        -d "password=$KEYCLOAK_ADMIN_PASSWORD" \
+        -d "grant_type=password" \
+        -d "client_id=admin-cli" | jq -r '.access_token')
+
+    if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
+        echo "ERROR: Failed to authenticate with Keycloak"
+        exit 1
+    fi
+    echo "  Authentication successful!"
+
+    # Check if realm already exists
+    echo ""
+    echo "2. Checking if realm exists..."
+    EXISTING_REALM=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME" \
+        -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.realm // empty')
+
+    if [ -n "$EXISTING_REALM" ]; then
+        echo "  Realm '$REALM_NAME' already exists, skipping creation"
+    else
+        echo "  Creating realm '$REALM_NAME'..."
+        curl -sf -X POST "$KEYCLOAK_URL/admin/realms" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"realm\": \"$REALM_NAME\",
+                \"enabled\": true,
+                \"displayName\": \"Agent Sandbox Platform\",
+                \"accessTokenLifespan\": 3600,
+                \"ssoSessionIdleTimeout\": 1800,
+                \"ssoSessionMaxLifespan\": 36000
+            }"
+        echo "  Realm created!"
+    fi
+
+    # Check if client exists
+    echo ""
+    echo "3. Checking if OIDC client exists..."
+    CLIENT_UUID=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients?clientId=$CLIENT_ID" \
+        -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id // empty')
+
+    if [ -n "$CLIENT_UUID" ]; then
+        echo "  Client '$CLIENT_ID' already exists ($CLIENT_UUID)"
+    else
+        echo "  Creating client '$CLIENT_ID'..."
+        curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"clientId\": \"$CLIENT_ID\",
+                \"name\": \"Boundary OIDC Client\",
+                \"enabled\": true,
+                \"protocol\": \"openid-connect\",
+                \"publicClient\": false,
+                \"standardFlowEnabled\": true,
+                \"redirectUris\": [\"$BOUNDARY_URL/v1/auth-methods/oidc:authenticate:callback\"],
+                \"webOrigins\": [\"$BOUNDARY_URL\"]
+            }"
+        echo "  Client created!"
+
+        # Get client UUID and regenerate secret
+        CLIENT_UUID=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients?clientId=$CLIENT_ID" \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+    fi
+
+    # Create groups if they don't exist
+    echo ""
+    echo "4. Creating groups..."
+    for group in "admins" "developers" "readonly"; do
+        EXISTING_GROUP=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups" \
+            -H "Authorization: Bearer $TOKEN" | jq -r ".[] | select(.name==\"$group\") | .name")
+
+        if [ -n "$EXISTING_GROUP" ]; then
+            echo "  Group '$group' already exists"
+        else
+            curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"name\": \"$group\"}"
+            echo "  Created group '$group'"
+        fi
+    done
+
+    # Create demo users
+    echo ""
+    echo "5. Creating demo users..."
+
+    create_user() {
+        local username=$1
+        local email=$2
+        local first=$3
+        local last=$4
+        local password=$5
+        local group=$6
+
+        EXISTING_USER=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=$username" \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.[0].username // empty')
+
+        if [ -n "$EXISTING_USER" ]; then
+            echo "  User '$email' already exists"
+        else
+            # Create user
+            curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{
+                    \"username\": \"$username\",
+                    \"email\": \"$email\",
+                    \"firstName\": \"$first\",
+                    \"lastName\": \"$last\",
+                    \"enabled\": true,
+                    \"emailVerified\": true
+                }"
+
+            # Get user ID
+            USER_ID=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users?username=$username" \
+                -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+
+            # Set password
+            curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/reset-password" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\": \"password\", \"value\": \"$password\", \"temporary\": false}"
+
+            # Add to group
+            GROUP_ID=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/groups" \
+                -H "Authorization: Bearer $TOKEN" | jq -r ".[] | select(.name==\"$group\") | .id")
+
+            if [ -n "$GROUP_ID" ]; then
+                curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/users/$USER_ID/groups/$GROUP_ID" \
+                    -H "Authorization: Bearer $TOKEN"
+            fi
+
+            echo "  Created user '$email' in group '$group'"
+        fi
+    }
+
+    create_user "admin" "admin@example.com" "Admin" "User" "Admin123!@#" "admins"
+    create_user "developer" "developer@example.com" "Developer" "User" "Dev123!@#" "developers"
+    create_user "readonly" "readonly@example.com" "ReadOnly" "User" "Read123!@#" "readonly"
+
+    echo ""
+    echo "========================================="
+    echo "  Realm Initialization Complete!"
+    echo "========================================="
+    echo ""
+    echo "Realm: $REALM_NAME"
+    echo "Client ID: $CLIENT_ID"
+    echo "Issuer: $KEYCLOAK_URL/realms/$REALM_NAME"
+    echo ""
+    echo "Demo Users:"
+    echo "  admin@example.com / Admin123!@# (admins)"
+    echo "  developer@example.com / Dev123!@# (developers)"
+    echo "  readonly@example.com / Read123!@# (readonly)"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-realm-init
+  namespace: keycloak
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: realm-init
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "/scripts/init-realm.sh"]
+          env:
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: KEYCLOAK_ADMIN
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: BOUNDARY_URL
+              value: "http://boundary-controller-api.boundary.svc.cluster.local:9200"
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: keycloak-realm-init
+            defaultMode: 0755
