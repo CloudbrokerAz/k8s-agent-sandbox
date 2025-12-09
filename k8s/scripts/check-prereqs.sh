@@ -104,7 +104,7 @@ install_kubectl() {
 
     if command -v kubectl &> /dev/null; then
         echo "  kubectl installed successfully"
-        ((INSTALLED++))
+        INSTALLED=$((INSTALLED + 1))
         return 0
     else
         echo "  Failed to install kubectl"
@@ -298,7 +298,7 @@ else
     echo "NO CLUSTER"
     echo "  No cluster available. A Kind cluster will be created during deployment."
     echo "  Or run: ./setup-kind.sh"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # Check Helm
