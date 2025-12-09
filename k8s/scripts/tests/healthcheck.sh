@@ -82,47 +82,47 @@ else
     check_fail "Namespace '$DEVENV_NAMESPACE' does not exist"
 fi
 
-# Check StatefulSet
-DEVENV_READY=$(kubectl get statefulset devenv -n "$DEVENV_NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-DEVENV_DESIRED=$(kubectl get statefulset devenv -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
-if [[ "$DEVENV_READY" == "$DEVENV_DESIRED" ]] && [[ "$DEVENV_READY" != "0" ]]; then
-    check_pass "DevEnv StatefulSet ready ($DEVENV_READY/$DEVENV_DESIRED replicas)"
+# Check Sandbox CR (kubernetes-sigs/agent-sandbox pattern)
+SANDBOX_NAME="claude-code-sandbox"
+if kubectl get sandbox "$SANDBOX_NAME" -n "$DEVENV_NAMESPACE" &>/dev/null; then
+    check_pass "Sandbox CR '$SANDBOX_NAME' exists"
 else
-    check_fail "DevEnv StatefulSet not ready ($DEVENV_READY/$DEVENV_DESIRED replicas)"
+    check_fail "Sandbox CR '$SANDBOX_NAME' not found"
 fi
 
-# Check SSH server
-if kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- pgrep sshd &>/dev/null; then
-    check_pass "SSH server running in devenv-0"
+# Check Sandbox pod is running
+SANDBOX_POD_STATUS=$(kubectl get pod "$SANDBOX_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+if [[ "$SANDBOX_POD_STATUS" == "Running" ]]; then
+    check_pass "Sandbox pod '$SANDBOX_NAME' running"
 else
-    check_warn "SSH server not running (may need restart)"
+    check_fail "Sandbox pod status: $SANDBOX_POD_STATUS"
 fi
 
 # Check Claude Code installation
-if kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- which claude &>/dev/null; then
-    CLAUDE_VERSION=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- claude --version 2>/dev/null || echo "unknown")
+if kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- which claude &>/dev/null; then
+    CLAUDE_VERSION=$(kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- claude --version 2>/dev/null || echo "unknown")
     check_pass "Claude Code installed ($CLAUDE_VERSION)"
 else
     check_warn "Claude Code not found (install with: npm install -g @anthropic-ai/claude-code)"
 fi
 
 # Check Terraform installation
-if kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- terraform version &>/dev/null; then
-    TF_VERSION=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- terraform version -json 2>/dev/null | jq -r '.terraform_version' || echo "unknown")
+if kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- terraform version &>/dev/null; then
+    TF_VERSION=$(kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- terraform version -json 2>/dev/null | jq -r '.terraform_version' || echo "unknown")
     check_pass "Terraform installed ($TF_VERSION)"
 else
     check_warn "Terraform not found"
 fi
 
 # Check environment variables
-if kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv TFE_TOKEN &>/dev/null; then
+if kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- printenv TFE_TOKEN &>/dev/null; then
     check_pass "TFE_TOKEN environment variable set"
 else
     check_warn "TFE_TOKEN not set (run configure-tfe-engine.sh)"
 fi
 
 # Check GITHUB_TOKEN from VSO
-GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv GITHUB_TOKEN 2>/dev/null || echo "")
+GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$SANDBOX_NAME" -- printenv GITHUB_TOKEN 2>/dev/null || echo "")
 if [[ -n "$GH_TOKEN" ]] && [[ "$GH_TOKEN" != "placeholder-update-me" ]]; then
     check_pass "GITHUB_TOKEN set from Vault"
 elif [[ "$GH_TOKEN" == "placeholder-update-me" ]]; then
