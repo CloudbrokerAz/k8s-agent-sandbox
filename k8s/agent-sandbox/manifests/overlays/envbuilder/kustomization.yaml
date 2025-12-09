@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Envbuilder overlay: Builds devcontainer at runtime
+# Use this if you need devcontainer features applied dynamically
+# Note: Slower startup but more flexible
+
+resources:
+  - ../../base/namespace.yaml
+  - ../../base/service.yaml
+  - ../../base/sandbox-envbuilder.yaml
+
+commonLabels:
+  app.kubernetes.io/name: agent-sandbox
+  app.kubernetes.io/part-of: agent-sandbox-platform
+  app.kubernetes.io/variant: envbuilder

@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "hashicorp.terraform",
+    "Anthropic.claude-code",
+    "redhat.vscode-yaml",
+    "HashiCorp.HCL",
+    "ms-kubernetes-tools.vscode-kubernetes-tools",
+    "ms-azuretools.vscode-docker",
+    "golang.go",
+    "ms-python.python"
+  ],
+  "unwantedRecommendations": []
+}

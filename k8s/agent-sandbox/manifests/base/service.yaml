@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devenv
+  namespace: devenv
+  labels:
+    app: devenv
+spec:
+  type: ClusterIP
+  selector:
+    app: devenv
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: 22
+      protocol: TCP
+    - name: code-server
+      port: 13337
+      targetPort: 13337
+      protocol: TCP

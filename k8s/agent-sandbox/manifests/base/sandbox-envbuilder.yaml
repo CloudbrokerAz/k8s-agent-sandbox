@@ -1,0 +1,151 @@
+# Agent Sandbox with Envbuilder
+# Builds devcontainer at runtime using devcontainer features
+# Supports both code-server (browser) and SSH (native VS Code)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: devenv
+  namespace: devenv
+  labels:
+    app: devenv
+spec:
+  serviceName: devenv
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devenv
+  template:
+    metadata:
+      labels:
+        app: devenv
+    spec:
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 1000
+
+      containers:
+      - name: devenv
+        image: ghcr.io/coder/envbuilder:latest
+        imagePullPolicy: Always
+
+        env:
+        # Envbuilder configuration
+        - name: ENVBUILDER_GIT_URL
+          value: "https://github.com/YOUR_ORG/YOUR_REPO.git"
+        - name: ENVBUILDER_DEVCONTAINER_DIR
+          value: "k8s/agent-sandbox/.devcontainer"
+        - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
+          value: "true"
+        - name: ENVBUILDER_INIT_SCRIPT
+          value: "/workspaces/repo/k8s/agent-sandbox/.devcontainer/entrypoint.sh"
+        - name: ENVBUILDER_FALLBACK_IMAGE
+          value: "srlynch1/terraform-ai-tools:latest"
+        # Ignore sensitive paths
+        - name: ENVBUILDER_IGNORE_PATHS
+          value: "/var/run/secrets,/product_uuid,/product_name"
+
+        # Secrets from Vault (via VSO)
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: GITHUB_TOKEN
+              optional: true
+        - name: TFE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: tfe-dynamic-token
+              key: TFE_TOKEN
+              optional: true
+        - name: TF_TOKEN_app_terraform_io
+          valueFrom:
+            secretKeyRef:
+              name: tfe-dynamic-token
+              key: TFE_TOKEN
+              optional: true
+        - name: LANGFUSE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: LANGFUSE_HOST
+              optional: true
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: LANGFUSE_PUBLIC_KEY
+              optional: true
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: LANGFUSE_SECRET_KEY
+              optional: true
+        - name: VAULT_ADDR
+          value: "https://vault.vault.svc.cluster.local:8200"
+        - name: VAULT_CACERT
+          value: "/vault-ca/vault-ca.crt"
+
+        ports:
+        - containerPort: 22
+          name: ssh
+          protocol: TCP
+        - containerPort: 13337
+          name: code-server
+          protocol: TCP
+
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "4Gi"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspaces
+        - name: vault-ssh-ca
+          mountPath: /vault-ssh-ca
+          readOnly: true
+        - name: vault-ca
+          mountPath: /vault-ca
+          readOnly: true
+
+        livenessProbe:
+          tcpSocket:
+            port: 22
+          initialDelaySeconds: 300  # Envbuilder needs time to build
+          periodSeconds: 30
+
+        readinessProbe:
+          tcpSocket:
+            port: 22
+          initialDelaySeconds: 120
+          periodSeconds: 10
+
+      volumes:
+      - name: vault-ssh-ca
+        secret:
+          secretName: vault-ssh-ca
+          optional: true
+      - name: vault-ca
+        secret:
+          secretName: vault-tls-ca
+          optional: true
+
+      terminationGracePeriodSeconds: 30
+
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+      labels:
+        app: devenv
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 10Gi

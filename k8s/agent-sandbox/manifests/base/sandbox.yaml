@@ -47,7 +47,32 @@ spec:
 
             # Create required directories
             mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
-            chown -R node:node /workspace /commandhistory /home/node/.claude
+            mkdir -p /home/node/.vscode-server/extensions
+            chown -R node:node /workspace /commandhistory /home/node/.claude /home/node/.vscode-server
+
+            # Create VS Code settings for Remote SSH
+            # Extensions will be installed automatically when VS Code connects
+            mkdir -p /home/node/.vscode-server/data/Machine
+            cat > /home/node/.vscode-server/data/Machine/settings.json << 'VSCODE_SETTINGS'
+            {
+              "editor.formatOnSave": true,
+              "terminal.integrated.defaultProfile.linux": "zsh",
+              "terraform.languageServer.enable": true,
+              "go.toolsManagement.autoUpdate": true,
+              "python.defaultInterpreterPath": "/usr/bin/python3",
+              "remote.SSH.defaultExtensions": [
+                "hashicorp.terraform",
+                "HashiCorp.HCL",
+                "redhat.vscode-yaml",
+                "dbaeumer.vscode-eslint",
+                "esbenp.prettier-vscode",
+                "ms-kubernetes-tools.vscode-kubernetes-tools",
+                "golang.go",
+                "ms-python.python"
+              ]
+            }
+            VSCODE_SETTINGS
+            chown -R node:node /home/node/.vscode-server
 
             # Configure SSH server
             echo "Configuring SSH server..."
@@ -72,6 +97,8 @@ spec:
             # Trust Vault SSH CA for certificate authentication
             TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub
             AuthorizedPrincipalsFile none
+            # Enable environment variables for SSH sessions
+            PermitUserEnvironment yes
             SSHD_CONFIG
 
             # Copy Vault SSH CA public key if mounted
@@ -92,7 +119,39 @@ spec:
             chmod 700 /home/node/.ssh
             touch /home/node/.ssh/authorized_keys
             chmod 600 /home/node/.ssh/authorized_keys
-            chown -R node:node /home/node/.ssh
+
+            # Export environment variables for SSH sessions
+            # This allows VS Code Remote SSH to inherit the container's env vars
+            # Method 1: SSH environment file (requires PermitUserEnvironment yes)
+            cat > /home/node/.ssh/environment << EOF
+GITHUB_TOKEN=${GITHUB_TOKEN:-}
+TFE_TOKEN=${TFE_TOKEN:-}
+TF_TOKEN_app_terraform_io=${TF_TOKEN_app_terraform_io:-}
+LANGFUSE_HOST=${LANGFUSE_HOST:-}
+LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+VAULT_ADDR=${VAULT_ADDR:-}
+VAULT_CACERT=${VAULT_CACERT:-}
+PATH=/usr/local/go/bin:/home/node/go/bin:/usr/local/share/npm-global/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin
+SHELL=/bin/zsh
+EOF
+            chmod 600 /home/node/.ssh/environment
+
+            # Method 2: Also add to .zshenv for interactive shells (VS Code uses this)
+            cat >> /home/node/.zshenv << EOF
+
+# Environment variables from Kubernetes secrets (injected at container startup)
+export GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+export TFE_TOKEN="${TFE_TOKEN:-}"
+export TF_TOKEN_app_terraform_io="${TF_TOKEN_app_terraform_io:-}"
+export LANGFUSE_HOST="${LANGFUSE_HOST:-}"
+export LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}"
+export LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}"
+export VAULT_ADDR="${VAULT_ADDR:-}"
+export VAULT_CACERT="${VAULT_CACERT:-}"
+EOF
+
+            chown -R node:node /home/node/.ssh /home/node/.zshenv
 
             # Add Vault CA certificate to system trust store (for HTTPS to Vault)
             if [ -f /vault-ca/vault-ca.crt ]; then
