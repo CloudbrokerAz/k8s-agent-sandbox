@@ -27,7 +27,7 @@ spec:
         # Envbuilder configuration
         # Clone this repo and build the claude-code devcontainer
         - name: ENVBUILDER_GIT_URL
-          value: "https://github.com/slynch-srl/agent-sandbox-platform.git"
+          value: "https://github.com/CloudbrokerAz/k8s-agent-sandbox.git"
         - name: ENVBUILDER_DEVCONTAINER_DIR
           value: "k8s/agent-sandbox"
         - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
