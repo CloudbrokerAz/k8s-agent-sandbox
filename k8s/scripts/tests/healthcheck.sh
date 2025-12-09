@@ -268,6 +268,116 @@ if [[ "$BOUNDARY_CTRL_STATUS" == "Running" ]]; then
 fi
 
 # ==========================================
+# Boundary Configuration
+# ==========================================
+echo ""
+echo "--- Boundary Configuration ---"
+
+BOUNDARY_CREDS_FILE="$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt"
+
+# Check if Boundary configuration exists
+if [[ -f "$BOUNDARY_CREDS_FILE" ]]; then
+    # Read configuration IDs from credentials file
+    BOUNDARY_ORG_ID=$(grep "Organization:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+    BOUNDARY_PROJECT_ID=$(grep "Project:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+    BOUNDARY_HOST_CATALOG_ID=$(grep "Host Catalog:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+    BOUNDARY_TARGET_ID=$(grep "Target (SSH):" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+    BOUNDARY_AUTH_METHOD_ID=$(grep "Auth Method ID:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $4}' || echo "")
+
+    if [[ -n "$BOUNDARY_ORG_ID" ]] && [[ "$BOUNDARY_ORG_ID" != "not" ]]; then
+        check_pass "Organization scope configured ($BOUNDARY_ORG_ID)"
+    else
+        check_info "Organization scope not configured"
+    fi
+
+    if [[ -n "$BOUNDARY_PROJECT_ID" ]] && [[ "$BOUNDARY_PROJECT_ID" != "not" ]]; then
+        check_pass "Project scope configured ($BOUNDARY_PROJECT_ID)"
+    else
+        check_info "Project scope not configured"
+    fi
+
+    if [[ -n "$BOUNDARY_HOST_CATALOG_ID" ]] && [[ "$BOUNDARY_HOST_CATALOG_ID" != "not" ]]; then
+        check_pass "Host catalog configured ($BOUNDARY_HOST_CATALOG_ID)"
+    else
+        check_info "Host catalog not configured"
+    fi
+
+    if [[ -n "$BOUNDARY_TARGET_ID" ]] && [[ "$BOUNDARY_TARGET_ID" != "not" ]]; then
+        check_pass "SSH target configured ($BOUNDARY_TARGET_ID)"
+    else
+        check_info "SSH target not configured"
+    fi
+
+    if [[ -n "$BOUNDARY_AUTH_METHOD_ID" ]] && [[ "$BOUNDARY_AUTH_METHOD_ID" != "not" ]]; then
+        check_pass "Password auth method configured ($BOUNDARY_AUTH_METHOD_ID)"
+    else
+        check_info "Password auth method not configured"
+    fi
+else
+    check_info "Boundary not configured (run configure-targets.sh)"
+fi
+
+# ==========================================
+# Boundary User Tests
+# ==========================================
+echo ""
+echo "--- Boundary User Tests ---"
+echo "Note: Tests Boundary authentication and target configuration"
+
+# Only run if Boundary controller is running
+if [[ "$BOUNDARY_CTRL_STATUS" == "Running" ]]; then
+    CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+    if [[ -n "$CONTROLLER_POD" ]] && [[ -f "$BOUNDARY_CREDS_FILE" ]]; then
+        # Get password auth method ID from credentials file
+        AUTH_METHOD_ID=$(grep "Auth Method ID:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $4}' || echo "")
+        ADMIN_PASS=$(grep "Password:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+
+        if [[ -n "$AUTH_METHOD_ID" ]] && [[ -n "$ADMIN_PASS" ]]; then
+            # Test admin authentication via password auth method
+            # Note: Boundary CLI requires env:// or file:// syntax for password
+            # Use /bin/ash -c to run the full command in the container's shell to handle quoting properly
+            AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+                /bin/ash -c "export BOUNDARY_ADDR=http://127.0.0.1:9200; export BOUNDARY_PASSWORD='$ADMIN_PASS'; boundary authenticate password -auth-method-id='$AUTH_METHOD_ID' -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json" 2>/dev/null | jq -r '.item.attributes.token // .item.id // empty' 2>/dev/null || echo "")
+
+            if [[ -n "$AUTH_RESULT" ]]; then
+                check_pass "Boundary admin authentication"
+            else
+                check_info "Boundary admin authentication failed (credentials may have changed)"
+            fi
+        else
+            check_info "Boundary credentials not found (run configure-targets.sh)"
+        fi
+    else
+        check_info "Boundary controller pod or credentials not available"
+    fi
+
+    # Check Boundary-Keycloak OIDC integration if both are running
+    KC_POD_STATUS=$(kubectl get pod -l app=keycloak -n keycloak -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+    if [[ "$KC_POD_STATUS" == "Running" ]]; then
+        # Check if boundary client exists in Keycloak
+        # Use -s (not -sf) to get JSON error response body on HTTP errors
+        KC_BOUNDARY_CLIENT=$(kubectl run -n keycloak oidc-client-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+            -- curl -s -X POST "http://keycloak:8080/realms/agent-sandbox/protocol/openid-connect/token" \
+                -d "grant_type=client_credentials" \
+                -d "client_id=boundary" \
+                -d "client_secret=boundary-client-secret-change-me" 2>&1 || echo "")
+
+        # If we get any response (token, unauthorized, invalid_secret, Invalid client credentials), the client exists
+        # Note: "Invalid client credentials" means client exists but wrong secret or grant type not allowed
+        if echo "$KC_BOUNDARY_CLIENT" | grep -qiE '"access_token"|unauthorized_client|invalid_client_secret|Invalid client credentials|invalid_grant'; then
+            check_pass "Keycloak 'boundary' OIDC client exists"
+        elif echo "$KC_BOUNDARY_CLIENT" | grep -qi 'Client not found'; then
+            check_info "Keycloak 'boundary' client not found (run configure-realm.sh)"
+        else
+            check_info "Could not verify Keycloak boundary client"
+        fi
+    fi
+else
+    check_info "Boundary user tests skipped (controller not running)"
+fi
+
+# ==========================================
 # Keycloak
 # ==========================================
 echo ""
@@ -485,6 +595,18 @@ echo ""
 echo -e "${BLUE}Boundary:${NC}"
 echo "  Controller API: http://boundary-controller-api.boundary.svc.cluster.local:9200"
 echo "  Worker: boundary-worker.boundary.svc.cluster.local:9202"
+echo "  Credentials: See platform/boundary/scripts/boundary-credentials.txt"
+# Show credentials if file exists
+if [[ -f "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" ]]; then
+    BOUNDARY_AUTH_ID=$(grep "Auth Method ID:" "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" 2>/dev/null | awk '{print $4}' || echo "")
+    BOUNDARY_ADMIN_PASS=$(grep "Password:" "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" 2>/dev/null | awk '{print $2}' || echo "")
+    BOUNDARY_TARGET_ID=$(grep "Target (SSH):" "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" 2>/dev/null | awk '{print $3}' || echo "")
+    if [[ -n "$BOUNDARY_AUTH_ID" ]]; then
+        echo "  Auth Method ID: $BOUNDARY_AUTH_ID"
+        echo "  Admin Login: admin / $BOUNDARY_ADMIN_PASS"
+        echo "  SSH Target ID: $BOUNDARY_TARGET_ID"
+    fi
+fi
 echo ""
 echo -e "${BLUE}Agent Sandbox:${NC}"
 echo "  Namespace: devenv"

@@ -5,47 +5,102 @@
 Checking all platform components...
 
 --- Kubernetes Cluster ---
-✅ PASS: Kubernetes cluster reachable
+[0;32m✅ PASS[0m: Kubernetes cluster reachable
 
 --- Agent Sandbox (DevEnv) ---
-✅ PASS: Namespace 'devenv' exists
-✅ PASS: Sandbox CR 'claude-code-sandbox' exists
-✅ PASS: Sandbox pod 'claude-code-sandbox' running
-✅ PASS: Claude Code installed (2.0.62 (Claude Code))
-✅ PASS: Terraform installed (1.13.5)
-✅ PASS: TFE_TOKEN environment variable set
-✅ PASS: GITHUB_TOKEN set from Vault
+[0;32m✅ PASS[0m: Namespace 'devenv' exists
+[0;32m✅ PASS[0m: Sandbox CR 'claude-code-sandbox' exists
+[0;32m✅ PASS[0m: Sandbox pod 'claude-code-sandbox' running
+[0;32m✅ PASS[0m: Claude Code installed (2.0.62 (Claude Code))
+[0;32m✅ PASS[0m: Terraform installed (1.13.5)
+[0;32m✅ PASS[0m: TFE_TOKEN environment variable set
+[0;32m✅ PASS[0m: GITHUB_TOKEN set from Vault
 
 --- HashiCorp Vault ---
-✅ PASS: Namespace 'vault' exists
-✅ PASS: Vault pod running
-✅ PASS: Vault unsealed and ready
-✅ PASS: KV secrets engine enabled
-✅ PASS: SSH secrets engine enabled
-ℹ️  INFO: Terraform secrets engine not configured (optional - static TFE_TOKEN used via KV)
+[0;32m✅ PASS[0m: Namespace 'vault' exists
+[0;32m✅ PASS[0m: Vault pod running
+[0;32m✅ PASS[0m: Vault unsealed and ready
+[0;32m✅ PASS[0m: KV secrets engine enabled
+[0;32m✅ PASS[0m: SSH secrets engine enabled
+[0;34mℹ️  INFO[0m: Terraform secrets engine not configured (optional - static TFE_TOKEN used via KV)
 
 --- HashiCorp Boundary ---
-✅ PASS: Namespace 'boundary' exists
-✅ PASS: Boundary controller running
-✅ PASS: Boundary worker running
+[0;32m✅ PASS[0m: Namespace 'boundary' exists
+[0;32m✅ PASS[0m: Boundary controller running
+[0;32m✅ PASS[0m: Boundary worker running
+
+--- Boundary Configuration ---
+[0;32m✅ PASS[0m: Organization scope configured (o_du4Dt1d5kl)
+[0;32m✅ PASS[0m: Project scope configured (p_MPYLFQRsOK)
+[0;32m✅ PASS[0m: Host catalog configured (hcst_5PxNj4HZff)
+[0;32m✅ PASS[0m: SSH target configured (ttcp_OESxBuQels)
+[0;32m✅ PASS[0m: Password auth method configured (ampw_g4b2azhnSG)
+
+--- Boundary User Tests ---
+Note: Tests Boundary authentication and target configuration
+[0;32m✅ PASS[0m: Boundary admin authentication
+[0;32m✅ PASS[0m: Keycloak 'boundary' OIDC client exists
+
+--- Keycloak (Identity Provider) ---
+[0;32m✅ PASS[0m: Namespace 'keycloak' exists
+[0;32m✅ PASS[0m: Keycloak pod running
+[0;32m✅ PASS[0m: Keycloak PostgreSQL running
+[0;32m✅ PASS[0m: Keycloak health endpoint responding
+[0;32m✅ PASS[0m: Realm 'agent-sandbox' OIDC configured
+
+--- OIDC Integration Testing ---
+Note: User login tests are optional - users must be created via configure-realm.sh
+[0;32m✅ PASS[0m: User authentication (developer)
+[0;32m✅ PASS[0m: User authentication (realmadmin)
 
 --- Vault Secrets Operator ---
-✅ PASS: Namespace 'vault-secrets-operator-system' exists
-✅ PASS: VSO controller manager running
-✅ PASS: VaultConnection is valid
-✅ PASS: Vault secrets synced to devenv namespace
+[0;32m✅ PASS[0m: Namespace 'vault-secrets-operator-system' exists
+[0;32m✅ PASS[0m: VSO controller manager running
+[0;32m✅ PASS[0m: VaultConnection is valid
+[0;32m✅ PASS[0m: Vault secrets synced to devenv namespace
 
 --- Secrets and Certificates ---
-✅ PASS: Vault SSH CA secret exists
-✅ PASS: Vault TLS CA secret exists
-ℹ️  INFO: TFE dynamic token not configured (optional - static TFE_TOKEN used via KV)
+[0;32m✅ PASS[0m: Vault SSH CA secret exists
+[0;32m✅ PASS[0m: Vault TLS CA secret exists
+[0;34mℹ️  INFO[0m: TFE dynamic token not configured (optional - static TFE_TOKEN used via KV)
 
 ==========================================
   Healthcheck Summary
 ==========================================
 
-Passed: 22
-Warnings: 0
-Failed: 0
+[0;32mPassed[0m: 36
+[1;33mWarnings[0m: 0
+[0;31mFailed[0m: 0
 
-HEALTH: HEALTHY - All systems operational
+[0;32mHEALTH: HEALTHY[0m - All systems operational
+
+==========================================
+  Access Credentials
+==========================================
+
+[0;34mVault:[0m
+  URL: http://vault.vault.svc.cluster.local:8200
+  Root Token: See platform/vault/scripts/vault-keys.txt
+
+[0;34mKeycloak:[0m
+  URL: http://keycloak.keycloak.svc.cluster.local:8080
+  Admin Console: /admin/master/console/
+  Master Admin: admin / admin123!@#
+  Realm: agent-sandbox
+  Demo Users:
+    developer / Dev123!@# (developers group)
+    realmadmin / Admin123!@# (admins group)
+
+[0;34mBoundary:[0m
+  Controller API: http://boundary-controller-api.boundary.svc.cluster.local:9200
+  Worker: boundary-worker.boundary.svc.cluster.local:9202
+  Credentials: See platform/boundary/scripts/boundary-credentials.txt
+  Auth Method ID: ampw_g4b2azhnSG
+  Admin Login: admin / 6EOCCcV0sDUClLZ1FN3T
+  SSH Target ID: ttcp_OESxBuQels
+
+[0;34mAgent Sandbox:[0m
+  Namespace: devenv
+  Pod: claude-code-sandbox
+  Connect: kubectl exec -it -n devenv claude-code-sandbox -- /bin/bash
+
