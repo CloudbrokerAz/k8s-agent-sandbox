@@ -27,302 +27,307 @@ spec:
         fsGroup: 1000
 
       containers:
-      - name: devenv
-        # Pre-built image with Terraform, AWS CLI, Claude Code, etc.
-        # Base: srlynch1/terraform-ai-tools:latest
-        image: srlynch1/terraform-ai-tools:latest
-        imagePullPolicy: Always
+        - name: devenv
+          # Pre-built image with Terraform, AWS CLI, Claude Code, etc.
+          # Base: srlynch1/terraform-ai-tools:latest
+          image: srlynch1/terraform-ai-tools:latest
+          imagePullPolicy: Always
 
-        # Start SSH server and keep container running
-        command: ["/bin/bash", "-c"]
-        args:
-          - |
-            set -e
-            echo "Agent Sandbox starting..."
+          # Start SSH server and keep container running
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "Agent Sandbox starting..."
 
-            # Install tools (with timeout to prevent hanging)
-            install_tools() {
-              # Install Claude Code
-              if ! command -v claude &> /dev/null; then
-                echo "Installing Claude Code..."
-                timeout 120 npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "Claude install skipped"
+              # Install tools (with timeout to prevent hanging)
+              # Create required directories first
+              mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
+              mkdir -p /home/node/.vscode-server/extensions
+              touch /home/node/.zshenv
+              chown -R node:node /workspace /commandhistory /home/node
+
+              install_tools() {
+                # Install Claude Code
+                if ! command -v claude &> /dev/null; then
+                  echo "Installing Claude Code..."
+                  timeout 120 npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "Claude install skipped"
+                fi
+
+                # Install Bun
+                if ! command -v bun &> /dev/null; then
+                  echo "Installing Bun..."
+                  timeout 60 bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null || echo "Bun install skipped"
+                fi
+              }
+              install_tools || true
+
+              # Add tools to PATH for SSH sessions
+              echo "export PATH=\"/root/.bun/bin:/root/.local/bin:\$PATH\"" >> /home/node/.zshenv
+              echo "# Run ccstatusline with: bunx ccstatusline@latest" >> /home/node/.zshenv
+              chown node:node /home/node/.zshenv
+
+              # Create directories (some already created above)
+              mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
+              mkdir -p /home/node/.vscode-server/extensions
+              chown -R node:node /workspace /commandhistory /home/node/.claude /home/node/.vscode-server
+
+              # Create VS Code settings for Remote SSH
+              # Extensions will be installed automatically when VS Code connects
+              mkdir -p /home/node/.vscode-server/data/Machine
+              cat > /home/node/.vscode-server/data/Machine/settings.json << 'VSCODE_SETTINGS'
+              {
+                "editor.formatOnSave": true,
+                "terminal.integrated.defaultProfile.linux": "zsh",
+                "terraform.languageServer.enable": true,
+                "go.toolsManagement.autoUpdate": true,
+                "python.defaultInterpreterPath": "/usr/bin/python3",
+                "remote.SSH.defaultExtensions": [
+                  "hashicorp.terraform",
+                  "HashiCorp.HCL",
+                  "redhat.vscode-yaml",
+                  "dbaeumer.vscode-eslint",
+                  "esbenp.prettier-vscode",
+                  "golang.go"
+                ]
+              }
+              VSCODE_SETTINGS
+              chown -R node:node /home/node/.vscode-server
+
+              # Configure SSH server
+              echo "Configuring SSH server..."
+
+              # Generate host keys if not present
+              if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+                ssh-keygen -A
               fi
 
-              # Install Bun
-              if ! command -v bun &> /dev/null; then
-                echo "Installing Bun..."
-                timeout 60 bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null || echo "Bun install skipped"
+              # Configure sshd
+              cat > /etc/ssh/sshd_config << 'SSHD_CONFIG'
+              Port 22
+              PermitRootLogin no
+              PasswordAuthentication no
+              PubkeyAuthentication yes
+              ChallengeResponseAuthentication no
+              UsePAM yes
+              X11Forwarding yes
+              PrintMotd no
+              AcceptEnv LANG LC_*
+              Subsystem sftp /usr/lib/openssh/sftp-server
+              # Trust Vault SSH CA for certificate authentication
+              TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub
+              AuthorizedPrincipalsFile none
+              # Enable environment variables for SSH sessions
+              PermitUserEnvironment yes
+              SSHD_CONFIG
+
+              # Copy Vault SSH CA public key if mounted
+              if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
+                cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
+                chmod 644 /etc/ssh/vault-ssh-ca.pub
+                echo "Vault SSH CA configured"
+              else
+                # Create empty file to prevent sshd error
+                touch /etc/ssh/vault-ssh-ca.pub
+                echo "Warning: Vault SSH CA not mounted, using password auth fallback"
+                # Enable password auth as fallback
+                sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
               fi
-            }
-            install_tools || true
 
-            # Add tools to PATH for SSH sessions
-            echo "export PATH=\"/root/.bun/bin:/root/.local/bin:\$PATH\"" >> /home/node/.zshenv
-            echo "# Run ccstatusline with: bunx ccstatusline@latest" >> /home/node/.zshenv
+              # Setup node user SSH directory
+              mkdir -p /home/node/.ssh
+              chmod 700 /home/node/.ssh
+              touch /home/node/.ssh/authorized_keys
+              chmod 600 /home/node/.ssh/authorized_keys
 
-            # Create required directories
-            mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
-            mkdir -p /home/node/.vscode-server/extensions
-            chown -R node:node /workspace /commandhistory /home/node/.claude /home/node/.vscode-server
+              # Export environment variables for SSH sessions
+              # This allows VS Code Remote SSH to inherit the container's env vars
+              # Method 1: SSH environment file (requires PermitUserEnvironment yes)
+              echo "GITHUB_TOKEN=${GITHUB_TOKEN:-}" > /home/node/.ssh/environment
+              echo "TFE_TOKEN=${TFE_TOKEN:-}" >> /home/node/.ssh/environment
+              echo "TF_TOKEN_app_terraform_io=${TF_TOKEN_app_terraform_io:-}" >> /home/node/.ssh/environment
+              echo "LANGFUSE_HOST=${LANGFUSE_HOST:-}" >> /home/node/.ssh/environment
+              echo "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}" >> /home/node/.ssh/environment
+              echo "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}" >> /home/node/.ssh/environment
+              echo "VAULT_ADDR=${VAULT_ADDR:-}" >> /home/node/.ssh/environment
+              echo "VAULT_CACERT=${VAULT_CACERT:-}" >> /home/node/.ssh/environment
+              echo "PATH=/usr/local/go/bin:/home/node/go/bin:/usr/local/share/npm-global/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin" >> /home/node/.ssh/environment
+              echo "SHELL=/bin/zsh" >> /home/node/.ssh/environment
+              chmod 600 /home/node/.ssh/environment
 
-            # Create VS Code settings for Remote SSH
-            # Extensions will be installed automatically when VS Code connects
-            mkdir -p /home/node/.vscode-server/data/Machine
-            cat > /home/node/.vscode-server/data/Machine/settings.json << 'VSCODE_SETTINGS'
-            {
-              "editor.formatOnSave": true,
-              "terminal.integrated.defaultProfile.linux": "zsh",
-              "terraform.languageServer.enable": true,
-              "go.toolsManagement.autoUpdate": true,
-              "python.defaultInterpreterPath": "/usr/bin/python3",
-              "remote.SSH.defaultExtensions": [
-                "hashicorp.terraform",
-                "HashiCorp.HCL",
-                "redhat.vscode-yaml",
-                "dbaeumer.vscode-eslint",
-                "esbenp.prettier-vscode",
-                "ms-kubernetes-tools.vscode-kubernetes-tools",
-                "golang.go",
-                "ms-python.python"
-              ]
-            }
-            VSCODE_SETTINGS
-            chown -R node:node /home/node/.vscode-server
+              # Method 2: Also add to .zshenv for interactive shells (VS Code uses this)
+              echo "" >> /home/node/.zshenv
+              echo "# Environment variables from Kubernetes secrets" >> /home/node/.zshenv
+              echo "export GITHUB_TOKEN=\"${GITHUB_TOKEN:-}\"" >> /home/node/.zshenv
+              echo "export TFE_TOKEN=\"${TFE_TOKEN:-}\"" >> /home/node/.zshenv
+              echo "export TF_TOKEN_app_terraform_io=\"${TF_TOKEN_app_terraform_io:-}\"" >> /home/node/.zshenv
+              echo "export LANGFUSE_HOST=\"${LANGFUSE_HOST:-}\"" >> /home/node/.zshenv
+              echo "export LANGFUSE_PUBLIC_KEY=\"${LANGFUSE_PUBLIC_KEY:-}\"" >> /home/node/.zshenv
+              echo "export LANGFUSE_SECRET_KEY=\"${LANGFUSE_SECRET_KEY:-}\"" >> /home/node/.zshenv
+              echo "export VAULT_ADDR=\"${VAULT_ADDR:-}\"" >> /home/node/.zshenv
+              echo "export VAULT_CACERT=\"${VAULT_CACERT:-}\"" >> /home/node/.zshenv
 
-            # Configure SSH server
-            echo "Configuring SSH server..."
+              chown -R node:node /home/node/.ssh /home/node/.zshenv
 
-            # Generate host keys if not present
-            if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
-              ssh-keygen -A
-            fi
+              # Add Vault CA certificate to system trust store (for HTTPS to Vault)
+              if [ -f /vault-ca/vault-ca.crt ]; then
+                cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/vault-ca.crt
+                update-ca-certificates
+                echo "Vault TLS CA added to system trust store"
+              fi
 
-            # Configure sshd
-            cat > /etc/ssh/sshd_config << 'SSHD_CONFIG'
-            Port 22
-            PermitRootLogin no
-            PasswordAuthentication no
-            PubkeyAuthentication yes
-            ChallengeResponseAuthentication no
-            UsePAM yes
-            X11Forwarding yes
-            PrintMotd no
-            AcceptEnv LANG LC_*
-            Subsystem sftp /usr/lib/openssh/sftp-server
-            # Trust Vault SSH CA for certificate authentication
-            TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub
-            AuthorizedPrincipalsFile none
-            # Enable environment variables for SSH sessions
-            PermitUserEnvironment yes
-            SSHD_CONFIG
+              # Start SSH server
+              echo "Starting SSH server..."
+              /usr/sbin/sshd
 
-            # Copy Vault SSH CA public key if mounted
-            if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
-              cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
-              chmod 644 /etc/ssh/vault-ssh-ca.pub
-              echo "Vault SSH CA configured"
-            else
-              # Create empty file to prevent sshd error
-              touch /etc/ssh/vault-ssh-ca.pub
-              echo "Warning: Vault SSH CA not mounted, using password auth fallback"
-              # Enable password auth as fallback
-              sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-            fi
+              echo "Agent Sandbox ready for VSCode Remote SSH"
+              echo "Connect via: ssh node@<pod-ip> or use kubectl port-forward"
 
-            # Setup node user SSH directory
-            mkdir -p /home/node/.ssh
-            chmod 700 /home/node/.ssh
-            touch /home/node/.ssh/authorized_keys
-            chmod 600 /home/node/.ssh/authorized_keys
+              # Keep container running
+              tail -f /dev/null
 
-            # Export environment variables for SSH sessions
-            # This allows VS Code Remote SSH to inherit the container's env vars
-            # Method 1: SSH environment file (requires PermitUserEnvironment yes)
-            echo "GITHUB_TOKEN=${GITHUB_TOKEN:-}" > /home/node/.ssh/environment
-            echo "TFE_TOKEN=${TFE_TOKEN:-}" >> /home/node/.ssh/environment
-            echo "TF_TOKEN_app_terraform_io=${TF_TOKEN_app_terraform_io:-}" >> /home/node/.ssh/environment
-            echo "LANGFUSE_HOST=${LANGFUSE_HOST:-}" >> /home/node/.ssh/environment
-            echo "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}" >> /home/node/.ssh/environment
-            echo "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}" >> /home/node/.ssh/environment
-            echo "VAULT_ADDR=${VAULT_ADDR:-}" >> /home/node/.ssh/environment
-            echo "VAULT_CACERT=${VAULT_CACERT:-}" >> /home/node/.ssh/environment
-            echo "PATH=/usr/local/go/bin:/home/node/go/bin:/usr/local/share/npm-global/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin" >> /home/node/.ssh/environment
-            echo "SHELL=/bin/zsh" >> /home/node/.ssh/environment
-            chmod 600 /home/node/.ssh/environment
+          ports:
+            - containerPort: 22
+              name: ssh
+              protocol: TCP
 
-            # Method 2: Also add to .zshenv for interactive shells (VS Code uses this)
-            echo "" >> /home/node/.zshenv
-            echo "# Environment variables from Kubernetes secrets" >> /home/node/.zshenv
-            echo "export GITHUB_TOKEN=\"${GITHUB_TOKEN:-}\"" >> /home/node/.zshenv
-            echo "export TFE_TOKEN=\"${TFE_TOKEN:-}\"" >> /home/node/.zshenv
-            echo "export TF_TOKEN_app_terraform_io=\"${TF_TOKEN_app_terraform_io:-}\"" >> /home/node/.zshenv
-            echo "export LANGFUSE_HOST=\"${LANGFUSE_HOST:-}\"" >> /home/node/.zshenv
-            echo "export LANGFUSE_PUBLIC_KEY=\"${LANGFUSE_PUBLIC_KEY:-}\"" >> /home/node/.zshenv
-            echo "export LANGFUSE_SECRET_KEY=\"${LANGFUSE_SECRET_KEY:-}\"" >> /home/node/.zshenv
-            echo "export VAULT_ADDR=\"${VAULT_ADDR:-}\"" >> /home/node/.zshenv
-            echo "export VAULT_CACERT=\"${VAULT_CACERT:-}\"" >> /home/node/.zshenv
+          env:
+            # GITHUB_TOKEN from Vault KV via VSO (synced from secret/devenv/credentials)
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: GITHUB_TOKEN
+                  optional: true
+            # TFE_TOKEN from Vault dynamic secret (auto-renewed)
+            - name: TFE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tfe-dynamic-token
+                  key: TFE_TOKEN
+                  optional: true
+            - name: TF_TOKEN_app_terraform_io
+              valueFrom:
+                secretKeyRef:
+                  name: tfe-dynamic-token
+                  key: TFE_TOKEN
+                  optional: true
+            # Langfuse observability (from Vault KV via VSO)
+            - name: LANGFUSE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_HOST
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+            # Vault address for CLI tools
+            - name: VAULT_ADDR
+              value: "https://vault.vault.svc.cluster.local:8200"
+            - name: VAULT_CACERT
+              value: "/vault-ca/vault-ca.crt"
 
-            chown -R node:node /home/node/.ssh /home/node/.zshenv
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
 
-            # Add Vault CA certificate to system trust store (for HTTPS to Vault)
-            if [ -f /vault-ca/vault-ca.crt ]; then
-              cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/vault-ca.crt
-              update-ca-certificates
-              echo "Vault TLS CA added to system trust store"
-            fi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: bash-history
+              mountPath: /commandhistory
+            - name: claude-config
+              mountPath: /home/node/.claude
+            - name: vault-ssh-ca
+              mountPath: /vault-ssh-ca
+              readOnly: true
+            - name: vault-ca
+              mountPath: /vault-ca
+              readOnly: true
+            - name: ssh-host-keys
+              mountPath: /etc/ssh/ssh_host_keys
 
-            # Start SSH server
-            echo "Starting SSH server..."
-            /usr/sbin/sshd
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              add:
+                - NET_BIND_SERVICE # Required for binding to port 22
+              drop:
+                - ALL
 
-            echo "Agent Sandbox ready for VSCode Remote SSH"
-            echo "Connect via: ssh node@<pod-ip> or use kubectl port-forward"
+          livenessProbe:
+            exec:
+              command: ["/bin/bash", "-c", "pgrep sshd"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
 
-            # Keep container running
-            tail -f /dev/null
-
-        ports:
-        - containerPort: 22
-          name: ssh
-          protocol: TCP
-
-        env:
-        # GITHUB_TOKEN from Vault KV via VSO (synced from secret/devenv/credentials)
-        - name: GITHUB_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: devenv-vault-secrets
-              key: GITHUB_TOKEN
-              optional: true
-        # TFE_TOKEN from Vault dynamic secret (auto-renewed)
-        - name: TFE_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: tfe-dynamic-token
-              key: TFE_TOKEN
-              optional: true
-        - name: TF_TOKEN_app_terraform_io
-          valueFrom:
-            secretKeyRef:
-              name: tfe-dynamic-token
-              key: TFE_TOKEN
-              optional: true
-        # Langfuse observability (from Vault KV via VSO)
-        - name: LANGFUSE_HOST
-          valueFrom:
-            secretKeyRef:
-              name: devenv-vault-secrets
-              key: LANGFUSE_HOST
-              optional: true
-        - name: LANGFUSE_PUBLIC_KEY
-          valueFrom:
-            secretKeyRef:
-              name: devenv-vault-secrets
-              key: LANGFUSE_PUBLIC_KEY
-              optional: true
-        - name: LANGFUSE_SECRET_KEY
-          valueFrom:
-            secretKeyRef:
-              name: devenv-vault-secrets
-              key: LANGFUSE_SECRET_KEY
-              optional: true
-        # Vault address for CLI tools
-        - name: VAULT_ADDR
-          value: "https://vault.vault.svc.cluster.local:8200"
-        - name: VAULT_CACERT
-          value: "/vault-ca/vault-ca.crt"
-
-        resources:
-          requests:
-            memory: "2Gi"
-            cpu: "500m"
-          limits:
-            memory: "4Gi"
-            cpu: "2000m"
-
-        volumeMounts:
-        - name: workspace
-          mountPath: /workspace
-        - name: bash-history
-          mountPath: /commandhistory
-        - name: claude-config
-          mountPath: /home/node/.claude
-        - name: vault-ssh-ca
-          mountPath: /vault-ssh-ca
-          readOnly: true
-        - name: vault-ca
-          mountPath: /vault-ca
-          readOnly: true
-        - name: ssh-host-keys
-          mountPath: /etc/ssh/ssh_host_keys
-
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            add:
-            - NET_BIND_SERVICE  # Required for binding to port 22
-            drop:
-            - ALL
-
-        livenessProbe:
-          exec:
-            command: ["/bin/bash", "-c", "pgrep sshd"]
-          initialDelaySeconds: 60
-          periodSeconds: 30
-
-        readinessProbe:
-          tcpSocket:
-            port: 22
-          initialDelaySeconds: 30
-          periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 22
+            initialDelaySeconds: 30
+            periodSeconds: 10
 
       volumes:
-      # Vault SSH CA public key for certificate authentication
-      - name: vault-ssh-ca
-        secret:
-          secretName: vault-ssh-ca
-          optional: true
-      # Vault TLS CA for HTTPS trust
-      - name: vault-ca
-        secret:
-          secretName: vault-tls-ca
-          optional: true
-      # Persistent SSH host keys (prevent host key changes on pod restart)
-      - name: ssh-host-keys
-        emptyDir: {}
+        # Vault SSH CA public key for certificate authentication
+        - name: vault-ssh-ca
+          secret:
+            secretName: vault-ssh-ca
+            optional: true
+        # Vault TLS CA for HTTPS trust
+        - name: vault-ca
+          secret:
+            secretName: vault-tls-ca
+            optional: true
+        # Persistent SSH host keys (prevent host key changes on pod restart)
+        - name: ssh-host-keys
+          emptyDir: {}
 
       terminationGracePeriodSeconds: 30
 
   volumeClaimTemplates:
-  - metadata:
-      name: workspace
-      labels:
-        app: devenv
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: standard
-      resources:
-        requests:
-          storage: 10Gi
+    - metadata:
+        name: workspace
+        labels:
+          app: devenv
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 10Gi
 
-  - metadata:
-      name: bash-history
-      labels:
-        app: devenv
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: standard
-      resources:
-        requests:
-          storage: 1Gi
+    - metadata:
+        name: bash-history
+        labels:
+          app: devenv
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi
 
-  - metadata:
-      name: claude-config
-      labels:
-        app: devenv
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: standard
-      resources:
-        requests:
-          storage: 1Gi
+    - metadata:
+        name: claude-config
+        labels:
+          app: devenv
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi
