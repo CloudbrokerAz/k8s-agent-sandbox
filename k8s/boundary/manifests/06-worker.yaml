@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boundary-worker
+  namespace: boundary
+  labels:
+    app: boundary-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: boundary-worker
+  template:
+    metadata:
+      labels:
+        app: boundary-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        fsGroup: 100
+      initContainers:
+        # Wait for controller to be ready
+        - name: wait-for-controller
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z boundary-controller-api.boundary.svc.cluster.local 9200; do
+                echo "Waiting for Boundary controller..."
+                sleep 2
+              done
+              echo "Controller is ready"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: boundary-worker
+          image: hashicorp/boundary:0.17
+          args:
+            - server
+            - -config=/boundary/config/worker.hcl
+          ports:
+            - containerPort: 9202
+              name: proxy
+            - containerPort: 9203
+              name: ops
+          env:
+            - name: BOUNDARY_WORKER_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-kms-keys
+                  key: BOUNDARY_WORKER_AUTH_KEY
+          volumeMounts:
+            - name: config
+              mountPath: /boundary/config
+              readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9203
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9203
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: boundary-worker-config

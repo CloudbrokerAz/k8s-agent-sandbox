@@ -1,0 +1,53 @@
+# Network Policy for Boundary namespace
+# Requires a CNI that supports NetworkPolicy (Calico, Cilium, etc.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: boundary-network-policy
+  namespace: boundary
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic within boundary namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: boundary
+    # Allow traffic from devenv namespace (for target access)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: devenv
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow traffic within boundary namespace
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: boundary
+    # Allow traffic to devenv namespace (for SSH proxy)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: devenv
+      ports:
+        - protocol: TCP
+          port: 22
+    # Allow external internet access (for image pulls, etc.)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16

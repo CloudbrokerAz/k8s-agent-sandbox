@@ -1,0 +1,124 @@
+# Sandbox testing override
+# Use a public Ubuntu image with basic tools for testing k8s deployment
+# Replace with your custom image for production
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: devenv
+  namespace: devenv
+  labels:
+    app: devenv
+spec:
+  serviceName: devenv
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devenv
+  template:
+    metadata:
+      labels:
+        app: devenv
+    spec:
+      securityContext:
+        runAsNonRoot: false  # Ubuntu image runs as root by default
+        fsGroup: 1000
+
+      containers:
+      - name: devenv
+        # Using Ubuntu with common dev tools for sandbox testing
+        image: ubuntu:22.04
+        imagePullPolicy: IfNotPresent
+
+        # Keep container running
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            apt-get update && apt-get install -y curl openssh-server sudo
+            useradd -m -s /bin/bash -G sudo node || true
+            echo 'node ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+            mkdir -p /run/sshd
+            mkdir -p /workspace /commandhistory /home/node/.claude
+            chown -R node:node /workspace /commandhistory /home/node
+            echo "DevEnv sandbox ready"
+            tail -f /dev/null
+
+        env:
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: GITHUB_TOKEN
+              optional: true
+        - name: TFE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: TFE_TOKEN
+              optional: true
+
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: bash-history
+          mountPath: /commandhistory
+        - name: claude-config
+          mountPath: /home/node/.claude
+
+        securityContext:
+          allowPrivilegeEscalation: false
+
+        livenessProbe:
+          exec:
+            command: ["/bin/bash", "-c", "pgrep tail"]
+          initialDelaySeconds: 60
+          periodSeconds: 30
+
+        readinessProbe:
+          exec:
+            command: ["/bin/bash", "-c", "test -f /workspace/.ready || touch /workspace/.ready"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+      terminationGracePeriodSeconds: 10
+
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+      labels:
+        app: devenv
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 1Gi
+
+  - metadata:
+      name: bash-history
+      labels:
+        app: devenv
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 100Mi
+
+  - metadata:
+      name: claude-config
+      labels:
+        app: devenv
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 100Mi

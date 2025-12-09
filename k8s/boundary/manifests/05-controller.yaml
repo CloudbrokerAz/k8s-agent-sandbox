@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boundary-controller
+  namespace: boundary
+  labels:
+    app: boundary-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: boundary-controller
+  template:
+    metadata:
+      labels:
+        app: boundary-controller
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        fsGroup: 100
+      initContainers:
+        # Wait for PostgreSQL to be ready
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z boundary-postgres.boundary.svc.cluster.local 5432; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: boundary-controller
+          image: hashicorp/boundary:0.17
+          args:
+            - server
+            - -config=/boundary/config/controller.hcl
+          ports:
+            - containerPort: 9200
+              name: api
+            - containerPort: 9201
+              name: cluster
+            - containerPort: 9203
+              name: ops
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-db-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-db-secrets
+                  key: POSTGRES_PASSWORD
+            - name: BOUNDARY_POSTGRES_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable"
+            - name: BOUNDARY_ROOT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-kms-keys
+                  key: BOUNDARY_ROOT_KEY
+            - name: BOUNDARY_WORKER_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-kms-keys
+                  key: BOUNDARY_WORKER_AUTH_KEY
+            - name: BOUNDARY_RECOVERY_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-kms-keys
+                  key: BOUNDARY_RECOVERY_KEY
+          volumeMounts:
+            - name: config
+              mountPath: /boundary/config
+              readOnly: true
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9203
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9203
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: boundary-controller-config

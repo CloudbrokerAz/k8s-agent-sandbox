@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: vault
+data:
+  vault.hcl: |
+    disable_mlock = true
+    ui = true
+
+    listener "tcp" {
+      address = "0.0.0.0:8200"
+      tls_disable = true
+    }
+
+    listener "tcp" {
+      address = "0.0.0.0:8201"
+      cluster_address = "0.0.0.0:8201"
+      tls_disable = true
+    }
+
+    storage "raft" {
+      path = "/vault/data"
+      node_id = "vault-0"
+    }
+
+    service_registration "kubernetes" {}
+
+    telemetry {
+      disable_hostname = true
+      prometheus_retention_time = "30s"
+    }

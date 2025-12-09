@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: boundary-controller-config
+  namespace: boundary
+data:
+  controller.hcl: |
+    # Disable memory lock for container environments
+    disable_mlock = true
+
+    # Controller configuration
+    controller {
+      name = "kubernetes-controller"
+      description = "Boundary controller running in Kubernetes"
+
+      # Database URL is set via environment variable
+      database {
+        url = "env://BOUNDARY_POSTGRES_URL"
+      }
+    }
+
+    # API listener - external access
+    listener "tcp" {
+      address = "0.0.0.0:9200"
+      purpose = "api"
+
+      # TLS disabled for internal cluster communication
+      # Enable for production with proper certificates
+      tls_disable = true
+    }
+
+    # Cluster listener - worker communication
+    listener "tcp" {
+      address = "0.0.0.0:9201"
+      purpose = "cluster"
+      tls_disable = true
+    }
+
+    # Ops listener - health checks
+    listener "tcp" {
+      address = "0.0.0.0:9203"
+      purpose = "ops"
+      tls_disable = true
+    }
+
+    # KMS configuration using AEAD (dev/test)
+    # For production, use Vault Transit or cloud KMS
+    kms "aead" {
+      purpose = "root"
+      aead_type = "aes-gcm"
+      key = "env://BOUNDARY_ROOT_KEY"
+      key_id = "global_root"
+    }
+
+    kms "aead" {
+      purpose = "worker-auth"
+      aead_type = "aes-gcm"
+      key = "env://BOUNDARY_WORKER_AUTH_KEY"
+      key_id = "global_worker-auth"
+    }
+
+    kms "aead" {
+      purpose = "recovery"
+      aead_type = "aes-gcm"
+      key = "env://BOUNDARY_RECOVERY_KEY"
+      key_id = "global_recovery"
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: boundary-worker-config
+  namespace: boundary
+data:
+  worker.hcl: |
+    # Disable memory lock for container environments
+    disable_mlock = true
+
+    # Worker configuration
+    worker {
+      name = "kubernetes-worker"
+      description = "Boundary worker running in Kubernetes"
+
+      # Controller addresses
+      controllers = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
+
+      # Public address for client connections
+      public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
+    }
+
+    # Proxy listener - session connections
+    listener "tcp" {
+      address = "0.0.0.0:9202"
+      purpose = "proxy"
+      tls_disable = true
+    }
+
+    # Ops listener - health checks
+    listener "tcp" {
+      address = "0.0.0.0:9203"
+      purpose = "ops"
+      tls_disable = true
+    }
+
+    # KMS for worker authentication
+    kms "aead" {
+      purpose = "worker-auth"
+      aead_type = "aes-gcm"
+      key = "env://BOUNDARY_WORKER_AUTH_KEY"
+      key_id = "global_worker-auth"
+    }
