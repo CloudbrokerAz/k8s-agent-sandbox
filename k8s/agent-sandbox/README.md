@@ -7,8 +7,10 @@ Kubernetes-native sandbox environment for Claude Code, following the [kubernetes
 This deployment uses:
 - **Sandbox CRD** from kubernetes-sigs/agent-sandbox for lifecycle management
 - **envbuilder** to build the devcontainer at runtime
+- **ConfigMap-based devcontainer.json** (no external git clone required)
 - **code-server** for browser-based VS Code access
 - **SSH** for native VS Code Remote SSH access
+- **srlynch1/terraform-ai-tools** base image (Claude Code installed via postCreateCommand)
 
 ## Quick Start
 
@@ -31,19 +33,19 @@ kubectl exec -it -n devenv $(kubectl get pod -n devenv -l app=claude-code-sandbo
 
 ```
 k8s/agent-sandbox/
-├── base/                          # Base Kustomize manifests
+├── base/                              # Base Kustomize manifests
 │   ├── kustomization.yaml
-│   ├── claude-code-sandbox.yaml   # Sandbox CRD
+│   ├── devcontainer-configmap.yaml    # ConfigMap with devcontainer.json + entrypoint.sh
+│   ├── claude-code-sandbox.yaml       # Sandbox CRD
 │   └── service.yaml
-├── overlays/                      # Optional runtime overlays
-│   ├── gvisor/                    # gVisor sandbox isolation
-│   └── kata/                      # Kata VM isolation
-├── devcontainer.json              # DevContainer configuration
-├── entrypoint.sh                  # Post-build initialization
-├── deploy.sh                      # End-to-end deployment script
-├── teardown.sh                    # Cleanup script
-├── PLAN.md                        # Implementation checklist
-└── README.md                      # This file
+├── overlays/                          # Optional runtime overlays
+│   ├── gvisor/                        # gVisor sandbox isolation
+│   └── kata/                          # Kata VM isolation
+├── devcontainer.json                  # DevContainer configuration (reference)
+├── deploy.sh                          # End-to-end deployment script
+├── teardown.sh                        # Cleanup script
+├── PLAN.md                            # Implementation checklist
+└── README.md                          # This file
 ```
 
 ## Deployment Options

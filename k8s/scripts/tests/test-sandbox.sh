@@ -256,11 +256,16 @@ echo ""
 echo "--- Tool Installation Tests ---"
 
 if [[ -n "$POD_NAME" ]] && [[ "$POD_READY" == "True" ]]; then
-    # Check Claude Code CLI
-    if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- sh -c "command -v claude >/dev/null 2>&1" &>/dev/null; then
-        test_pass "Claude Code CLI is available"
+    # Check Claude Code CLI (installed at /usr/local/share/npm-global/bin/claude)
+    CLAUDE_BIN="/usr/local/share/npm-global/bin/claude"
+    if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- sh -c "test -x $CLAUDE_BIN" &>/dev/null; then
+        test_pass "Claude Code CLI is available at $CLAUDE_BIN"
 
         # Get Claude version
+        CLAUDE_VERSION=$(kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- $CLAUDE_BIN --version 2>/dev/null | head -1 || echo "unknown")
+        test_info "Claude version: $CLAUDE_VERSION"
+    elif kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- sh -c "command -v claude >/dev/null 2>&1" &>/dev/null; then
+        test_pass "Claude Code CLI is available in PATH"
         CLAUDE_VERSION=$(kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- claude --version 2>/dev/null | head -1 || echo "unknown")
         test_info "Claude version: $CLAUDE_VERSION"
     else
