@@ -93,13 +93,13 @@ spec:
             - name: TFE_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: tfe-dynamic-token
+                  name: devenv-vault-secrets
                   key: TFE_TOKEN
                   optional: true
             - name: TF_TOKEN_app_terraform_io
               valueFrom:
                 secretKeyRef:
-                  name: tfe-dynamic-token
+                  name: devenv-vault-secrets
                   key: TFE_TOKEN
                   optional: true
             - name: LANGFUSE_HOST
