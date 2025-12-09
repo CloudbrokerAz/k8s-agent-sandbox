@@ -213,7 +213,7 @@ install_openssl() {
 
     if command -v openssl &> /dev/null; then
         echo "  openssl installed successfully"
-        ((INSTALLED++))
+        INSTALLED=$((INSTALLED + 1))
         return 0
     else
         echo "  Failed to install openssl"
@@ -246,7 +246,7 @@ install_kind() {
 
     if command -v kind &> /dev/null; then
         echo "  Kind installed successfully"
-        ((INSTALLED++))
+        INSTALLED=$((INSTALLED + 1))
         return 0
     else
         echo "  Failed to install Kind"
