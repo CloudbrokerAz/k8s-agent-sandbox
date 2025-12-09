@@ -68,12 +68,11 @@ CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESP
 
 # Authenticate and get token
 echo "Authenticating with Boundary..."
-AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- sh -c "
-    BOUNDARY_ADDR=http://127.0.0.1:9200 boundary authenticate password \
-        -login-name=admin \
-        -password='$ADMIN_PASSWORD' \
-        -format=json 2>/dev/null
-" | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
+AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash -c "
+    export BOUNDARY_ADDR=http://127.0.0.1:9200
+    export BOUNDARY_PASSWORD='$ADMIN_PASSWORD'
+    boundary authenticate password -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json
+" 2>/dev/null | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
 
 if [[ -z "$AUTH_TOKEN" ]]; then
     echo "❌ Failed to authenticate with Boundary"
@@ -83,218 +82,222 @@ echo "✅ Authenticated successfully"
 
 # Function to run boundary commands with auth token
 run_boundary() {
-    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
-        env BOUNDARY_ADDR=http://127.0.0.1:9200 BOUNDARY_TOKEN="$AUTH_TOKEN" \
-        boundary "$@" 2>/dev/null
+    local cmd="boundary"
+    for arg in "$@"; do
+        # Escape single quotes in arguments
+        arg="${arg//\'/\'\\\'\'}"
+        cmd="$cmd '$arg'"
+    done
+    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        /bin/ash -c "export BOUNDARY_ADDR=http://127.0.0.1:9200; export BOUNDARY_TOKEN='$AUTH_TOKEN'; $cmd"
 }
 
-# Check if already configured by looking for existing org
+# Check for existing configuration and resume if needed
 echo "Checking for existing configuration..."
-EXISTING_ORGS=$(run_boundary scopes list -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[]?.name // empty' || echo "")
+SCOPES_JSON=$(run_boundary scopes list -format=json 2>/dev/null || echo '{"items":[]}')
 
-if echo "$EXISTING_ORGS" | grep -q "DevOps"; then
-    echo "✅ Boundary already configured (DevOps org exists)"
-    echo ""
-    echo "To reconfigure, delete the org first using the Boundary CLI"
-    echo ""
-
-    # Show existing configuration
-    echo "Existing configuration:"
-    run_boundary scopes list -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[] | "  - \(.name) (\(.id))"' || true
-    exit 0
-fi
+# Look for DevOps org
+ORG_ID=$(echo "$SCOPES_JSON" | jq -r '.items[] | select(.name=="DevOps") | .id' 2>/dev/null | head -1 || echo "")
 
 echo ""
 echo "Step 1: Create Organization Scope"
 echo "----------------------------------"
 
-# Create organization scope
-ORG_RESULT=$(run_boundary scopes create \
-    -name="DevOps" \
-    -description="DevOps Team - Agent Sandbox Access" \
-    -scope-id=global \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+if [[ -n "$ORG_ID" ]]; then
+    echo "✅ Organization exists: DevOps ($ORG_ID)"
+else
+    # Create organization scope
+    ORG_RESULT=$(run_boundary scopes create \
+        -name="DevOps" \
+        -description="DevOps Team - Agent Sandbox Access" \
+        -scope-id=global \
+        -format=json \
+        2>/dev/null || echo "{}")
 
-ORG_ID=$(echo "$ORG_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$ORG_ID" ]]; then
-    echo "❌ Failed to create organization scope"
-    echo "$ORG_RESULT"
-    exit 1
+    ORG_ID=$(echo "$ORG_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$ORG_ID" ]]; then
+        echo "❌ Failed to create organization scope"
+        echo "$ORG_RESULT"
+        exit 1
+    fi
+    echo "✅ Created organization: DevOps ($ORG_ID)"
 fi
-echo "✅ Created organization: DevOps ($ORG_ID)"
 
 echo ""
 echo "Step 2: Create Project Scope"
 echo "----------------------------"
 
-# Create project scope
-PROJECT_RESULT=$(run_boundary scopes create \
-    -name="Agent-Sandbox" \
-    -description="Agent Sandbox Development Environment" \
-    -scope-id="$ORG_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing project
+ORG_SCOPES=$(run_boundary scopes list -scope-id="$ORG_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+PROJECT_ID=$(echo "$ORG_SCOPES" | jq -r '.items[] | select(.name=="Agent-Sandbox") | .id' 2>/dev/null | head -1 || echo "")
 
-PROJECT_ID=$(echo "$PROJECT_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$PROJECT_ID" ]]; then
-    echo "❌ Failed to create project scope"
-    exit 1
+if [[ -n "$PROJECT_ID" ]]; then
+    echo "✅ Project exists: Agent-Sandbox ($PROJECT_ID)"
+else
+    # Create project scope
+    PROJECT_RESULT=$(run_boundary scopes create \
+        -name="Agent-Sandbox" \
+        -description="Agent Sandbox Development Environment" \
+        -scope-id="$ORG_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
+
+    PROJECT_ID=$(echo "$PROJECT_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$PROJECT_ID" ]]; then
+        echo "❌ Failed to create project scope"
+        exit 1
+    fi
+    echo "✅ Created project: Agent-Sandbox ($PROJECT_ID)"
 fi
-echo "✅ Created project: Agent-Sandbox ($PROJECT_ID)"
 
 echo ""
 echo "Step 3: Create Auth Method"
 echo "--------------------------"
 
-# Create password auth method in org scope
-AUTH_RESULT=$(run_boundary auth-methods create password \
-    -name="password" \
-    -description="Password authentication" \
-    -scope-id="$ORG_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing auth method
+AUTH_METHODS=$(run_boundary auth-methods list -scope-id="$ORG_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+AUTH_METHOD_ID=$(echo "$AUTH_METHODS" | jq -r '.items[] | select(.name=="password") | .id' 2>/dev/null | head -1 || echo "")
 
-AUTH_METHOD_ID=$(echo "$AUTH_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$AUTH_METHOD_ID" ]]; then
-    echo "⚠️  Auth method creation failed (may already exist)"
+if [[ -n "$AUTH_METHOD_ID" ]]; then
+    echo "✅ Auth method exists: password ($AUTH_METHOD_ID)"
 else
-    echo "✅ Created auth method: password ($AUTH_METHOD_ID)"
+    # Create password auth method in org scope
+    AUTH_RESULT=$(run_boundary auth-methods create password \
+        -name="password" \
+        -description="Password authentication" \
+        -scope-id="$ORG_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
+
+    AUTH_METHOD_ID=$(echo "$AUTH_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$AUTH_METHOD_ID" ]]; then
+        echo "⚠️  Auth method creation failed"
+    else
+        echo "✅ Created auth method: password ($AUTH_METHOD_ID)"
+    fi
 fi
 
 echo ""
-echo "Step 4: Create Admin Account"
-echo "----------------------------"
-
-# Generate random password for admin
-ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '\n/+=' | head -c 16)
-
-# Create admin account
-ACCOUNT_RESULT=$(run_boundary accounts create password \
-    -auth-method-id="$AUTH_METHOD_ID" \
-    -login-name="admin" \
-    -password="$ADMIN_PASSWORD" \
-    -name="Admin Account" \
-    -description="Administrator account for Boundary" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
-
-ACCOUNT_ID=$(echo "$ACCOUNT_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$ACCOUNT_ID" ]]; then
-    echo "⚠️  Admin account creation failed (may already exist)"
-else
-    echo "✅ Created admin account ($ACCOUNT_ID)"
-fi
-
-# Create admin user
-USER_RESULT=$(run_boundary users create \
-    -name="admin" \
-    -description="Administrator" \
-    -scope-id="$ORG_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
-
-USER_ID=$(echo "$USER_RESULT" | jq -r '.item.id // empty')
-if [[ -n "$USER_ID" ]] && [[ -n "$ACCOUNT_ID" ]]; then
-    # Associate account with user
-    run_boundary users set-accounts \
-        -id="$USER_ID" \
-        -account="$ACCOUNT_ID" \
-        -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
-    echo "✅ Created admin user ($USER_ID)"
-fi
-
-echo ""
-echo "Step 5: Create Host Catalog"
+echo "Step 4: Create Host Catalog"
 echo "---------------------------"
 
-# Create static host catalog
-CATALOG_RESULT=$(run_boundary host-catalogs create static \
-    -name="devenv-hosts" \
-    -description="Agent Sandbox DevEnv Hosts" \
-    -scope-id="$PROJECT_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing host catalog
+HOST_CATALOGS=$(run_boundary host-catalogs list -scope-id="$PROJECT_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+CATALOG_ID=$(echo "$HOST_CATALOGS" | jq -r '.items[] | select(.name=="devenv-hosts") | .id' 2>/dev/null | head -1 || echo "")
 
-CATALOG_ID=$(echo "$CATALOG_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$CATALOG_ID" ]]; then
-    echo "❌ Failed to create host catalog"
-    exit 1
+if [[ -n "$CATALOG_ID" ]]; then
+    echo "✅ Host catalog exists: devenv-hosts ($CATALOG_ID)"
+else
+    # Create static host catalog
+    CATALOG_RESULT=$(run_boundary host-catalogs create static \
+        -name="devenv-hosts" \
+        -description="Agent Sandbox DevEnv Hosts" \
+        -scope-id="$PROJECT_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
+
+    CATALOG_ID=$(echo "$CATALOG_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$CATALOG_ID" ]]; then
+        echo "❌ Failed to create host catalog"
+        exit 1
+    fi
+    echo "✅ Created host catalog: devenv-hosts ($CATALOG_ID)"
 fi
-echo "✅ Created host catalog: devenv-hosts ($CATALOG_ID)"
 
 echo ""
-echo "Step 6: Create Host"
+echo "Step 5: Create Host"
 echo "-------------------"
 
-# Create host for devenv service
-HOST_RESULT=$(run_boundary hosts create static \
-    -name="devenv-service" \
-    -description="DevEnv Kubernetes Service" \
-    -address="$DEVENV_SVC_IP" \
-    -host-catalog-id="$CATALOG_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing host
+HOSTS=$(run_boundary hosts list -host-catalog-id="$CATALOG_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+HOST_ID=$(echo "$HOSTS" | jq -r '.items[] | select(.name=="devenv-service") | .id' 2>/dev/null | head -1 || echo "")
 
-HOST_ID=$(echo "$HOST_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$HOST_ID" ]]; then
-    echo "❌ Failed to create host"
-    exit 1
+if [[ -n "$HOST_ID" ]]; then
+    echo "✅ Host exists: devenv-service ($HOST_ID)"
+else
+    # Create host for devenv service
+    HOST_RESULT=$(run_boundary hosts create static \
+        -name="devenv-service" \
+        -description="DevEnv Kubernetes Service" \
+        -address="$DEVENV_SVC_IP" \
+        -host-catalog-id="$CATALOG_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
+
+    HOST_ID=$(echo "$HOST_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$HOST_ID" ]]; then
+        echo "❌ Failed to create host"
+        exit 1
+    fi
+    echo "✅ Created host: devenv-service ($HOST_ID)"
 fi
-echo "✅ Created host: devenv-service ($HOST_ID)"
 
 echo ""
-echo "Step 7: Create Host Set"
+echo "Step 6: Create Host Set"
 echo "-----------------------"
 
-# Create host set
-HOSTSET_RESULT=$(run_boundary host-sets create static \
-    -name="devenv-set" \
-    -description="DevEnv Host Set" \
-    -host-catalog-id="$CATALOG_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing host set
+HOSTSETS=$(run_boundary host-sets list -host-catalog-id="$CATALOG_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+HOSTSET_ID=$(echo "$HOSTSETS" | jq -r '.items[] | select(.name=="devenv-set") | .id' 2>/dev/null | head -1 || echo "")
 
-HOSTSET_ID=$(echo "$HOSTSET_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$HOSTSET_ID" ]]; then
-    echo "❌ Failed to create host set"
-    exit 1
+if [[ -n "$HOSTSET_ID" ]]; then
+    echo "✅ Host set exists: devenv-set ($HOSTSET_ID)"
+else
+    # Create host set
+    HOSTSET_RESULT=$(run_boundary host-sets create static \
+        -name="devenv-set" \
+        -description="DevEnv Host Set" \
+        -host-catalog-id="$CATALOG_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
+
+    HOSTSET_ID=$(echo "$HOSTSET_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$HOSTSET_ID" ]]; then
+        echo "❌ Failed to create host set"
+        exit 1
+    fi
+    echo "✅ Created host set: devenv-set ($HOSTSET_ID)"
 fi
-echo "✅ Created host set: devenv-set ($HOSTSET_ID)"
 
-# Add host to host set
+# Add host to host set (idempotent)
 run_boundary host-sets add-hosts \
     -id="$HOSTSET_ID" \
     -host="$HOST_ID" \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
-echo "✅ Added host to host set"
+    2>/dev/null || true
 
 echo ""
-echo "Step 8: Create SSH Target"
+echo "Step 7: Create SSH Target"
 echo "-------------------------"
 
-# Create SSH target
-TARGET_RESULT=$(run_boundary targets create tcp \
-    -name="devenv-ssh" \
-    -description="SSH access to Agent Sandbox DevEnv" \
-    -default-port=22 \
-    -scope-id="$PROJECT_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing target
+TARGETS=$(run_boundary targets list -scope-id="$PROJECT_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+TARGET_ID=$(echo "$TARGETS" | jq -r '.items[] | select(.name=="devenv-ssh") | .id' 2>/dev/null | head -1 || echo "")
 
-TARGET_ID=$(echo "$TARGET_RESULT" | jq -r '.item.id // empty')
-if [[ -z "$TARGET_ID" ]]; then
-    echo "❌ Failed to create target"
-    exit 1
+if [[ -n "$TARGET_ID" ]]; then
+    echo "✅ Target exists: devenv-ssh ($TARGET_ID)"
+else
+    # Create SSH target
+    TARGET_RESULT=$(run_boundary targets create tcp \
+        -name="devenv-ssh" \
+        -description="SSH access to Agent Sandbox DevEnv" \
+        -default-port=22 \
+        -scope-id="$PROJECT_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
+
+    TARGET_ID=$(echo "$TARGET_RESULT" | jq -r '.item.id // empty')
+    if [[ -z "$TARGET_ID" ]]; then
+        echo "❌ Failed to create target"
+        exit 1
+    fi
+    echo "✅ Created target: devenv-ssh ($TARGET_ID)"
 fi
-echo "✅ Created target: devenv-ssh ($TARGET_ID)"
 
-# Add host source to target
+# Add host source to target (idempotent)
 run_boundary targets add-host-sources \
     -id="$TARGET_ID" \
     -host-source="$HOSTSET_ID" \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
-echo "✅ Added host set to target"
+    2>/dev/null || true
 
 echo ""
 echo "Step 9: Configure Vault SSH Credential Brokering"
@@ -322,7 +325,7 @@ if [[ -n "$VAULT_TOKEN" ]]; then
             -vault-address="$VAULT_SVC" \
             -vault-token="$VAULT_TOKEN" \
             -format=json \
-            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+            2>/dev/null || echo "{}")
 
         CRED_STORE_ID=$(echo "$CRED_STORE_RESULT" | jq -r '.item.id // empty')
         if [[ -n "$CRED_STORE_ID" ]]; then
@@ -337,7 +340,7 @@ if [[ -n "$VAULT_TOKEN" ]]; then
                 -username="node" \
                 -key-type="ed25519" \
                 -format=json \
-                -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+                2>/dev/null || echo "{}")
 
             CRED_LIB_ID=$(echo "$CRED_LIB_RESULT" | jq -r '.item.id // empty')
             if [[ -n "$CRED_LIB_ID" ]]; then
@@ -347,7 +350,7 @@ if [[ -n "$VAULT_TOKEN" ]]; then
                 run_boundary targets add-credential-sources \
                     -id="$TARGET_ID" \
                     -brokered-credential-source="$CRED_LIB_ID" \
-                    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
+                    2>/dev/null || true
                 echo "✅ Attached SSH credentials to target (brokered)"
 
                 VAULT_SSH_CONFIGURED="true"
@@ -372,31 +375,35 @@ else
 fi
 
 echo ""
-echo "Step 10: Create Role for Admin"
+echo "Step 9: Create Role for Admin"
 echo "------------------------------"
 
-# Create admin role in project scope
-ROLE_RESULT=$(run_boundary roles create \
-    -name="admin" \
-    -description="Full admin access" \
-    -scope-id="$PROJECT_ID" \
-    -format=json \
-    -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+# Check for existing role
+ROLES=$(run_boundary roles list -scope-id="$PROJECT_ID" -format=json 2>/dev/null || echo '{"items":[]}')
+ROLE_ID=$(echo "$ROLES" | jq -r '.items[] | select(.name=="admin") | .id' 2>/dev/null | head -1 || echo "")
 
-ROLE_ID=$(echo "$ROLE_RESULT" | jq -r '.item.id // empty')
-if [[ -n "$ROLE_ID" ]] && [[ -n "$USER_ID" ]]; then
-    # Add grants
-    run_boundary roles add-grants \
-        -id="$ROLE_ID" \
-        -grant="ids=*;type=*;actions=*" \
-        -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
+if [[ -n "$ROLE_ID" ]]; then
+    echo "✅ Role exists: admin ($ROLE_ID)"
+else
+    # Create admin role in project scope
+    ROLE_RESULT=$(run_boundary roles create \
+        -name="admin" \
+        -description="Full admin access" \
+        -scope-id="$PROJECT_ID" \
+        -format=json \
+        2>/dev/null || echo "{}")
 
-    # Add principal
-    run_boundary roles add-principals \
-        -id="$ROLE_ID" \
-        -principal="$USER_ID" \
-        -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
-    echo "✅ Created admin role with full access"
+    ROLE_ID=$(echo "$ROLE_RESULT" | jq -r '.item.id // empty')
+    if [[ -n "$ROLE_ID" ]]; then
+        # Add grants
+        run_boundary roles add-grants \
+            -id="$ROLE_ID" \
+            -grant="ids=*;type=*;actions=*" \
+            2>/dev/null || true
+        echo "✅ Created admin role with full access ($ROLE_ID)"
+    else
+        echo "⚠️  Failed to create admin role"
+    fi
 fi
 
 # Save credentials

@@ -120,21 +120,30 @@ echo ""
 # ==========================================
 echo "--- Configuration Tests ---"
 
-# Get recovery key
-RECOVERY_KEY=$(kubectl get secret boundary-kms-keys -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.data.BOUNDARY_RECOVERY_KEY}' 2>/dev/null | base64 -d || echo "")
-if [[ -z "$RECOVERY_KEY" ]]; then
-    test_fail "Cannot find recovery key"
-    echo "Cannot proceed with configuration tests without recovery key"
+# Get admin credentials from boundary init job logs
+ADMIN_PASSWORD=$(kubectl logs -n "$BOUNDARY_NAMESPACE" job/boundary-db-init 2>/dev/null | grep "Password:" | head -1 | awk '{print $2}' || echo "")
+if [[ -z "$ADMIN_PASSWORD" ]]; then
+    test_warn "Cannot find admin password from init job"
+    echo "Cannot proceed with configuration tests without credentials"
 else
-    test_pass "Recovery key available"
+    test_pass "Admin credentials available"
 
-    # Function to run boundary commands
-    run_boundary() {
-        kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
-            env BOUNDARY_ADDR=http://127.0.0.1:9200 \
-            boundary "$@" \
-            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null
-    }
+    # Authenticate and get token
+    AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash -c "
+        export BOUNDARY_ADDR=http://127.0.0.1:9200
+        export BOUNDARY_PASSWORD='$ADMIN_PASSWORD'
+        boundary authenticate password -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json
+    " 2>/dev/null | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
+
+    if [[ -z "$AUTH_TOKEN" ]]; then
+        test_warn "Failed to authenticate with Boundary"
+    else
+        # Function to run boundary commands with token auth
+        run_boundary() {
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+                /bin/ash -c "BOUNDARY_ADDR=http://127.0.0.1:9200 BOUNDARY_TOKEN=$AUTH_TOKEN boundary $*" 2>/dev/null
+        }
+    fi
 
     # Check for organization scope
     ORG_EXISTS=$(run_boundary scopes list -format=json | jq -r '.items[] | select(.name=="DevOps") | .id' 2>/dev/null || echo "")
