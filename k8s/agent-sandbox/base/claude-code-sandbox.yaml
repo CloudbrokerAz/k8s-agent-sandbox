@@ -101,6 +101,7 @@ spec:
         # Mount devcontainer.json and entrypoint.sh from ConfigMap
         - mountPath: /workspaces/empty/.devcontainer
           name: devcontainer-config
+        # Persist Claude config and bash history (same pattern as local devcontainer)
         - mountPath: /home/node/.claude
           name: claude-config-pvc
         - mountPath: /commandhistory

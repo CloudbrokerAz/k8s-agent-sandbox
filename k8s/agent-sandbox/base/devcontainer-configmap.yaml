@@ -115,37 +115,30 @@ data:
     fi
 
     # -----------------------------------------------------------------------------
-    # 4. Install/Verify Claude Code
-    # Note: postCreateCommand installs don't persist, so we install here
-    # Using user-local npm prefix to avoid needing root
+    # 4. Verify Claude Code (pre-installed in base image)
+    # Base image srlynch1/terraform-ai-tools already has claude-code installed
+    # at /usr/local/share/npm-global/bin/claude
     # -----------------------------------------------------------------------------
-    echo "[4/5] Installing Claude Code..."
+    echo "[4/5] Verifying Claude Code..."
 
-    # Set up user-local npm prefix if not already done
-    NPM_GLOBAL_DIR="${HOME}/.npm-global"
-    if [ ! -d "$NPM_GLOBAL_DIR" ]; then
-        mkdir -p "$NPM_GLOBAL_DIR"
-        npm config set prefix "$NPM_GLOBAL_DIR"
-    fi
+    # npm-global path from base image
+    NPM_GLOBAL_BIN="/usr/local/share/npm-global/bin"
+    export PATH="$NPM_GLOBAL_BIN:$PATH"
 
-    # Add to PATH for this session
-    export PATH="$NPM_GLOBAL_DIR/bin:$PATH"
-
-    # Install Claude Code if not present
-    if ! command -v claude &> /dev/null; then
-        npm install -g @anthropic-ai/claude-code 2>&1 | tail -5
-    fi
-
-    if command -v claude &> /dev/null; then
+    if [ -x "$NPM_GLOBAL_BIN/claude" ]; then
+        CLAUDE_VERSION=$("$NPM_GLOBAL_BIN/claude" --version 2>/dev/null || echo "installed")
+        echo "  ✓ Claude Code: ${CLAUDE_VERSION}"
+    elif command -v claude &> /dev/null; then
         CLAUDE_VERSION=$(claude --version 2>/dev/null || echo "installed")
         echo "  ✓ Claude Code: ${CLAUDE_VERSION}"
-
-        # Add npm-global bin to bashrc for future sessions
-        if ! grep -q "npm-global/bin" ~/.bashrc 2>/dev/null; then
-            echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
-        fi
     else
-        echo "  ✗ Claude Code installation failed"
+        echo "  - Claude Code not found, installing..."
+        NPM_CONFIG_PREFIX=/usr/local/share/npm-global npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+        if [ -x "$NPM_GLOBAL_BIN/claude" ]; then
+            echo "  ✓ Claude Code installed"
+        else
+            echo "  ✗ Claude Code installation failed"
+        fi
     fi
 
     # -----------------------------------------------------------------------------
