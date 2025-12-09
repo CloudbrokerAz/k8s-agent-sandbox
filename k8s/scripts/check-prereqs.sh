@@ -331,7 +331,7 @@ if command -v docker &> /dev/null; then
     else
         echo "NOT RUNNING"
         echo "  Docker is installed but not running. Please start Docker."
-        ((WARNINGS++))
+        WARNINGS=$((WARNINGS + 1))
     fi
 else
     echo "MISSING"
@@ -340,7 +340,7 @@ else
     else
         echo "  Install: https://docs.docker.com/get-docker/"
     fi
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # Check jq
@@ -352,14 +352,14 @@ else
     if [[ "$CHECK_ONLY" == "true" ]]; then
         echo "MISSING"
         echo "  Install: apt install jq / brew install jq"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         echo "MISSING - installing..."
         if install_jq; then
             VERSION=$(jq --version 2>/dev/null || echo "installed")
             echo "  Installed: $VERSION"
         else
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
 fi
