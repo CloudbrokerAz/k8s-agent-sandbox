@@ -2,20 +2,29 @@
 set -euo pipefail
 
 # Master teardown script for the complete K8s platform
-# Removes: VSO, Boundary, Vault, and DevEnv
+# Removes: Keycloak, VSO, Boundary, Vault, and DevEnv
+# Dependencies are handled in reverse order
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Source configuration
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    source "$SCRIPT_DIR/.env"
+elif [[ -f "$SCRIPT_DIR/platform.env.example" ]]; then
+    source "$SCRIPT_DIR/platform.env.example"
+fi
 
 echo "=========================================="
 echo "  Complete Platform Teardown"
 echo "=========================================="
 echo ""
-echo "This will remove:"
-echo "  1. Vault Secrets Operator"
-echo "  2. Boundary (controller, worker, postgres)"
-echo "  3. Vault"
-echo "  4. Agent Sandbox (devenv)"
+echo "This will remove (in order):"
+echo "  1. Keycloak (if deployed)"
+echo "  2. Vault Secrets Operator"
+echo "  3. Boundary (controller, worker, postgres)"
+echo "  4. Vault"
+echo "  5. Agent Sandbox (devenv)"
 echo ""
 echo "WARNING: This will delete all data!"
 echo ""
@@ -24,6 +33,24 @@ read -p "Are you sure you want to proceed? (yes/no): " confirm
 if [[ "$confirm" != "yes" ]]; then
     echo "Cancelled"
     exit 0
+fi
+
+# ==========================================
+# Step 0: Remove Keycloak (if exists)
+# ==========================================
+
+if kubectl get namespace keycloak &>/dev/null; then
+    echo ""
+    echo "=========================================="
+    echo "  Step 0: Remove Keycloak"
+    echo "=========================================="
+    echo ""
+
+    kubectl delete deployment keycloak -n keycloak 2>/dev/null || true
+    kubectl delete statefulset keycloak-postgres -n keycloak 2>/dev/null || true
+    kubectl delete pvc -l app=keycloak-postgres -n keycloak 2>/dev/null || true
+    kubectl delete namespace keycloak --timeout=60s 2>/dev/null || true
+    echo "Keycloak removed"
 fi
 
 echo ""
@@ -75,6 +102,8 @@ kubectl delete namespace vault --timeout=60s 2>/dev/null || true
 
 # Remove vault keys file
 rm -f "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null || true
+rm -f "$K8S_DIR/platform/vault/scripts/vault-ssh-ca.pub" 2>/dev/null || true
+rm -f "$K8S_DIR/platform/vault/scripts/vault-ca.crt" 2>/dev/null || true
 echo "Vault removed"
 
 echo ""
@@ -88,6 +117,9 @@ kubectl delete pvc -l app=devenv -n devenv 2>/dev/null || true
 kubectl delete namespace devenv --timeout=60s 2>/dev/null || true
 echo "Agent Sandbox removed"
 
+# Remove Boundary credentials file
+rm -f "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" 2>/dev/null || true
+
 echo ""
 echo "=========================================="
 echo "  Cleanup Complete"
@@ -95,7 +127,7 @@ echo "=========================================="
 echo ""
 
 # Show remaining resources
-REMAINING=$(kubectl get ns 2>/dev/null | grep -E "(devenv|boundary|vault)" || true)
+REMAINING=$(kubectl get ns 2>/dev/null | grep -E "(devenv|boundary|vault|keycloak)" || true)
 if [[ -n "$REMAINING" ]]; then
     echo "Remaining namespaces (may still be terminating):"
     echo "$REMAINING"
@@ -103,6 +135,12 @@ else
     echo "All platform namespaces removed"
 fi
 
+echo ""
+echo "Credential files cleaned up:"
+echo "  - platform/vault/scripts/vault-keys.txt"
+echo "  - platform/vault/scripts/vault-ssh-ca.pub"
+echo "  - platform/vault/scripts/vault-ca.crt"
+echo "  - platform/boundary/scripts/boundary-credentials.txt"
 echo ""
 echo "To also remove the Kind cluster:"
 echo "  kind delete cluster --name sandbox"

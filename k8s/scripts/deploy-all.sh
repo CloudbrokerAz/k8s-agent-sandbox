@@ -19,10 +19,13 @@ fi
 DEVENV_NAMESPACE="${DEVENV_NAMESPACE:-devenv}"
 VAULT_NAMESPACE="${VAULT_NAMESPACE:-vault}"
 BOUNDARY_NAMESPACE="${BOUNDARY_NAMESPACE:-boundary}"
+KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-keycloak}"
 VSO_NAMESPACE="${VSO_NAMESPACE:-vault-secrets-operator-system}"
 DEPLOY_BOUNDARY="${DEPLOY_BOUNDARY:-true}"
 DEPLOY_VAULT="${DEPLOY_VAULT:-true}"
 DEPLOY_VSO="${DEPLOY_VSO:-true}"
+DEPLOY_KEYCLOAK="${DEPLOY_KEYCLOAK:-true}"
+CONFIGURE_BOUNDARY_TARGETS="${CONFIGURE_BOUNDARY_TARGETS:-true}"
 BUILD_IMAGE="${BUILD_IMAGE:-true}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-}"
 IMAGE_NAME="${IMAGE_NAME:-agent-sandbox}"
@@ -41,6 +44,8 @@ echo "  1. Agent Sandbox - Multi-user development environment"
 echo "  2. Vault - Secrets management"
 echo "  3. Boundary - Secure access management"
 echo "  4. Vault Secrets Operator - Secret synchronization"
+echo "  5. Keycloak - Identity Provider (optional)"
+echo "  6. Boundary Targets & OIDC - Access configuration"
 echo ""
 
 # Check prerequisites
@@ -501,6 +506,94 @@ echo "   kubectl get secret devenv-vault-secrets -n devenv -o yaml"
 echo ""
 echo "7. Run healthcheck:"
 echo "   ./scripts/healthcheck.sh"
+echo ""
+
+# ==========================================
+# Step 5: Deploy Keycloak (Optional)
+# ==========================================
+
+if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
+    echo ""
+    echo "=========================================="
+    echo "  Step 5: Deploy Keycloak"
+    echo "=========================================="
+    echo ""
+
+    if [[ -f "$K8S_DIR/platform/keycloak/scripts/deploy-keycloak.sh" ]]; then
+        "$K8S_DIR/platform/keycloak/scripts/deploy-keycloak.sh"
+
+        # Wait for Keycloak to be ready
+        echo "⏳ Waiting for Keycloak to be ready..."
+        kubectl rollout status deployment/keycloak -n keycloak --timeout=300s || true
+
+        # Configure realm and demo users
+        if [[ -f "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" ]]; then
+            echo ""
+            echo "Configuring Keycloak realm and demo users..."
+            sleep 10  # Give Keycloak time to fully initialize
+            "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" || echo "⚠️  Keycloak realm configuration failed (may need manual setup)"
+        fi
+
+        echo "✅ Keycloak deployed"
+    else
+        echo "⚠️  Keycloak deployment script not found, skipping"
+    fi
+else
+    echo ""
+    echo "Skipping Keycloak deployment (DEPLOY_KEYCLOAK=false)"
+fi
+
+# ==========================================
+# Step 6: Configure Boundary Targets & OIDC
+# ==========================================
+
+if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "true" ]]; then
+    echo ""
+    echo "=========================================="
+    echo "  Step 6: Configure Boundary Targets"
+    echo "=========================================="
+    echo ""
+
+    # Wait for Boundary to be fully ready
+    echo "⏳ Waiting for Boundary controller..."
+    kubectl rollout status deployment/boundary-controller -n boundary --timeout=180s || true
+    sleep 5
+
+    if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" ]]; then
+        "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" boundary devenv || echo "⚠️  Boundary targets configuration failed"
+    fi
+
+    # Configure OIDC if Keycloak is deployed
+    if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
+        KEYCLOAK_STATUS=$(kubectl get pod -l app=keycloak -n keycloak -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+        if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
+            echo ""
+            echo "Configuring Boundary OIDC with Keycloak..."
+            if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" ]]; then
+                "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" || echo "⚠️  OIDC configuration failed (may need manual setup)"
+            fi
+        fi
+    fi
+
+    echo "✅ Boundary configuration complete"
+else
+    echo ""
+    echo "Skipping Boundary targets configuration"
+fi
+
+echo ""
+echo "=========================================="
+echo "  ✅ FULL PLATFORM DEPLOYMENT COMPLETE"
+echo "=========================================="
+echo ""
+echo "Components deployed:"
+echo "  ✅ Agent Sandbox (devenv)"
+echo "  ✅ Vault"
+echo "  ✅ Boundary"
+echo "  ✅ Vault Secrets Operator"
+if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
+echo "  ✅ Keycloak"
+fi
 echo ""
 
 # Run healthcheck
