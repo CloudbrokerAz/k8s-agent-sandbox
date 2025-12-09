@@ -115,20 +115,37 @@ data:
     fi
 
     # -----------------------------------------------------------------------------
-    # 4. Verify Claude Code Installation
+    # 4. Install/Verify Claude Code
+    # Note: postCreateCommand installs don't persist, so we install here
+    # Using user-local npm prefix to avoid needing root
     # -----------------------------------------------------------------------------
-    echo "[4/5] Verifying Claude Code..."
+    echo "[4/5] Installing Claude Code..."
+
+    # Set up user-local npm prefix if not already done
+    NPM_GLOBAL_DIR="${HOME}/.npm-global"
+    if [ ! -d "$NPM_GLOBAL_DIR" ]; then
+        mkdir -p "$NPM_GLOBAL_DIR"
+        npm config set prefix "$NPM_GLOBAL_DIR"
+    fi
+
+    # Add to PATH for this session
+    export PATH="$NPM_GLOBAL_DIR/bin:$PATH"
+
+    # Install Claude Code if not present
+    if ! command -v claude &> /dev/null; then
+        npm install -g @anthropic-ai/claude-code 2>&1 | tail -5
+    fi
+
     if command -v claude &> /dev/null; then
         CLAUDE_VERSION=$(claude --version 2>/dev/null || echo "installed")
         echo "  ✓ Claude Code: ${CLAUDE_VERSION}"
-    else
-        echo "  - Installing Claude Code..."
-        npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
-        if command -v claude &> /dev/null; then
-            echo "  ✓ Claude Code installed"
-        else
-            echo "  ✗ Claude Code installation failed"
+
+        # Add npm-global bin to bashrc for future sessions
+        if ! grep -q "npm-global/bin" ~/.bashrc 2>/dev/null; then
+            echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
         fi
+    else
+        echo "  ✗ Claude Code installation failed"
     fi
 
     # -----------------------------------------------------------------------------
