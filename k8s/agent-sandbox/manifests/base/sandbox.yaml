@@ -123,33 +123,29 @@ spec:
             # Export environment variables for SSH sessions
             # This allows VS Code Remote SSH to inherit the container's env vars
             # Method 1: SSH environment file (requires PermitUserEnvironment yes)
-            cat > /home/node/.ssh/environment << EOF
-GITHUB_TOKEN=${GITHUB_TOKEN:-}
-TFE_TOKEN=${TFE_TOKEN:-}
-TF_TOKEN_app_terraform_io=${TF_TOKEN_app_terraform_io:-}
-LANGFUSE_HOST=${LANGFUSE_HOST:-}
-LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-VAULT_ADDR=${VAULT_ADDR:-}
-VAULT_CACERT=${VAULT_CACERT:-}
-PATH=/usr/local/go/bin:/home/node/go/bin:/usr/local/share/npm-global/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin
-SHELL=/bin/zsh
-EOF
+            echo "GITHUB_TOKEN=${GITHUB_TOKEN:-}" > /home/node/.ssh/environment
+            echo "TFE_TOKEN=${TFE_TOKEN:-}" >> /home/node/.ssh/environment
+            echo "TF_TOKEN_app_terraform_io=${TF_TOKEN_app_terraform_io:-}" >> /home/node/.ssh/environment
+            echo "LANGFUSE_HOST=${LANGFUSE_HOST:-}" >> /home/node/.ssh/environment
+            echo "LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}" >> /home/node/.ssh/environment
+            echo "LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}" >> /home/node/.ssh/environment
+            echo "VAULT_ADDR=${VAULT_ADDR:-}" >> /home/node/.ssh/environment
+            echo "VAULT_CACERT=${VAULT_CACERT:-}" >> /home/node/.ssh/environment
+            echo "PATH=/usr/local/go/bin:/home/node/go/bin:/usr/local/share/npm-global/bin:/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin" >> /home/node/.ssh/environment
+            echo "SHELL=/bin/zsh" >> /home/node/.ssh/environment
             chmod 600 /home/node/.ssh/environment
 
             # Method 2: Also add to .zshenv for interactive shells (VS Code uses this)
-            cat >> /home/node/.zshenv << EOF
-
-# Environment variables from Kubernetes secrets (injected at container startup)
-export GITHUB_TOKEN="${GITHUB_TOKEN:-}"
-export TFE_TOKEN="${TFE_TOKEN:-}"
-export TF_TOKEN_app_terraform_io="${TF_TOKEN_app_terraform_io:-}"
-export LANGFUSE_HOST="${LANGFUSE_HOST:-}"
-export LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}"
-export LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}"
-export VAULT_ADDR="${VAULT_ADDR:-}"
-export VAULT_CACERT="${VAULT_CACERT:-}"
-EOF
+            echo "" >> /home/node/.zshenv
+            echo "# Environment variables from Kubernetes secrets" >> /home/node/.zshenv
+            echo "export GITHUB_TOKEN=\"${GITHUB_TOKEN:-}\"" >> /home/node/.zshenv
+            echo "export TFE_TOKEN=\"${TFE_TOKEN:-}\"" >> /home/node/.zshenv
+            echo "export TF_TOKEN_app_terraform_io=\"${TF_TOKEN_app_terraform_io:-}\"" >> /home/node/.zshenv
+            echo "export LANGFUSE_HOST=\"${LANGFUSE_HOST:-}\"" >> /home/node/.zshenv
+            echo "export LANGFUSE_PUBLIC_KEY=\"${LANGFUSE_PUBLIC_KEY:-}\"" >> /home/node/.zshenv
+            echo "export LANGFUSE_SECRET_KEY=\"${LANGFUSE_SECRET_KEY:-}\"" >> /home/node/.zshenv
+            echo "export VAULT_ADDR=\"${VAULT_ADDR:-}\"" >> /home/node/.zshenv
+            echo "export VAULT_CACERT=\"${VAULT_CACERT:-}\"" >> /home/node/.zshenv
 
             chown -R node:node /home/node/.ssh /home/node/.zshenv
 

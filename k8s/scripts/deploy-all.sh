@@ -181,14 +181,24 @@ if ! kubectl get secret devenv-secrets -n devenv &>/dev/null; then
     echo "⚠️  Update devenv-secrets with real values later"
 fi
 
-# Apply devenv manifests
-kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
-kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
-
-# Deploy with the configured image
+# Apply devenv manifests using kustomize base
 echo "Deploying with image: $FULL_IMAGE"
-# Update the sandbox-override.yaml with the correct image and apply
-sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" | kubectl apply -f -
+
+# Update the sandbox.yaml with the correct image and apply via kustomize
+SANDBOX_YAML="$K8S_DIR/agent-sandbox/manifests/base/sandbox.yaml"
+if [[ -f "$SANDBOX_YAML" ]]; then
+    # Apply base manifests with image override
+    sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$SANDBOX_YAML" > /tmp/sandbox-patched.yaml
+    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/namespace.yaml"
+    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/service.yaml"
+    kubectl apply -f /tmp/sandbox-patched.yaml
+    rm -f /tmp/sandbox-patched.yaml
+else
+    # Fallback to old structure
+    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
+    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
+    sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" | kubectl apply -f -
+fi
 
 # Wait for pod to be ready
 echo "Waiting for agent-sandbox pod..."
