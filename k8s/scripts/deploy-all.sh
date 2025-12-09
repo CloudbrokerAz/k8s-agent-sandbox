@@ -552,7 +552,12 @@ else
     if kubectl get statefulset vault -n vault &>/dev/null; then
         echo "Checking Vault status..."
         sleep 3
-        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false,"sealed":true}')
+        # Note: vault status returns exit code 2 when sealed, so we capture output first
+        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>&1) || true
+        # If output doesn't look like JSON, use default
+        if ! echo "$VAULT_STATUS" | jq -e . >/dev/null 2>&1; then
+            VAULT_STATUS='{"initialized":false,"sealed":true}'
+        fi
         INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
         SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed')
 
