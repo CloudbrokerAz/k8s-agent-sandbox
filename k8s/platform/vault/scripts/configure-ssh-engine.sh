@@ -60,7 +60,31 @@ echo "=========================================="
 echo ""
 echo "CA key saved to: $SCRIPT_DIR/vault-ssh-ca.pub"
 echo ""
+
+# Create Kubernetes secret with SSH CA public key for devenv pods
+echo "Creating Kubernetes secret with SSH CA..."
+kubectl create secret generic vault-ssh-ca \
+    --namespace=devenv \
+    --from-file=vault-ssh-ca.pub="$SCRIPT_DIR/vault-ssh-ca.pub" \
+    --dry-run=client -o yaml | kubectl apply -f -
+echo "✅ Secret 'vault-ssh-ca' created in devenv namespace"
+
+echo ""
 echo "To use with devenv:"
-echo "  1. Add CA to devenv authorized_keys"
-echo "  2. Request cert: vault write ssh/sign/devenv-access public_key=@~/.ssh/id_rsa.pub"
-echo "  3. SSH with signed cert"
+echo "  1. The SSH CA is automatically mounted to devenv pods"
+echo "  2. Request a signed certificate:"
+echo "     vault write -field=signed_key ssh/sign/devenv-access public_key=@~/.ssh/id_rsa.pub > ~/.ssh/id_rsa-cert.pub"
+echo "  3. SSH with signed cert:"
+echo "     ssh -i ~/.ssh/id_rsa node@<devenv-pod-ip>"
+echo ""
+echo "For VSCode Remote SSH:"
+echo "  1. Port forward to the devenv pod:"
+echo "     kubectl port-forward -n devenv svc/devenv 2222:22"
+echo "  2. Add to ~/.ssh/config:"
+echo "     Host devenv"
+echo "       HostName localhost"
+echo "       Port 2222"
+echo "       User node"
+echo "       IdentityFile ~/.ssh/id_rsa"
+echo "       CertificateFile ~/.ssh/id_rsa-cert.pub"
+echo "  3. Connect via VSCode Remote SSH to 'devenv'"

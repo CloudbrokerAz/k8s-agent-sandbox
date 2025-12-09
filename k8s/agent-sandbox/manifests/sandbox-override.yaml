@@ -1,6 +1,6 @@
 # Agent Sandbox StatefulSet
-# Uses custom devcontainer built from Dockerfile.production
-# Supports VSCode Remote SSH development
+# Uses srlynch1/terraform-ai-tools base image with Claude Code
+# Supports VSCode Remote SSH development with Vault CA trust
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -19,27 +19,102 @@ spec:
       labels:
         app: devenv
     spec:
+      # Note: Running as root is required for SSH server on port 22
+      # The sshd process will run as root, but SSH sessions run as 'node' user
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000  # node user
+        runAsUser: 0
+        runAsGroup: 0
         fsGroup: 1000
 
       containers:
       - name: devenv
-        # Custom devcontainer with Terraform, AWS CLI, Claude Code, etc.
-        # Built from k8s/Dockerfile.production
-        # Override with: IMAGE_NAME and IMAGE_TAG in platform.env
-        image: agent-sandbox:latest
-        imagePullPolicy: IfNotPresent
+        # Pre-built image with Terraform, AWS CLI, Claude Code, etc.
+        # Base: srlynch1/terraform-ai-tools:latest
+        image: srlynch1/terraform-ai-tools:latest
+        imagePullPolicy: Always
 
-        # Keep container running for interactive access
+        # Start SSH server and keep container running
         command: ["/bin/bash", "-c"]
         args:
           - |
+            set -e
             echo "Agent Sandbox starting..."
-            mkdir -p /workspace /commandhistory /home/node/.claude
+
+            # Install Claude Code if not present
+            if ! command -v claude &> /dev/null; then
+              npm install -g @anthropic-ai/claude-code ccstatusline
+            fi
+
+            # Create required directories
+            mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
+            chown -R node:node /workspace /commandhistory /home/node/.claude
+
+            # Configure SSH server
+            echo "Configuring SSH server..."
+
+            # Generate host keys if not present
+            if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+              ssh-keygen -A
+            fi
+
+            # Configure sshd
+            cat > /etc/ssh/sshd_config << 'SSHD_CONFIG'
+            Port 22
+            PermitRootLogin no
+            PasswordAuthentication no
+            PubkeyAuthentication yes
+            ChallengeResponseAuthentication no
+            UsePAM yes
+            X11Forwarding yes
+            PrintMotd no
+            AcceptEnv LANG LC_*
+            Subsystem sftp /usr/lib/openssh/sftp-server
+            # Trust Vault SSH CA for certificate authentication
+            TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub
+            AuthorizedPrincipalsFile none
+            SSHD_CONFIG
+
+            # Copy Vault SSH CA public key if mounted
+            if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
+              cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
+              chmod 644 /etc/ssh/vault-ssh-ca.pub
+              echo "Vault SSH CA configured"
+            else
+              # Create empty file to prevent sshd error
+              touch /etc/ssh/vault-ssh-ca.pub
+              echo "Warning: Vault SSH CA not mounted, using password auth fallback"
+              # Enable password auth as fallback
+              sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+            fi
+
+            # Setup node user SSH directory
+            mkdir -p /home/node/.ssh
+            chmod 700 /home/node/.ssh
+            touch /home/node/.ssh/authorized_keys
+            chmod 600 /home/node/.ssh/authorized_keys
+            chown -R node:node /home/node/.ssh
+
+            # Add Vault CA certificate to system trust store (for HTTPS to Vault)
+            if [ -f /vault-ca/vault-ca.crt ]; then
+              cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/vault-ca.crt
+              update-ca-certificates
+              echo "Vault TLS CA added to system trust store"
+            fi
+
+            # Start SSH server
+            echo "Starting SSH server..."
+            /usr/sbin/sshd
+
             echo "Agent Sandbox ready for VSCode Remote SSH"
+            echo "Connect via: ssh node@<pod-ip> or use kubectl port-forward"
+
+            # Keep container running
             tail -f /dev/null
+
+        ports:
+        - containerPort: 22
+          name: ssh
+          protocol: TCP
 
         env:
         - name: GITHUB_TOKEN
@@ -61,6 +136,11 @@ spec:
               name: tfe-dynamic-token
               key: TFE_TOKEN
               optional: true
+        # Vault address for CLI tools
+        - name: VAULT_ADDR
+          value: "https://vault.vault.svc.cluster.local:8200"
+        - name: VAULT_CACERT
+          value: "/vault-ca/vault-ca.crt"
 
         resources:
           requests:
@@ -77,24 +157,49 @@ spec:
           mountPath: /commandhistory
         - name: claude-config
           mountPath: /home/node/.claude
+        - name: vault-ssh-ca
+          mountPath: /vault-ssh-ca
+          readOnly: true
+        - name: vault-ca
+          mountPath: /vault-ca
+          readOnly: true
+        - name: ssh-host-keys
+          mountPath: /etc/ssh/ssh_host_keys
 
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
+            add:
+            - NET_BIND_SERVICE  # Required for binding to port 22
             drop:
             - ALL
 
         livenessProbe:
           exec:
-            command: ["/bin/bash", "-c", "pgrep tail"]
+            command: ["/bin/bash", "-c", "pgrep sshd"]
           initialDelaySeconds: 60
           periodSeconds: 30
 
         readinessProbe:
-          exec:
-            command: ["/bin/bash", "-c", "test -f /workspace/.ready || touch /workspace/.ready"]
+          tcpSocket:
+            port: 22
           initialDelaySeconds: 30
           periodSeconds: 10
+
+      volumes:
+      # Vault SSH CA public key for certificate authentication
+      - name: vault-ssh-ca
+        secret:
+          secretName: vault-ssh-ca
+          optional: true
+      # Vault TLS CA for HTTPS trust
+      - name: vault-ca
+        secret:
+          secretName: vault-tls-ca
+          optional: true
+      # Persistent SSH host keys (prevent host key changes on pod restart)
+      - name: ssh-host-keys
+        emptyDir: {}
 
       terminationGracePeriodSeconds: 30
 

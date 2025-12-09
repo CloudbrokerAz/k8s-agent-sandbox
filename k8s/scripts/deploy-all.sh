@@ -87,6 +87,10 @@ fi
 # Step 0: Build Agent Sandbox Image
 # ==========================================
 
+# Default to pre-built base image
+BASE_IMAGE="${BASE_IMAGE:-srlynch1/terraform-ai-tools:latest}"
+FULL_IMAGE="${BASE_IMAGE}"
+
 if [[ "$BUILD_IMAGE" == "true" ]]; then
     echo ""
     echo "=========================================="
@@ -95,14 +99,14 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
     echo ""
 
     if ! command -v docker &> /dev/null; then
-        echo "Docker not found, skipping image build"
-        echo "Using sandbox-override.yaml with ubuntu:22.04"
+        echo "Docker not found, using pre-built image: $BASE_IMAGE"
         BUILD_IMAGE="false"
     else
-        DOCKERFILE="$K8S_DIR/Dockerfile.production"
+        # Use the claude-code Dockerfile which builds on the base image
+        DOCKERFILE="$K8S_DIR/../.devcontainer/claude-code/Dockerfile"
         if [[ ! -f "$DOCKERFILE" ]]; then
             echo "Dockerfile not found at $DOCKERFILE"
-            echo "Using sandbox-override.yaml with ubuntu:22.04"
+            echo "Using pre-built image: $BASE_IMAGE"
             BUILD_IMAGE="false"
         else
             # Determine full image name
@@ -113,10 +117,11 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
             fi
 
             echo "Building image: $FULL_IMAGE"
-            echo "Using Dockerfile: $DOCKERFILE"
+            echo "Base image: $BASE_IMAGE"
+            echo "Dockerfile: $DOCKERFILE"
             echo ""
 
-            # Build the image
+            # Build the image from .devcontainer/claude-code/Dockerfile
             if docker build -t "$FULL_IMAGE" -f "$DOCKERFILE" "$K8S_DIR/.." ; then
                 echo "✅ Image built successfully: $FULL_IMAGE"
 
@@ -134,15 +139,19 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
                     fi
                 fi
 
-                # Update the image reference in the statefulset
                 USE_CUSTOM_IMAGE="true"
             else
                 echo "❌ Image build failed"
-                echo "Falling back to ubuntu:22.04"
+                echo "Falling back to pre-built image: $BASE_IMAGE"
+                FULL_IMAGE="${BASE_IMAGE}"
                 BUILD_IMAGE="false"
             fi
         fi
     fi
+else
+    echo ""
+    echo "Skipping image build (BUILD_IMAGE=false)"
+    echo "Using pre-built image: $BASE_IMAGE"
 fi
 
 echo ""
@@ -171,17 +180,10 @@ fi
 kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
 kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
 
-# Deploy with appropriate image
-if [[ "${USE_CUSTOM_IMAGE:-false}" == "true" ]]; then
-    echo "Deploying with custom image: $FULL_IMAGE"
-    # Create a temporary manifest with the custom image
-    sed "s|image:.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/05-statefulset.yaml" | kubectl apply -f -
-elif [[ -f "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" ]]; then
-    echo "Deploying with sandbox override (ubuntu:22.04)"
-    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml"
-else
-    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/05-statefulset.yaml"
-fi
+# Deploy with the configured image
+echo "Deploying with image: $FULL_IMAGE"
+# Update the sandbox-override.yaml with the correct image and apply
+sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" | kubectl apply -f -
 
 # Wait for pod to be ready
 echo "Waiting for agent-sandbox pod..."
@@ -246,6 +248,10 @@ if [[ -n "$ROOT_TOKEN" ]]; then
         vault secrets enable -path=terraform terraform 2>/dev/null || true
     " 2>/dev/null
     echo "✅ Vault configured"
+
+    # Export Vault CA certificate for devenv pods
+    echo "Exporting Vault CA certificate..."
+    "$K8S_DIR/platform/vault/scripts/export-vault-ca.sh" vault devenv
 fi
 
 echo ""
@@ -456,20 +462,39 @@ echo "=========================================="
 echo "  Next Steps"
 echo "=========================================="
 echo ""
-echo "1. Access DevEnv:"
+echo "1. Access DevEnv via SSH (VSCode Remote SSH):"
+echo "   a. Configure SSH CA for certificate-based auth:"
+echo "      ./platform/vault/scripts/configure-ssh-engine.sh"
+echo "   b. Get a signed SSH certificate:"
+echo "      vault write -field=signed_key ssh/sign/devenv-access public_key=@~/.ssh/id_rsa.pub > ~/.ssh/id_rsa-cert.pub"
+echo "   c. Port forward SSH:"
+echo "      kubectl port-forward -n devenv svc/devenv 2222:22"
+echo "   d. Connect via VSCode Remote SSH to 'localhost:2222' as user 'node'"
+echo ""
+echo "2. Access DevEnv via kubectl (alternative):"
 echo "   kubectl exec -it -n devenv devenv-0 -- /bin/bash"
 echo ""
-echo "2. Port-forward to Vault UI:"
+echo "3. Port-forward to Vault UI:"
 echo "   kubectl port-forward -n vault vault-0 8200:8200"
 echo "   Open: http://localhost:8200"
 echo ""
-echo "3. Configure additional secrets engines:"
-echo "   ./platform/vault/scripts/configure-ssh-engine.sh"
+echo "4. Configure TFE dynamic tokens:"
 echo "   ./platform/vault/scripts/configure-tfe-engine.sh"
 echo ""
-echo "4. View synced secrets:"
+echo "5. View synced secrets:"
 echo "   kubectl get secret devenv-vault-secrets -n devenv -o yaml"
 echo ""
-echo "5. Update real credentials:"
+echo "6. Update real credentials:"
 echo "   kubectl edit secret devenv-secrets -n devenv"
 echo ""
+echo "7. Run healthcheck:"
+echo "   ./scripts/healthcheck.sh"
+echo ""
+
+# Run healthcheck
+echo ""
+echo "=========================================="
+echo "  Running Post-Deploy Healthcheck"
+echo "=========================================="
+echo ""
+"$SCRIPT_DIR/healthcheck.sh" || true

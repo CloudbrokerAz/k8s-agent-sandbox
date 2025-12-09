@@ -1,25 +1,22 @@
 {
   "name": "Agent Sandbox - Claude Code",
-  "build": {
-    "dockerfile": "../../Dockerfile.production",
-    "context": "../../../",
-    "args": {
-      "TZ": "${localEnv:TZ:UTC}"
-    }
-  },
+  "image": "${localEnv:AGENT_SANDBOX_IMAGE:srlynch1/terraform-ai-tools:latest}",
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW"
   ],
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2.12.4": {},
+    "ghcr.io/devcontainers/features/sshd:1": {
+      "version": "latest"
+    },
     "ghcr.io/coder/devcontainer-features/code-server:1": {
       "port": 13337,
       "host": "0.0.0.0"
     }
   },
-  "postCreateCommand": "claude --version && echo 'Agent Sandbox with Claude Code ready'",
-  "appPort": ["13337:13337"],
+  "postCreateCommand": "claude --version && echo 'Agent Sandbox with Claude Code ready' && if [ -f /vault-ca/vault-ca.crt ]; then sudo cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates; fi",
+  "appPort": ["13337:13337", "2222:2222"],
   "customizations": {
     "vscode": {
       "extensions": [
@@ -67,6 +64,8 @@
     "AWS_SECRET_ACCESS_KEY": "${localEnv:AWS_SECRET_ACCESS_KEY}",
     "AWS_SESSION_TOKEN": "${localEnv:AWS_SESSION_TOKEN}",
     "AWS_SESSION_EXPIRATION": "${localEnv:AWS_SESSION_EXPIRATION}",
+    "VAULT_ADDR": "${localEnv:VAULT_ADDR}",
+    "VAULT_CACERT": "/vault-ca/vault-ca.crt",
     "VAULT_RADAR_LICENSE": "${localEnv:VAULT_RADAR_LICENSE:}",
     "LANGFUSE_HOST": "${localEnv:LANGFUSE_HOST}",
     "LANGFUSE_PUBLIC_KEY": "${localEnv:LANGFUSE_PUBLIC_KEY}",
