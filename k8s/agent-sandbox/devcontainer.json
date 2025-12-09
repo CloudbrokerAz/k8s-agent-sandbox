@@ -1,6 +1,11 @@
 {
   "name": "Claude Code Sandbox",
   "image": "srlynch1/terraform-ai-tools:latest",
+  "workspaceFolder": "/workspace",
+  "mounts": [
+    "source=claude-code-bashhistory,target=/commandhistory,type=volume",
+    "source=claude-code-config,target=/home/node/.claude,type=volume"
+  ],
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/sshd:1": {
