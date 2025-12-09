@@ -1,5 +1,6 @@
 # Claude Code Sandbox - Following kubernetes-sigs/agent-sandbox pattern
 # Reference: https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/vscode-sandbox
+# Using local files approach: devcontainer.json mounted via ConfigMap
 apiVersion: agents.x-k8s.io/v1alpha1
 kind: Sandbox
 metadata:
@@ -24,19 +25,17 @@ spec:
             memory: "4Gi"
             ephemeral-storage: "8Gi"
         env:
-        # Envbuilder configuration
-        # Clone this repo and build the claude-code devcontainer
-        - name: ENVBUILDER_GIT_URL
-          value: "https://github.com/CloudbrokerAz/k8s-agent-sandbox.git"
+        # Envbuilder configuration - using local files (no git clone needed)
+        # See: https://github.com/coder/envbuilder/blob/main/docs/using-local-files.md
+        - name: ENVBUILDER_WORKSPACE_FOLDER
+          value: "/workspaces/empty"
         - name: ENVBUILDER_DEVCONTAINER_DIR
-          value: "k8s/agent-sandbox"
-        - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
-          value: "true"
+          value: ".devcontainer"
         - name: ENVBUILDER_INIT_SCRIPT
-          value: "k8s/agent-sandbox/entrypoint.sh"
-        # Ignore sensitive Kubernetes paths
+          value: ".devcontainer/entrypoint.sh"
+        # Ignore paths that envbuilder should not try to remount
         - name: ENVBUILDER_IGNORE_PATHS
-          value: "/var/run,/product_uuid,/product_name,/tokens,/var/run/secrets"
+          value: "/var/run,/product_uuid,/product_name,/tokens,/var/run/secrets,/vault-ssh-ca,/vault-ca,/home/node/.claude,/commandhistory"
 
         # GitHub token for private repo access (optional)
         - name: GITHUB_TOKEN
@@ -99,6 +98,9 @@ spec:
         volumeMounts:
         - mountPath: /workspaces
           name: workspaces-pvc
+        # Mount devcontainer.json and entrypoint.sh from ConfigMap
+        - mountPath: /workspaces/empty/.devcontainer
+          name: devcontainer-config
         - mountPath: /home/node/.claude
           name: claude-config-pvc
         - mountPath: /commandhistory
@@ -111,6 +113,10 @@ spec:
           readOnly: true
 
       volumes:
+      - name: devcontainer-config
+        configMap:
+          name: claude-code-devcontainer
+          defaultMode: 0755
       - name: vault-ssh-ca
         secret:
           secretName: vault-ssh-ca

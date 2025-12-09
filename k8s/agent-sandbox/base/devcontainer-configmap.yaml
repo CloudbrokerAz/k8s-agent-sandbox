@@ -1,0 +1,182 @@
+# ConfigMap containing devcontainer.json and entrypoint.sh
+# Mounted into envbuilder to avoid requiring external git repo
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claude-code-devcontainer
+data:
+  devcontainer.json: |
+    {
+      "name": "Claude Code Sandbox",
+      "image": "srlynch1/terraform-ai-tools:latest",
+      "features": {
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+        "ghcr.io/devcontainers/features/sshd:1": {
+          "version": "latest"
+        },
+        "ghcr.io/coder/devcontainer-features/code-server:1": {
+          "port": 13337,
+          "host": "0.0.0.0"
+        }
+      },
+      "postCreateCommand": "npm install -g @anthropic-ai/claude-code && claude --version && echo 'Claude Code Sandbox ready'",
+      "appPort": ["13337:13337", "22:22"],
+      "remoteUser": "node",
+      "containerUser": "node",
+      "remoteEnv": {
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+        "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+        "CLAUDE_GITHUB_MCP_ENABLED": "true"
+      },
+      "customizations": {
+        "vscode": {
+          "extensions": [
+            "dbaeumer.vscode-eslint",
+            "esbenp.prettier-vscode",
+            "hashicorp.terraform",
+            "Anthropic.claude-code",
+            "redhat.vscode-yaml",
+            "HashiCorp.HCL",
+            "ms-kubernetes-tools.vscode-kubernetes-tools"
+          ],
+          "settings": {
+            "editor.formatOnSave": true,
+            "terminal.integrated.defaultProfile.linux": "bash"
+          }
+        }
+      }
+    }
+
+  entrypoint.sh: |
+    #!/bin/bash
+    # entrypoint.sh - Claude Code Sandbox initialization
+    # Called by envbuilder after devcontainer build completes
+    set -e
+
+    echo "========================================="
+    echo "  Claude Code Sandbox Initializing..."
+    echo "========================================="
+
+    # -----------------------------------------------------------------------------
+    # 1. Configure Vault TLS CA Trust (requires root/sudo)
+    # -----------------------------------------------------------------------------
+    if [ -f /vault-ca/vault-ca.crt ]; then
+        echo "[1/5] Configuring Vault TLS CA trust..."
+        if cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/vault-ca.crt 2>/dev/null; then
+            update-ca-certificates 2>/dev/null || true
+            echo "  ✓ Vault TLS CA trusted"
+        else
+            echo "  - Vault TLS CA: insufficient permissions, skipping system trust"
+            # Set NODE_EXTRA_CA_CERTS for Node.js applications
+            export NODE_EXTRA_CA_CERTS=/vault-ca/vault-ca.crt
+            echo "  ✓ Set NODE_EXTRA_CA_CERTS for application-level trust"
+        fi
+    else
+        echo "[1/5] Vault TLS CA not mounted, skipping..."
+    fi
+
+    # -----------------------------------------------------------------------------
+    # 2. Configure Vault SSH CA for Certificate Authentication (requires root)
+    # -----------------------------------------------------------------------------
+    if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
+        echo "[2/5] Configuring Vault SSH CA..."
+        if cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub 2>/dev/null; then
+            chmod 644 /etc/ssh/vault-ssh-ca.pub 2>/dev/null || true
+            # Add TrustedUserCAKeys to sshd_config if not present
+            if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
+                echo "" >> /etc/ssh/sshd_config 2>/dev/null || true
+                echo "# Vault SSH CA Authentication" >> /etc/ssh/sshd_config 2>/dev/null || true
+                echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" >> /etc/ssh/sshd_config 2>/dev/null || true
+                echo "AuthorizedPrincipalsFile none" >> /etc/ssh/sshd_config 2>/dev/null || true
+            fi
+            echo "  ✓ Vault SSH CA configured"
+        else
+            echo "  - Vault SSH CA: insufficient permissions, skipping"
+        fi
+    else
+        echo "[2/5] Vault SSH CA not mounted, skipping..."
+    fi
+
+    # -----------------------------------------------------------------------------
+    # 3. Ensure SSH Server is Running (SSH feature starts its own server)
+    # -----------------------------------------------------------------------------
+    echo "[3/5] Checking SSH server..."
+    if command -v sshd &> /dev/null; then
+        if pgrep -x sshd > /dev/null; then
+            echo "  ✓ SSH server already running (started by sshd feature)"
+        else
+            # Try to start sshd without sudo (may fail, that's ok)
+            mkdir -p /run/sshd 2>/dev/null || true
+            /usr/sbin/sshd 2>/dev/null && echo "  ✓ SSH server started" || echo "  - SSH server requires root, use 'sshd' feature port"
+        fi
+    else
+        echo "  - SSHD not installed"
+    fi
+
+    # -----------------------------------------------------------------------------
+    # 4. Verify Claude Code Installation
+    # -----------------------------------------------------------------------------
+    echo "[4/5] Verifying Claude Code..."
+    if command -v claude &> /dev/null; then
+        CLAUDE_VERSION=$(claude --version 2>/dev/null || echo "installed")
+        echo "  ✓ Claude Code: ${CLAUDE_VERSION}"
+    else
+        echo "  - Installing Claude Code..."
+        npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+        if command -v claude &> /dev/null; then
+            echo "  ✓ Claude Code installed"
+        else
+            echo "  ✗ Claude Code installation failed"
+        fi
+    fi
+
+    # -----------------------------------------------------------------------------
+    # 5. Start code-server
+    # -----------------------------------------------------------------------------
+    echo "[5/5] Starting code-server..."
+    if command -v code-server &> /dev/null; then
+        # Kill any existing instance
+        pkill -f "code-server" 2>/dev/null || true
+        sleep 1
+
+        # Start code-server in background
+        code-server --bind-addr 0.0.0.0:13337 --auth none /workspaces &
+        CODE_SERVER_PID=$!
+        sleep 2
+
+        if kill -0 $CODE_SERVER_PID 2>/dev/null; then
+            echo "  ✓ code-server started on port 13337"
+        else
+            echo "  ✗ code-server failed to start"
+        fi
+    else
+        echo "  - code-server not installed"
+    fi
+
+    # -----------------------------------------------------------------------------
+    # Print Access Information
+    # -----------------------------------------------------------------------------
+    echo ""
+    echo "========================================="
+    echo "  Claude Code Sandbox Ready!"
+    echo "========================================="
+    echo ""
+    echo "Access Methods:"
+    echo "  - code-server: http://localhost:13337 (via port-forward)"
+    echo "  - SSH: port 22 (via Boundary or port-forward)"
+    echo "  - kubectl exec: direct shell access"
+    echo ""
+    echo "========================================="
+
+    # -----------------------------------------------------------------------------
+    # Keep Container Running
+    # -----------------------------------------------------------------------------
+    # Wait for code-server or sshd, fallback to tail
+    if [[ -n "${CODE_SERVER_PID:-}" ]] && kill -0 $CODE_SERVER_PID 2>/dev/null; then
+        wait $CODE_SERVER_PID
+    elif pgrep -x sshd > /dev/null; then
+        wait $(pgrep -x sshd | head -1) 2>/dev/null || exec tail -f /dev/null
+    else
+        exec tail -f /dev/null
+    fi
