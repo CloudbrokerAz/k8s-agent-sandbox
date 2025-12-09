@@ -268,10 +268,16 @@ kubectl get ns vault-secrets-operator-system &>/dev/null && EXISTING="$EXISTING 
 
 if [[ -n "$EXISTING" ]]; then
     echo "⚠️  Existing deployments found:$EXISTING"
-    read -p "Continue and update? (yes/no): " confirm
-    if [[ "$confirm" != "yes" ]]; then
-        echo "Cancelled"
-        exit 0
+    if [[ -t 0 ]]; then
+        # Interactive mode - ask user
+        read -p "Continue and update? (yes/no): " confirm
+        if [[ "$confirm" != "yes" ]]; then
+            echo "Cancelled"
+            exit 0
+        fi
+    else
+        # Non-interactive mode - continue automatically
+        echo "Non-interactive mode: continuing with update..."
     fi
 fi
 
