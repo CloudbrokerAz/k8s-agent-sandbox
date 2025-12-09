@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: devenv
+  namespace: devenv
+  labels:
+    app: devenv
+spec:
+  type: ClusterIP  # Change to LoadBalancer for external access (if supported)
+  selector:
+    app: devenv
+  ports:
+  - name: ssh
+    port: 22
+    targetPort: 22
+    protocol: TCP
+  # Add more ports as needed for your development workflow
+  # Example: HTTP server, debugging ports, etc.
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+
+  # For headless service (useful with StatefulSet):
+  # clusterIP: None

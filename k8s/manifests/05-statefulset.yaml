@@ -1,0 +1,179 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: devenv
+  namespace: devenv
+  labels:
+    app: devenv
+spec:
+  serviceName: devenv
+  replicas: 1  # Start with 1, scale as needed per user
+  selector:
+    matchLabels:
+      app: devenv
+  template:
+    metadata:
+      labels:
+        app: devenv
+    spec:
+      # Security context for non-privileged execution (OpenShift compatible)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000  # node user
+        fsGroup: 1000
+        # For OpenShift, add:
+        # fsGroupChangePolicy: "OnRootMismatch"
+
+      containers:
+      - name: devenv
+        image: YOUR_DOCKERHUB_USERNAME/terraform-devenv:latest  # Replace with your image
+        imagePullPolicy: Always
+
+        # Environment variables from secrets
+        env:
+        - name: GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: GITHUB_TOKEN
+              optional: true
+        - name: TFE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: TFE_TOKEN
+              optional: true
+        - name: TF_TOKEN_app_terraform_io
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: TFE_TOKEN
+              optional: true
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: AWS_ACCESS_KEY_ID
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: AWS_SECRET_ACCESS_KEY
+              optional: true
+        - name: AWS_SESSION_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: AWS_SESSION_TOKEN
+              optional: true
+        - name: LANGFUSE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: LANGFUSE_HOST
+              optional: true
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: LANGFUSE_PUBLIC_KEY
+              optional: true
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-secrets
+              key: LANGFUSE_SECRET_KEY
+              optional: true
+        - name: CLAUDE_CONFIG_DIR
+          value: "/home/node/.claude"
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=4096"
+
+        # Resource limits
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+        # Volume mounts
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: bash-history
+          mountPath: /commandhistory
+        - name: claude-config
+          mountPath: /home/node/.claude
+
+        # Security context for container (OpenShift compatible)
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          # For Docker-in-Docker support (if absolutely needed):
+          # capabilities:
+          #   add:
+          #   - NET_ADMIN
+          #   - NET_RAW
+          # Note: This requires cluster admin privileges and SecurityContextConstraints on OpenShift
+
+        # Liveness and readiness probes
+        livenessProbe:
+          exec:
+            command:
+            - /bin/zsh
+            - -c
+            - "ps aux | grep -v grep | grep tail || exit 1"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+
+        readinessProbe:
+          exec:
+            command:
+            - /bin/zsh
+            - -c
+            - "test -f /workspace/.ready || touch /workspace/.ready"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+
+  # Volume claim templates for StatefulSet
+  volumeClaimTemplates:
+  - metadata:
+      name: workspace
+      labels:
+        app: devenv
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard  # Change based on your cluster
+      resources:
+        requests:
+          storage: 10Gi
+
+  - metadata:
+      name: bash-history
+      labels:
+        app: devenv
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 1Gi
+
+  - metadata:
+      name: claude-config
+      labels:
+        app: devenv
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 1Gi

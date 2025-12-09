@@ -1,0 +1,30 @@
+# Kustomize configuration for easier deployment
+# Usage: kubectl apply -k k8s/manifests/
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: devenv
+
+resources:
+  - 01-namespace.yaml
+  - 03-storageclass.yaml
+  - 05-statefulset.yaml
+  - 06-service.yaml
+  - 07-networkpolicy.yaml
+  # Note: secrets are managed separately via create-secrets.sh
+
+# Optional: Add common labels
+commonLabels:
+  app.kubernetes.io/name: devenv
+  app.kubernetes.io/component: development-environment
+  app.kubernetes.io/managed-by: kubectl
+
+# Optional: Add annotations
+commonAnnotations:
+  documentation: "See k8s/README.md for details"
+
+# Optional: Image tag override
+# images:
+#   - name: YOUR_DOCKERHUB_USERNAME/terraform-devenv
+#     newTag: v1.0.0

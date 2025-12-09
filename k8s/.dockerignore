@@ -1,0 +1,12 @@
+**/.git
+**/.gitignore
+**/.vscode
+**/node_modules
+**/.DS_Store
+**/dist
+**/build
+**/.env
+**/.env.*
+k8s/
+.devcontainer/vscode-agent/
+.devcontainer/claude-code/
