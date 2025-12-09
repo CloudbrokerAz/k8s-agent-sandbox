@@ -23,8 +23,8 @@ Create a Claude Code sandbox following the exact pattern from `kubernetes-sigs/a
 ### Phase 1: Prerequisites
 - [x] 1.1 Check latest agent-sandbox release version (v0.1.0)
 - [x] 1.2 Install agent-sandbox CRD and controller (via deploy.sh)
-- [ ] 1.3 Verify Sandbox CRD is available (`kubectl get crd sandboxes.agents.x-k8s.io`)
-- [ ] 1.4 Verify controller is running
+- [x] 1.3 Verify Sandbox CRD is available (`kubectl get crd sandboxes.agents.x-k8s.io`)
+- [x] 1.4 Verify controller is running
 
 ### Phase 2: Directory Structure
 - [x] 2.1 Create base directory: `base/`
