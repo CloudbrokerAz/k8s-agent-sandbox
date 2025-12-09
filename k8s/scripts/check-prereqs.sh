@@ -416,7 +416,7 @@ if command -v curl &> /dev/null; then
 else
     echo "MISSING"
     echo "  curl is required for installation scripts"
-    ((ERRORS++))
+    ERRORS=$((ERRORS + 1))
 fi
 
 echo ""
