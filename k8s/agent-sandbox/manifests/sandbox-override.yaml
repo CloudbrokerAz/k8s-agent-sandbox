@@ -117,10 +117,11 @@ spec:
           protocol: TCP
 
         env:
+        # GITHUB_TOKEN from Vault KV via VSO (synced from secret/devenv/credentials)
         - name: GITHUB_TOKEN
           valueFrom:
             secretKeyRef:
-              name: devenv-secrets
+              name: devenv-vault-secrets
               key: GITHUB_TOKEN
               optional: true
         # TFE_TOKEN from Vault dynamic secret (auto-renewed)
@@ -135,6 +136,25 @@ spec:
             secretKeyRef:
               name: tfe-dynamic-token
               key: TFE_TOKEN
+              optional: true
+        # Langfuse observability (from Vault KV via VSO)
+        - name: LANGFUSE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: LANGFUSE_HOST
+              optional: true
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: LANGFUSE_PUBLIC_KEY
+              optional: true
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devenv-vault-secrets
+              key: LANGFUSE_SECRET_KEY
               optional: true
         # Vault address for CLI tools
         - name: VAULT_ADDR

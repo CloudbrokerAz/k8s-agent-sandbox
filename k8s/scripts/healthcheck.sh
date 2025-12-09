@@ -123,6 +123,16 @@ else
     check_warn "TFE_TOKEN not set (run configure-tfe-engine.sh)"
 fi
 
+# Check GITHUB_TOKEN from VSO
+GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv GITHUB_TOKEN 2>/dev/null || echo "")
+if [[ -n "$GH_TOKEN" ]] && [[ "$GH_TOKEN" != "placeholder-update-me" ]]; then
+    check_pass "GITHUB_TOKEN set from Vault"
+elif [[ "$GH_TOKEN" == "placeholder-update-me" ]]; then
+    check_warn "GITHUB_TOKEN is placeholder (run configure-secrets.sh)"
+else
+    check_warn "GITHUB_TOKEN not set (run configure-secrets.sh)"
+fi
+
 # ==========================================
 # Vault
 # ==========================================

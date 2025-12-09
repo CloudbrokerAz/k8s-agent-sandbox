@@ -430,8 +430,20 @@ path \"terraform/creds/*\" { capabilities = [\"read\"] }
 POLICY
         vault write auth/kubernetes/role/vault-secrets-operator bound_service_account_names=vault-secrets-operator-controller-manager bound_service_account_namespaces=vault-secrets-operator-system policies=vault-secrets-operator ttl=1h
         vault write auth/kubernetes/role/devenv-secrets bound_service_account_names='*' bound_service_account_namespaces=devenv policies=devenv-secrets ttl=1h
-        vault kv put secret/devenv/credentials username=devenv-user password=change-me api_key=change-me
     " 2>/dev/null
+
+    # Store initial credentials in Vault KV (placeholder values)
+    # These should be updated with real values using configure-secrets.sh
+    echo "Storing initial credentials in Vault KV..."
+    kubectl exec -n vault vault-0 -- sh -c "
+        export VAULT_TOKEN='$ROOT_TOKEN'
+        vault kv put secret/devenv/credentials \
+            github_token=placeholder-update-me \
+            langfuse_host= \
+            langfuse_public_key= \
+            langfuse_secret_key=
+    " 2>/dev/null
+    echo "⚠️  Update credentials with: ./platform/vault/scripts/configure-secrets.sh"
 fi
 
 # Apply example secret sync
@@ -478,14 +490,14 @@ echo "3. Port-forward to Vault UI:"
 echo "   kubectl port-forward -n vault vault-0 8200:8200"
 echo "   Open: http://localhost:8200"
 echo ""
-echo "4. Configure TFE dynamic tokens:"
+echo "4. Configure secrets (GITHUB_TOKEN, Langfuse):"
+echo "   ./platform/vault/scripts/configure-secrets.sh"
+echo ""
+echo "5. Configure TFE dynamic tokens:"
 echo "   ./platform/vault/scripts/configure-tfe-engine.sh"
 echo ""
-echo "5. View synced secrets:"
+echo "6. View synced secrets:"
 echo "   kubectl get secret devenv-vault-secrets -n devenv -o yaml"
-echo ""
-echo "6. Update real credentials:"
-echo "   kubectl edit secret devenv-secrets -n devenv"
 echo ""
 echo "7. Run healthcheck:"
 echo "   ./scripts/healthcheck.sh"
