@@ -82,6 +82,9 @@ spec:
               echo "Agent Sandbox ready!"
               echo "Access: kubectl exec -it devenv-0 -n devenv -- /bin/bash"
               echo "========================================="
+
+              # Keep container running
+              exec tail -f /dev/null
           # Environment variables from secrets
           env:
             - name: GITHUB_TOKEN
