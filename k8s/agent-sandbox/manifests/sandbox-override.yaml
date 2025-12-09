@@ -1,6 +1,6 @@
-# Sandbox testing override
-# Use a public Ubuntu image with basic tools for testing k8s deployment
-# Replace with your custom image for production
+# Agent Sandbox StatefulSet
+# Uses custom devcontainer built from Dockerfile.production
+# Supports VSCode Remote SSH development
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -20,26 +20,25 @@ spec:
         app: devenv
     spec:
       securityContext:
-        runAsNonRoot: false  # Ubuntu image runs as root by default
+        runAsNonRoot: true
+        runAsUser: 1000  # node user
         fsGroup: 1000
 
       containers:
       - name: devenv
-        # Using Ubuntu with common dev tools for sandbox testing
-        image: ubuntu:22.04
+        # Custom devcontainer with Terraform, AWS CLI, Claude Code, etc.
+        # Built from k8s/Dockerfile.production
+        # Override with: IMAGE_NAME and IMAGE_TAG in platform.env
+        image: agent-sandbox:latest
         imagePullPolicy: IfNotPresent
 
-        # Keep container running
+        # Keep container running for interactive access
         command: ["/bin/bash", "-c"]
         args:
           - |
-            apt-get update && apt-get install -y curl openssh-server sudo
-            useradd -m -s /bin/bash -G sudo node || true
-            echo 'node ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-            mkdir -p /run/sshd
+            echo "Agent Sandbox starting..."
             mkdir -p /workspace /commandhistory /home/node/.claude
-            chown -R node:node /workspace /commandhistory /home/node
-            echo "DevEnv sandbox ready"
+            echo "Agent Sandbox ready for VSCode Remote SSH"
             tail -f /dev/null
 
         env:
@@ -65,11 +64,11 @@ spec:
 
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "2Gi"
+            cpu: "500m"
           limits:
-            memory: "1Gi"
-            cpu: "1000m"
+            memory: "4Gi"
+            cpu: "2000m"
 
         volumeMounts:
         - name: workspace
@@ -81,6 +80,9 @@ spec:
 
         securityContext:
           allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
 
         livenessProbe:
           exec:
@@ -94,7 +96,7 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 10
 
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 30
 
   volumeClaimTemplates:
   - metadata:
@@ -106,7 +108,7 @@ spec:
       storageClassName: standard
       resources:
         requests:
-          storage: 1Gi
+          storage: 10Gi
 
   - metadata:
       name: bash-history
@@ -117,7 +119,7 @@ spec:
       storageClassName: standard
       resources:
         requests:
-          storage: 100Mi
+          storage: 1Gi
 
   - metadata:
       name: claude-config
@@ -128,4 +130,4 @@ spec:
       storageClassName: standard
       resources:
         requests:
-          storage: 100Mi
+          storage: 1Gi
