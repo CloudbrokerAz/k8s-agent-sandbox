@@ -310,14 +310,14 @@ else
     if [[ "$CHECK_ONLY" == "true" ]]; then
         echo "MISSING"
         echo "  Install: https://helm.sh/docs/intro/install/"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         echo "MISSING - installing..."
         if install_helm; then
             VERSION=$(helm version --short 2>/dev/null | cut -d'+' -f1 || echo "installed")
             echo "  Installed: $VERSION"
         else
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
 fi
