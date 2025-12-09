@@ -133,17 +133,63 @@ wait_parallel() {
     fi
 }
 
-# Check prerequisites
+# Check and install prerequisites
 echo "Checking prerequisites..."
 
-if ! command -v kubectl &> /dev/null; then
-    echo "❌ kubectl not found"
-    exit 1
-fi
+# Run the prerequisite check/install script
+if [[ -f "$SCRIPT_DIR/check-prereqs.sh" ]]; then
+    # Run prereqs script - it will auto-install missing tools
+    if ! "$SCRIPT_DIR/check-prereqs.sh"; then
+        echo ""
+        echo "❌ Prerequisites check failed. Please resolve issues above."
+        exit 1
+    fi
+    echo ""
+else
+    # Fallback: inline prerequisite checks if script is missing
+    echo "⚠️  check-prereqs.sh not found, running inline checks..."
 
-if ! command -v helm &> /dev/null; then
-    echo "📦 Installing Helm..."
-    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    if ! command -v kubectl &> /dev/null; then
+        echo "📦 Installing kubectl..."
+        KUBECTL_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt 2>/dev/null || echo "v1.31.0")
+        curl -fsSLO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        if ! command -v kubectl &> /dev/null; then
+            echo "❌ Failed to install kubectl"
+            exit 1
+        fi
+        echo "✅ kubectl installed"
+    fi
+
+    if ! command -v helm &> /dev/null; then
+        echo "📦 Installing Helm..."
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        echo "📦 Installing jq..."
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq jq
+        elif command -v apk &> /dev/null; then
+            sudo apk add --no-cache jq
+        else
+            echo "❌ jq not found and cannot auto-install"
+            exit 1
+        fi
+    fi
+
+    if ! command -v openssl &> /dev/null; then
+        echo "📦 Installing openssl..."
+        if command -v apt-get &> /dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq openssl
+        elif command -v apk &> /dev/null; then
+            sudo apk add --no-cache openssl
+        else
+            echo "❌ openssl not found and cannot auto-install"
+            exit 1
+        fi
+    fi
 fi
 
 # Check for Kubernetes cluster - auto-create Kind cluster if not available
