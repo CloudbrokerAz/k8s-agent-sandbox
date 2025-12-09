@@ -24,7 +24,8 @@ data:
       node_id = "vault-0"
     }
 
-    service_registration "kubernetes" {}
+    # Disable k8s service registration for simplicity
+    # service_registration "kubernetes" {}
 
     telemetry {
       disable_hostname = true

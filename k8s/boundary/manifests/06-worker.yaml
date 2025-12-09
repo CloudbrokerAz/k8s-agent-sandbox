@@ -49,6 +49,8 @@ spec:
             - containerPort: 9203
               name: ops
           env:
+            - name: SKIP_SETCAP
+              value: "true"
             - name: BOUNDARY_WORKER_AUTH_KEY
               valueFrom:
                 secretKeyRef:
@@ -66,10 +68,10 @@ spec:
               memory: "512Mi"
               cpu: "500m"
           securityContext:
-            allowPrivilegeEscalation: false
+            allowPrivilegeEscalation: true
             capabilities:
-              drop:
-                - ALL
+              add:
+                - IPC_LOCK
           livenessProbe:
             httpGet:
               path: /health
