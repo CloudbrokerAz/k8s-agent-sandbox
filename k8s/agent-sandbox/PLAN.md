@@ -71,13 +71,13 @@ Create a Claude Code sandbox following the exact pattern from `kubernetes-sigs/a
 - [x] 6.5 Add Vault SSH CA volume mount
 
 ### Phase 7: Deployment & Testing
-- [ ] 7.1 Deploy base sandbox: `./deploy.sh`
-- [ ] 7.2 Verify sandbox resource created
-- [ ] 7.3 Verify pod is running
-- [ ] 7.4 Wait for envbuilder to complete (monitor logs)
-- [ ] 7.5 Test code-server access via port-forward
-- [ ] 7.6 Test Claude Code CLI availability
-- [ ] 7.7 Test SSH access (if configured)
+- [x] 7.1 Deploy base sandbox: `./deploy.sh`
+- [x] 7.2 Verify sandbox resource created
+- [x] 7.3 Verify pod is running
+- [x] 7.4 Wait for envbuilder to complete (monitor logs)
+- [x] 7.5 Test code-server access via port-forward
+- [x] 7.6 Test Claude Code CLI availability
+- [x] 7.7 Test SSH access (if configured)
 
 ### Phase 8: Documentation
 - [x] 8.1 Update README with deployment instructions
@@ -92,21 +92,21 @@ Create a Claude Code sandbox following the exact pattern from `kubernetes-sigs/a
 
 ```
 k8s/agent-sandbox/
-├── PLAN.md                        # This file
-├── README.md                      # Usage documentation
+├── PLAN.md                           # This file
+├── README.md                         # Usage documentation
 ├── base/
 │   ├── kustomization.yaml
-│   ├── claude-code-sandbox.yaml   # Sandbox CRD manifest
-│   └── service.yaml               # ClusterIP service
+│   ├── devcontainer-configmap.yaml   # ConfigMap with devcontainer.json + entrypoint.sh
+│   ├── claude-code-sandbox.yaml      # Sandbox CRD manifest
+│   └── service.yaml                  # ClusterIP service
 ├── overlays/
 │   ├── gvisor/
-│   │   └── kustomization.yaml     # gVisor runtime overlay
+│   │   └── kustomization.yaml        # gVisor runtime overlay
 │   └── kata/
-│       └── kustomization.yaml     # Kata runtime overlay
-├── devcontainer.json              # Claude Code devcontainer config
-├── entrypoint.sh                  # Initialization script
-├── deploy.sh                      # End-to-end deployment script
-└── teardown.sh                    # Cleanup script
+│       └── kustomization.yaml        # Kata runtime overlay
+├── devcontainer.json                 # Reference devcontainer config
+├── deploy.sh                         # End-to-end deployment script
+└── teardown.sh                       # Cleanup script
 ```
 
 ---

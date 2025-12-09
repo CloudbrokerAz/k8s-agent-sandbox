@@ -100,17 +100,17 @@ echo "--- Sandbox Resource Tests ---"
 if kubectl get sandbox "$SANDBOX_NAME" -n "$SANDBOX_NAMESPACE" &>/dev/null; then
     test_pass "Sandbox resource '$SANDBOX_NAME' exists"
 
-    # Get sandbox details
-    SANDBOX_PHASE=$(kubectl get sandbox "$SANDBOX_NAME" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-    test_info "Sandbox phase: $SANDBOX_PHASE"
-
-    # Check if sandbox is ready
-    if [[ "$SANDBOX_PHASE" == "Running" ]]; then
-        test_pass "Sandbox is in Running phase"
-    elif [[ "$SANDBOX_PHASE" == "Pending" ]]; then
-        test_warn "Sandbox is still Pending (may be initializing)"
+    # Get sandbox details - note: agent-sandbox controller may not populate phase field
+    SANDBOX_PHASE=$(kubectl get sandbox "$SANDBOX_NAME" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    if [[ -n "$SANDBOX_PHASE" ]]; then
+        test_info "Sandbox phase: $SANDBOX_PHASE"
+        if [[ "$SANDBOX_PHASE" == "Running" ]]; then
+            test_pass "Sandbox is in Running phase"
+        elif [[ "$SANDBOX_PHASE" == "Pending" ]]; then
+            test_warn "Sandbox is still Pending (may be initializing)"
+        fi
     else
-        test_warn "Sandbox phase: $SANDBOX_PHASE"
+        test_info "Sandbox phase not reported (controller limitation)"
     fi
 else
     test_fail "Sandbox resource '$SANDBOX_NAME' does not exist"
@@ -233,16 +233,13 @@ if [[ -n "$POD_NAME" ]] && [[ "$POD_READY" == "True" ]]; then
         fi
     fi
 
-    # Test SSH port 22
+    # Test SSH port 22 (optional - envbuilder doesn't auto-start sshd daemon)
     if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- pgrep sshd &>/dev/null; then
         test_pass "SSH server is running"
+    elif kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- sh -c "(cat < /dev/tcp/127.0.0.1/22) 2>/dev/null" &>/dev/null; then
+        test_pass "SSH port 22 is listening"
     else
-        # Check if port is listening even if sshd process not found
-        if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- sh -c "(cat < /dev/tcp/127.0.0.1/22) 2>/dev/null" &>/dev/null; then
-            test_pass "SSH port 22 is listening"
-        else
-            test_warn "SSH server is not running"
-        fi
+        test_info "SSH server not running (use kubectl exec or code-server for access)"
     fi
 else
     test_warn "Skipping connectivity tests (pod not ready)"
@@ -256,14 +253,20 @@ echo ""
 echo "--- Tool Installation Tests ---"
 
 if [[ -n "$POD_NAME" ]] && [[ "$POD_READY" == "True" ]]; then
-    # Check Claude Code CLI (installed via npm install -g @anthropic-ai/claude-code in postCreateCommand)
+    # Check Claude Code CLI (installed via npm install -g @anthropic-ai/claude-code)
+    # First check PATH, then check known npm global locations
+    NPM_GLOBAL_BIN="/usr/local/share/npm-global/bin"
     if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- sh -c "command -v claude >/dev/null 2>&1" &>/dev/null; then
         test_pass "Claude Code CLI is available in PATH"
         CLAUDE_VERSION=$(kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- claude --version 2>/dev/null | head -1 || echo "unknown")
         test_info "Claude version: $CLAUDE_VERSION"
+    elif kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- test -x "$NPM_GLOBAL_BIN/claude" &>/dev/null; then
+        test_pass "Claude Code CLI is installed at $NPM_GLOBAL_BIN/claude"
+        CLAUDE_VERSION=$(kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- "$NPM_GLOBAL_BIN/claude" --version 2>/dev/null | head -1 || echo "unknown")
+        test_info "Claude version: $CLAUDE_VERSION"
     else
-        # Claude is installed by postCreateCommand, may still be initializing
-        test_warn "Claude Code CLI not found (may still be installing via postCreateCommand)"
+        # Claude is installed by postCreateCommand or entrypoint, may still be initializing
+        test_warn "Claude Code CLI not found (may still be installing)"
     fi
 
     # Check Node.js
@@ -376,11 +379,12 @@ echo ""
 echo "--- Persistent Volume Tests ---"
 
 if [[ -n "$POD_NAME" ]]; then
-    # Check workspaces PVC
-    if kubectl get pvc -n "$SANDBOX_NAMESPACE" -l app="$SANDBOX_NAME" 2>/dev/null | grep -q "workspaces"; then
-        PVC_STATUS=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -l app="$SANDBOX_NAME" -o jsonpath='{.items[?(@.metadata.name contains "workspaces")].status.phase}' 2>/dev/null || echo "Unknown")
+    # Check workspaces PVC (created by Sandbox CRD with pattern: <pvc-name>-<sandbox-name>)
+    WORKSPACES_PVC=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -o name 2>/dev/null | grep "workspaces.*$SANDBOX_NAME" | head -1)
+    if [[ -n "$WORKSPACES_PVC" ]]; then
+        PVC_STATUS=$(kubectl get "$WORKSPACES_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
         if [[ "$PVC_STATUS" == "Bound" ]]; then
-            test_pass "Workspaces PVC is bound"
+            test_pass "Workspaces PVC is bound (${WORKSPACES_PVC#pvc/})"
         else
             test_warn "Workspaces PVC status: $PVC_STATUS"
         fi
@@ -389,10 +393,11 @@ if [[ -n "$POD_NAME" ]]; then
     fi
 
     # Check claude-config PVC
-    if kubectl get pvc -n "$SANDBOX_NAMESPACE" -l app="$SANDBOX_NAME" 2>/dev/null | grep -q "claude-config"; then
-        PVC_STATUS=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -l app="$SANDBOX_NAME" -o jsonpath='{.items[?(@.metadata.name contains "claude-config")].status.phase}' 2>/dev/null || echo "Unknown")
+    CONFIG_PVC=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -o name 2>/dev/null | grep "claude-config.*$SANDBOX_NAME" | head -1)
+    if [[ -n "$CONFIG_PVC" ]]; then
+        PVC_STATUS=$(kubectl get "$CONFIG_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
         if [[ "$PVC_STATUS" == "Bound" ]]; then
-            test_pass "Claude config PVC is bound"
+            test_pass "Claude config PVC is bound (${CONFIG_PVC#pvc/})"
         else
             test_warn "Claude config PVC status: $PVC_STATUS"
         fi
@@ -401,10 +406,11 @@ if [[ -n "$POD_NAME" ]]; then
     fi
 
     # Check bash-history PVC
-    if kubectl get pvc -n "$SANDBOX_NAMESPACE" -l app="$SANDBOX_NAME" 2>/dev/null | grep -q "bash-history"; then
-        PVC_STATUS=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -l app="$SANDBOX_NAME" -o jsonpath='{.items[?(@.metadata.name contains "bash-history")].status.phase}' 2>/dev/null || echo "Unknown")
+    HISTORY_PVC=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -o name 2>/dev/null | grep "bash-history.*$SANDBOX_NAME" | head -1)
+    if [[ -n "$HISTORY_PVC" ]]; then
+        PVC_STATUS=$(kubectl get "$HISTORY_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
         if [[ "$PVC_STATUS" == "Bound" ]]; then
-            test_pass "Bash history PVC is bound"
+            test_pass "Bash history PVC is bound (${HISTORY_PVC#pvc/})"
         else
             test_warn "Bash history PVC status: $PVC_STATUS"
         fi
