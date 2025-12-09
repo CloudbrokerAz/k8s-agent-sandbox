@@ -461,7 +461,7 @@ data:
 
     worker {
       name = "kubernetes-worker"
-      controllers = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
+      initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
       public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
     }
 

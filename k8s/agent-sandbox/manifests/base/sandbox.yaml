@@ -40,30 +40,25 @@ spec:
             set -e
             echo "Agent Sandbox starting..."
 
-            # Install Claude Code if not present (non-interactive)
-            if ! command -v claude &> /dev/null; then
-              echo "Installing Claude Code..."
-              # Use npm install as fallback since install.sh may hang
-              npm install -g @anthropic-ai/claude-code 2>/dev/null || {
-                echo "npm install failed, trying curl..."
-                curl -fsSL https://claude.ai/install.sh | TERM=dumb bash 2>/dev/null || echo "Claude Code install failed, continuing..."
-              }
-            fi
+            # Install tools (with timeout to prevent hanging)
+            install_tools() {
+              # Install Claude Code
+              if ! command -v claude &> /dev/null; then
+                echo "Installing Claude Code..."
+                timeout 120 npm install -g @anthropic-ai/claude-code 2>/dev/null || echo "Claude install skipped"
+              fi
 
-            # Install bun for ccstatusline
-            if ! command -v bun &> /dev/null; then
-              echo "Installing Bun..."
-              curl -fsSL https://bun.sh/install | TERM=dumb bash 2>/dev/null || echo "Bun install failed, continuing..."
-            fi
+              # Install Bun
+              if ! command -v bun &> /dev/null; then
+                echo "Installing Bun..."
+                timeout 60 bash -c 'curl -fsSL https://bun.sh/install | bash' 2>/dev/null || echo "Bun install skipped"
+              fi
+            }
+            install_tools || true
 
-            # Install ccstatusline globally with bunx
-            if command -v /root/.bun/bin/bun &> /dev/null; then
-              echo "Installing ccstatusline..."
-              /root/.bun/bin/bunx ccstatusline@latest 2>/dev/null || echo "ccstatusline install failed, continuing..."
-            fi
-
-            # Add bun and claude to PATH for node user
-            echo "export PATH=\"/root/.bun/bin:/root/.claude/local/bin:\$PATH\"" >> /home/node/.zshenv
+            # Add tools to PATH for SSH sessions
+            echo "export PATH=\"/root/.bun/bin:/root/.local/bin:\$PATH\"" >> /home/node/.zshenv
+            echo "# Run ccstatusline with: bunx ccstatusline@latest" >> /home/node/.zshenv
 
             # Create required directories
             mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
