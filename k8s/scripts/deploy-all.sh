@@ -23,6 +23,10 @@ VSO_NAMESPACE="${VSO_NAMESPACE:-vault-secrets-operator-system}"
 DEPLOY_BOUNDARY="${DEPLOY_BOUNDARY:-true}"
 DEPLOY_VAULT="${DEPLOY_VAULT:-true}"
 DEPLOY_VSO="${DEPLOY_VSO:-true}"
+BUILD_IMAGE="${BUILD_IMAGE:-true}"
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-}"
+IMAGE_NAME="${IMAGE_NAME:-agent-sandbox}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 DEBUG="${DEBUG:-false}"
 
 [[ "$DEBUG" == "true" ]] && set -x
@@ -32,9 +36,10 @@ echo "  Complete Platform Deployment"
 echo "=========================================="
 echo ""
 echo "This script will deploy:"
-echo "  1. DevEnv - Multi-user development environment"
-echo "  2. Boundary - Secure access management"
-echo "  3. Vault - Secrets management"
+echo "  0. Build Agent Sandbox image (optional)"
+echo "  1. Agent Sandbox - Multi-user development environment"
+echo "  2. Vault - Secrets management"
+echo "  3. Boundary - Secure access management"
 echo "  4. Vault Secrets Operator - Secret synchronization"
 echo ""
 
@@ -78,9 +83,71 @@ if [[ -n "$EXISTING" ]]; then
     fi
 fi
 
+# ==========================================
+# Step 0: Build Agent Sandbox Image
+# ==========================================
+
+if [[ "$BUILD_IMAGE" == "true" ]]; then
+    echo ""
+    echo "=========================================="
+    echo "  Step 0: Build Agent Sandbox Image"
+    echo "=========================================="
+    echo ""
+
+    if ! command -v docker &> /dev/null; then
+        echo "Docker not found, skipping image build"
+        echo "Using sandbox-override.yaml with ubuntu:22.04"
+        BUILD_IMAGE="false"
+    else
+        DOCKERFILE="$K8S_DIR/Dockerfile.production"
+        if [[ ! -f "$DOCKERFILE" ]]; then
+            echo "Dockerfile not found at $DOCKERFILE"
+            echo "Using sandbox-override.yaml with ubuntu:22.04"
+            BUILD_IMAGE="false"
+        else
+            # Determine full image name
+            if [[ -n "$DOCKER_REGISTRY" ]]; then
+                FULL_IMAGE="${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+            else
+                FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+            fi
+
+            echo "Building image: $FULL_IMAGE"
+            echo "Using Dockerfile: $DOCKERFILE"
+            echo ""
+
+            # Build the image
+            if docker build -t "$FULL_IMAGE" -f "$DOCKERFILE" "$K8S_DIR/.." ; then
+                echo "✅ Image built successfully: $FULL_IMAGE"
+
+                # Load into Kind cluster if using Kind
+                if kind get clusters 2>/dev/null | grep -q "${KIND_CLUSTER_NAME:-sandbox}"; then
+                    echo "Loading image into Kind cluster..."
+                    kind load docker-image "$FULL_IMAGE" --name "${KIND_CLUSTER_NAME:-sandbox}"
+                    echo "✅ Image loaded into Kind"
+                elif [[ -n "$DOCKER_REGISTRY" ]]; then
+                    echo "Pushing image to registry..."
+                    if docker push "$FULL_IMAGE"; then
+                        echo "✅ Image pushed to registry"
+                    else
+                        echo "⚠️  Failed to push image, continuing with local image"
+                    fi
+                fi
+
+                # Update the image reference in the statefulset
+                USE_CUSTOM_IMAGE="true"
+            else
+                echo "❌ Image build failed"
+                echo "Falling back to ubuntu:22.04"
+                BUILD_IMAGE="false"
+            fi
+        fi
+    fi
+fi
+
 echo ""
 echo "=========================================="
-echo "  Step 1: Deploy DevEnv"
+echo "  Step 1: Deploy Agent Sandbox"
 echo "=========================================="
 echo ""
 
@@ -104,12 +171,21 @@ fi
 kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
 kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
 
-# Use sandbox override if custom image not available
-if [[ -f "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" ]]; then
+# Deploy with appropriate image
+if [[ "${USE_CUSTOM_IMAGE:-false}" == "true" ]]; then
+    echo "Deploying with custom image: $FULL_IMAGE"
+    # Create a temporary manifest with the custom image
+    sed "s|image:.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/05-statefulset.yaml" | kubectl apply -f -
+elif [[ -f "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" ]]; then
+    echo "Deploying with sandbox override (ubuntu:22.04)"
     kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml"
 else
     kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/05-statefulset.yaml"
 fi
+
+# Wait for pod to be ready
+echo "Waiting for agent-sandbox pod..."
+kubectl rollout status statefulset/devenv -n devenv --timeout=300s || true
 
 echo "✅ DevEnv deployed"
 

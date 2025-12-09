@@ -26,10 +26,12 @@ k8s/
 ## Architecture
 
 - **Agent Sandbox**: Multi-user isolated development environments (StatefulSet pods)
+  - Custom devcontainer with pre-installed tools (Terraform, AWS CLI, Claude Code, etc.)
+  - SSH access for VSCode Remote Development
+  - Persistent workspaces across restarts
 - **HashiCorp Vault**: Centralized secrets management with KV, SSH, and TFE engines
 - **HashiCorp Boundary**: Identity-based secure access to agent pods
 - **Vault Secrets Operator**: Automatic sync of secrets from Vault to Kubernetes
-- **Persistent storage**: Workspaces persist across restarts
 - **Network isolation**: Controlled access via NetworkPolicies
 
 ## Prerequisites
