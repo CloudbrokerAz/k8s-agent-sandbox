@@ -82,10 +82,15 @@ auto_detect_resume() {
         SKIP_BOUNDARY="true"
         echo "  - Boundary: running (skip)"
     fi
-    if kubectl get statefulset devenv -n devenv &>/dev/null && \
+    # Check for new Sandbox CRD or legacy StatefulSet
+    if kubectl get sandbox claude-code-sandbox -n devenv &>/dev/null || \
+       kubectl get pod -l app=claude-code-sandbox -n devenv -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Running"; then
+        SKIP_DEVENV="true"
+        echo "  - Claude Code Sandbox: running (skip)"
+    elif kubectl get statefulset devenv -n devenv &>/dev/null && \
        kubectl get statefulset/devenv -n devenv -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "1"; then
         SKIP_DEVENV="true"
-        echo "  - DevEnv: running (skip)"
+        echo "  - DevEnv (legacy): running (skip)"
     fi
 }
 
@@ -243,48 +248,43 @@ fi
 
 echo ""
 echo "=========================================="
-echo "  Step 1: Deploy Agent Sandbox"
+echo "  Step 1: Deploy Agent Sandbox (Claude Code)"
 echo "=========================================="
 echo ""
 
 if [[ "$SKIP_DEVENV" != "true" ]]; then
-    # Create devenv namespace and secrets
-    kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+    # Use the new kubernetes-sigs/agent-sandbox pattern
+    AGENT_SANDBOX_DIR="$K8S_DIR/agent-sandbox"
 
-    # Check if secrets exist
-    if ! kubectl get secret devenv-secrets -n devenv &>/dev/null; then
-        echo "Creating placeholder secrets..."
-        kubectl create secret generic devenv-secrets \
-            --namespace=devenv \
-            --from-literal=GITHUB_TOKEN=placeholder \
-            --from-literal=TFE_TOKEN=placeholder \
-            --from-literal=AWS_ACCESS_KEY_ID=placeholder \
-            --from-literal=AWS_SECRET_ACCESS_KEY=placeholder \
-            --dry-run=client -o yaml | kubectl apply -f -
-        echo "⚠️  Update devenv-secrets with real values later"
-    fi
-
-    # Apply devenv manifests using kustomize base
-    echo "Deploying with image: $FULL_IMAGE"
-
-    # Update the sandbox.yaml with the correct image and apply via kustomize
-    SANDBOX_YAML="$K8S_DIR/agent-sandbox/manifests/base/sandbox.yaml"
-    if [[ -f "$SANDBOX_YAML" ]]; then
-        # Apply base manifests with image override
-        sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$SANDBOX_YAML" > /tmp/sandbox-patched.yaml
-        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/namespace.yaml"
-        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/service.yaml"
-        kubectl apply -f /tmp/sandbox-patched.yaml
-        rm -f /tmp/sandbox-patched.yaml
+    if [[ -f "$AGENT_SANDBOX_DIR/deploy.sh" ]]; then
+        # Use the new deploy.sh which handles CRD installation
+        echo "Deploying Claude Code Sandbox using kubernetes-sigs/agent-sandbox pattern..."
+        "$AGENT_SANDBOX_DIR/deploy.sh"
     else
-        # Fallback to old structure
-        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
-        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
-        sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" | kubectl apply -f -
+        # Fallback: manual deployment
+        echo "Deploying Agent Sandbox manually..."
+
+        # Create devenv namespace and secrets
+        kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+
+        # Check if secrets exist
+        if ! kubectl get secret devenv-vault-secrets -n devenv &>/dev/null; then
+            echo "Creating placeholder secrets..."
+            kubectl create secret generic devenv-vault-secrets \
+                --namespace=devenv \
+                --from-literal=GITHUB_TOKEN=placeholder \
+                --from-literal=TFE_TOKEN=placeholder \
+                --dry-run=client -o yaml | kubectl apply -f -
+            echo "⚠️  Update devenv-vault-secrets with real values later"
+        fi
+
+        # Apply kustomize manifests
+        if [[ -d "$AGENT_SANDBOX_DIR/base" ]]; then
+            kubectl apply -k "$AGENT_SANDBOX_DIR/base"
+        fi
     fi
 
-    # Don't wait for DevEnv - continue with infrastructure deployment
-    echo "✅ DevEnv manifests applied (pod starting in background)"
+    echo "✅ Agent Sandbox deployment initiated"
 else
     echo "⏭️  Skipping DevEnv deployment (SKIP_DEVENV=true)"
 fi
@@ -688,32 +688,33 @@ echo "=========================================="
 echo "  Next Steps"
 echo "=========================================="
 echo ""
-echo "1. Access DevEnv via SSH (VSCode Remote SSH):"
-echo "   a. Configure SSH CA for certificate-based auth:"
-echo "      ./platform/vault/scripts/configure-ssh-engine.sh"
-echo "   b. Get a signed SSH certificate:"
-echo "      vault write -field=signed_key ssh/sign/devenv-access public_key=@~/.ssh/id_rsa.pub > ~/.ssh/id_rsa-cert.pub"
-echo "   c. Port forward SSH:"
-echo "      kubectl port-forward -n devenv svc/devenv 2222:22"
+echo "1. Access Claude Code Sandbox via code-server (Browser IDE):"
+echo "   kubectl port-forward -n devenv svc/claude-code-sandbox 13337:13337"
+echo "   Open: http://localhost:13337"
+echo ""
+echo "2. Access via kubectl exec:"
+echo "   kubectl exec -it -n devenv \$(kubectl get pod -n devenv -l app=claude-code-sandbox -o jsonpath='{.items[0].metadata.name}') -- /bin/bash"
+echo ""
+echo "3. Access via SSH (VSCode Remote SSH):"
+echo "   a. Configure SSH CA: ./platform/vault/scripts/configure-ssh-engine.sh"
+echo "   b. Get signed cert: vault write -field=signed_key ssh/sign/devenv-access public_key=@~/.ssh/id_rsa.pub > ~/.ssh/id_rsa-cert.pub"
+echo "   c. Port forward: kubectl port-forward -n devenv svc/claude-code-sandbox 2222:22"
 echo "   d. Connect via VSCode Remote SSH to 'localhost:2222' as user 'node'"
 echo ""
-echo "2. Access DevEnv via kubectl (alternative):"
-echo "   kubectl exec -it -n devenv devenv-0 -- /bin/bash"
-echo ""
-echo "3. Port-forward to Vault UI:"
+echo "4. Port-forward to Vault UI:"
 echo "   kubectl port-forward -n vault vault-0 8200:8200"
 echo "   Open: http://localhost:8200"
 echo ""
-echo "4. Configure secrets (GITHUB_TOKEN, Langfuse):"
+echo "5. Configure secrets (GITHUB_TOKEN, Langfuse):"
 echo "   ./platform/vault/scripts/configure-secrets.sh"
 echo ""
-echo "5. Configure TFE dynamic tokens:"
+echo "6. Configure TFE dynamic tokens:"
 echo "   ./platform/vault/scripts/configure-tfe-engine.sh"
 echo ""
-echo "6. View synced secrets:"
+echo "7. View synced secrets:"
 echo "   kubectl get secret devenv-vault-secrets -n devenv -o yaml"
 echo ""
-echo "7. Run healthcheck:"
+echo "8. Run healthcheck:"
 echo "   ./scripts/healthcheck.sh"
 echo ""
 

@@ -1,200 +1,173 @@
-# Agent Sandbox - Multi-User Development Environment
+# Claude Code Sandbox
 
-The Agent Sandbox provides isolated development environments for AI agents and developers running on Kubernetes. Each environment is a stateful pod with persistent storage, pre-configured tooling, and access to shared platform services.
+Kubernetes-native sandbox environment for Claude Code, following the [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) pattern.
 
 ## Overview
 
-```
-agent-sandbox/
-├── manifests/           # Kubernetes manifests
-│   ├── 01-namespace.yaml
-│   ├── 02-secrets.yaml (template)
-│   ├── 03-storageclass.yaml
-│   ├── 04-pvc-template.yaml
-│   ├── 05-statefulset.yaml
-│   ├── 06-service.yaml
-│   ├── 07-networkpolicy.yaml
-│   └── sandbox-override.yaml
-└── scripts/
-    ├── deploy.sh
-    ├── create-secrets.sh
-    ├── scale.sh
-    ├── teardown.sh
-    └── build-and-push.sh
+This deployment uses:
+- **Sandbox CRD** from kubernetes-sigs/agent-sandbox for lifecycle management
+- **envbuilder** to build the devcontainer at runtime
+- **code-server** for browser-based VS Code access
+- **SSH** for native VS Code Remote SSH access
+
+## Quick Start
+
+```bash
+# Deploy (installs CRD if needed)
+./deploy.sh
+
+# Access via code-server
+kubectl port-forward -n devenv svc/claude-code-sandbox 13337:13337
+# Open http://localhost:13337
+
+# Access via shell
+kubectl exec -it -n devenv $(kubectl get pod -n devenv -l app=claude-code-sandbox -o jsonpath='{.items[0].metadata.name}') -- /bin/bash
+
+# Teardown
+./teardown.sh
 ```
 
-## Features
+## Structure
 
-- **Isolated Environments**: Each pod runs independently with its own filesystem
-- **Persistent Storage**: Work survives pod restarts via PersistentVolumeClaims
-- **Pre-configured Tools**: Git, Terraform, AWS CLI, kubectl, and development tools
-- **Auto-installed Tools**: Claude Code, Bun, and ccstatusline installed at startup
-- **Secret Injection**: Credentials synced from Vault via VSO
-- **Network Isolation**: Controlled ingress/egress via NetworkPolicies
-- **SSH Access**: Optional SSH access via Boundary
+```
+k8s/agent-sandbox/
+├── base/                          # Base Kustomize manifests
+│   ├── kustomization.yaml
+│   ├── claude-code-sandbox.yaml   # Sandbox CRD
+│   └── service.yaml
+├── overlays/                      # Optional runtime overlays
+│   ├── gvisor/                    # gVisor sandbox isolation
+│   └── kata/                      # Kata VM isolation
+├── devcontainer.json              # DevContainer configuration
+├── entrypoint.sh                  # Post-build initialization
+├── deploy.sh                      # End-to-end deployment script
+├── teardown.sh                    # Cleanup script
+├── PLAN.md                        # Implementation checklist
+└── README.md                      # This file
+```
+
+## Deployment Options
+
+### Base (default)
+```bash
+./deploy.sh
+# or
+kubectl apply -k base/
+```
+
+### With gVisor isolation
+```bash
+OVERLAY=gvisor ./deploy.sh
+# or
+kubectl apply -k overlays/gvisor/
+```
+
+### With Kata Containers isolation
+```bash
+OVERLAY=kata ./deploy.sh
+# or
+kubectl apply -k overlays/kata/
+```
 
 ## Pre-installed Tools
 
-Each devenv pod comes with:
+Each sandbox comes with:
 
 | Tool | Description |
 |------|-------------|
 | **Claude Code** | AI-powered coding assistant CLI |
-| **Terraform** | Infrastructure as code tool |
-| **AWS CLI** | AWS command-line interface |
-| **Bun** | Fast JavaScript runtime and package manager |
-| **ccstatusline** | Claude Code status line customization |
-| **Git** | Version control |
-| **kubectl** | Kubernetes CLI |
+| **code-server** | Browser-based VS Code |
+| **Node.js LTS** | JavaScript runtime |
+| **Docker** | Container runtime (via dind) |
+| **SSH** | Remote access via SSH |
 
-## Quick Start
+## Environment Variables
 
-### Deploy (Standalone)
-
-```bash
-cd /workspace/k8s/agent-sandbox/scripts
-
-# Create namespace and secrets
-./create-secrets.sh
-
-# Deploy the StatefulSet
-./deploy.sh
-```
-
-### Deploy (Full Platform)
-
-Use the master deployment script to deploy with all platform services:
-
-```bash
-cd /workspace/k8s/scripts
-./deploy-all.sh
-```
-
-### Access Your Environment
-
-```bash
-# Get shell access
-kubectl exec -it -n devenv devenv-0 -- /bin/bash
-
-# View logs
-kubectl logs -n devenv devenv-0 -f
-```
-
-## Scaling
-
-Scale the number of development environments:
-
-```bash
-# Scale to 3 replicas
-./scripts/scale.sh 3
-
-# Check status
-kubectl get pods -n devenv
-```
-
-## Configuration
-
-### Environment Variables
-
-The following secrets are injected into each pod:
+The sandbox is configured with these environment variables:
 
 | Variable | Description |
 |----------|-------------|
-| `GITHUB_TOKEN` | GitHub personal access token |
-| `TFE_TOKEN` | Terraform Cloud/Enterprise token |
-| `AWS_ACCESS_KEY_ID` | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `GITHUB_TOKEN` | GitHub authentication (from secret) |
+| `TFE_TOKEN` | Terraform Cloud token (from secret) |
+| `LANGFUSE_*` | Observability tokens (from secret) |
+| `VAULT_ADDR` | Vault server address |
+| `CLAUDE_CONFIG_DIR` | Claude Code config path |
 
-### Resource Limits
+## Secrets
 
-Default resource allocation per pod:
+Create the required secret before deployment:
 
-```yaml
-resources:
-  requests:
-    memory: "2Gi"
-    cpu: "500m"
-  limits:
-    memory: "4Gi"
-    cpu: "2000m"
+```bash
+kubectl create namespace devenv
+kubectl create secret generic devenv-vault-secrets -n devenv \
+  --from-literal=GITHUB_TOKEN=$GITHUB_TOKEN \
+  --from-literal=TFE_TOKEN=$TFE_TOKEN \
+  --from-literal=LANGFUSE_HOST=$LANGFUSE_HOST \
+  --from-literal=LANGFUSE_PUBLIC_KEY=$LANGFUSE_PUBLIC_KEY \
+  --from-literal=LANGFUSE_SECRET_KEY=$LANGFUSE_SECRET_KEY
 ```
 
-### Security Context
+Or use Vault Secrets Operator (VSO) to sync from Vault.
 
-The devenv pods run with a relaxed security context for development convenience:
+## Persistent Storage
 
-```yaml
-securityContext:
-  runAsUser: 0      # Root user for full permissions
-  runAsGroup: 0
-  fsGroup: 0
+The sandbox uses these PVCs:
+- `workspaces-pvc` (20Gi) - Workspace and repo data
+- `claude-config-pvc` (1Gi) - Claude Code configuration
+- `bash-history-pvc` (1Gi) - Shell history
+
+## Access Methods
+
+1. **code-server (Browser IDE)**
+   ```bash
+   kubectl port-forward -n devenv svc/claude-code-sandbox 13337:13337
+   ```
+   Open http://localhost:13337
+
+2. **kubectl exec**
+   ```bash
+   kubectl exec -it -n devenv claude-code-sandbox-0 -- /bin/bash
+   ```
+
+3. **SSH via Boundary** (if configured)
+   ```bash
+   boundary connect ssh -target-id=<target> -- -l node
+   ```
+
+## Troubleshooting
+
+### Check sandbox status
+```bash
+kubectl get sandbox -n devenv
+kubectl get pods -n devenv
 ```
 
-For production deployments, consider tightening permissions.
+### View logs
+```bash
+kubectl logs -f -n devenv -l app=claude-code-sandbox
+```
 
-### Storage
+### Envbuilder taking too long
+First-time builds can take 5-10 minutes. Check logs for progress:
+```bash
+kubectl logs -f -n devenv claude-code-sandbox-0
+```
 
-Each pod gets 10Gi of persistent storage (configurable via PVC template).
+### CRD not found
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v0.1.0/manifest.yaml
+```
 
 ## Integration with Platform Services
 
 ### Vault Secrets Operator
-
-Secrets are automatically synced from Vault:
-
-```bash
-# View synced secrets
-kubectl get secret devenv-vault-secrets -n devenv -o yaml
-
-# Check sync status
-kubectl get vaultstaticsecret -n devenv
-```
+Secrets are automatically synced from Vault when VSO is configured.
 
 ### Boundary Access
+SSH access to sandbox pods via Boundary for secure remote access.
 
-SSH access to agent sandbox pods via Boundary:
+## References
 
-```bash
-# Connect via Boundary CLI
-boundary connect ssh -target-name=devenv-ssh
-```
-
-## Cleanup
-
-```bash
-# Remove agent sandbox only
-./scripts/teardown.sh
-
-# Remove entire platform
-cd /workspace/k8s/scripts
-./teardown-all.sh
-```
-
-## Troubleshooting
-
-### Pod Not Starting
-
-```bash
-# Check pod events
-kubectl describe pod -n devenv devenv-0
-
-# Check PVC binding
-kubectl get pvc -n devenv
-```
-
-### Secrets Not Available
-
-```bash
-# Verify secret exists
-kubectl get secret devenv-secrets -n devenv
-
-# Check VSO sync status
-kubectl describe vaultstaticsecret -n devenv
-```
-
-## Related Documentation
-
-- [Platform Architecture](../ARCHITECTURE.md)
-- [Getting Started Guide](../GETTING_STARTED.md)
-- [Vault Integration](../platform/vault/README.md)
-- [Boundary Access](../platform/boundary/README.md)
+- [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)
+- [coder/envbuilder](https://github.com/coder/envbuilder)
+- [DevContainers specification](https://containers.dev/)

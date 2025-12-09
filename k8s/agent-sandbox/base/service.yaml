@@ -1,0 +1,21 @@
+# Service for Claude Code Sandbox
+# Exposes SSH (22) and code-server (13337)
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-code-sandbox
+  labels:
+    app: claude-code-sandbox
+spec:
+  type: ClusterIP
+  selector:
+    app: claude-code-sandbox
+  ports:
+  - name: ssh
+    port: 22
+    targetPort: 22
+    protocol: TCP
+  - name: code-server
+    port: 13337
+    targetPort: 13337
+    protocol: TCP

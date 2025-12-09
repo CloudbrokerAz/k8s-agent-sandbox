@@ -83,6 +83,9 @@ run_test_suite "Keycloak IDP Verification" "$SCRIPT_DIR/test-keycloak.sh"
 # OIDC authentication tests
 run_test_suite "OIDC Authentication" "$SCRIPT_DIR/test-oidc-auth.sh"
 
+# Claude Code Sandbox tests
+run_test_suite "Claude Code Sandbox" "$SCRIPT_DIR/test-sandbox.sh"
+
 # ==========================================
 # Summary
 # ==========================================
