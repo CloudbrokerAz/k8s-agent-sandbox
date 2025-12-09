@@ -5,7 +5,7 @@ set -euo pipefail
 # Verifies all platform components are online and functioning
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-K8S_DIR="$(dirname "$SCRIPT_DIR")"
+K8S_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Source configuration
 if [[ -f "$SCRIPT_DIR/.env" ]]; then

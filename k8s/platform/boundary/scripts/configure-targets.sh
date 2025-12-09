@@ -43,13 +43,13 @@ if [[ "$CONTROLLER_STATUS" != "Running" ]]; then
 fi
 echo "✅ Boundary controller running"
 
-# Get recovery key for initial configuration
-RECOVERY_KEY=$(kubectl get secret boundary-kms-keys -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.data.BOUNDARY_RECOVERY_KEY}' 2>/dev/null | base64 -d || echo "")
-if [[ -z "$RECOVERY_KEY" ]]; then
-    echo "❌ Cannot find Boundary recovery key"
+# Get admin credentials from boundary init job logs
+ADMIN_PASSWORD=$(kubectl logs -n "$BOUNDARY_NAMESPACE" job/boundary-db-init 2>/dev/null | grep "Password:" | head -1 | awk '{print $2}' || echo "")
+if [[ -z "$ADMIN_PASSWORD" ]]; then
+    echo "❌ Cannot find Boundary admin password from init job"
     exit 1
 fi
-echo "✅ Found recovery key"
+echo "✅ Found admin credentials"
 
 # Get devenv service info
 DEVENV_SVC_IP=$(kubectl get svc devenv -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
@@ -66,10 +66,25 @@ echo ""
 # Use kubectl exec to run boundary commands in the controller pod
 CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}')
 
-# Function to run boundary commands
+# Authenticate and get token
+echo "Authenticating with Boundary..."
+AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- sh -c "
+    BOUNDARY_ADDR=http://127.0.0.1:9200 boundary authenticate password \
+        -login-name=admin \
+        -password='$ADMIN_PASSWORD' \
+        -format=json 2>/dev/null
+" | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
+
+if [[ -z "$AUTH_TOKEN" ]]; then
+    echo "❌ Failed to authenticate with Boundary"
+    exit 1
+fi
+echo "✅ Authenticated successfully"
+
+# Function to run boundary commands with auth token
 run_boundary() {
     kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
-        env BOUNDARY_ADDR=http://127.0.0.1:9200 \
+        env BOUNDARY_ADDR=http://127.0.0.1:9200 BOUNDARY_TOKEN="$AUTH_TOKEN" \
         boundary "$@" 2>/dev/null
 }
 
