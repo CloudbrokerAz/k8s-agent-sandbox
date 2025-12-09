@@ -42,8 +42,19 @@ spec:
 
             # Install Claude Code if not present
             if ! command -v claude &> /dev/null; then
-              npm install -g @anthropic-ai/claude-code ccstatusline
+              echo "Installing Claude Code..."
+              curl -fsSL https://claude.ai/install.sh | bash || echo "Claude Code install failed, continuing..."
             fi
+
+            # Install bun and ccstatusline for status line support
+            if ! command -v bun &> /dev/null; then
+              echo "Installing Bun..."
+              curl -fsSL https://bun.sh/install | bash || echo "Bun install failed, continuing..."
+              export BUN_INSTALL="/root/.bun"
+              export PATH="$BUN_INSTALL/bin:$PATH"
+            fi
+            # Setup ccstatusline (run with bunx)
+            echo "export PATH=\"/root/.bun/bin:\$PATH\"" >> /home/node/.zshenv
 
             # Create required directories
             mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd

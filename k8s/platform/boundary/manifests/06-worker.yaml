@@ -39,7 +39,7 @@ spec:
                 - ALL
       containers:
         - name: boundary-worker
-          image: hashicorp/boundary:0.17
+          image: hashicorp/boundary:latest
           args:
             - server
             - -config=/boundary/config/worker.hcl

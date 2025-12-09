@@ -34,6 +34,32 @@ DEBUG="${DEBUG:-false}"
 
 [[ "$DEBUG" == "true" ]] && set -x
 
+PARALLEL="${PARALLEL:-true}"
+RESUME="${RESUME:-false}"
+SKIP_DEVENV="${SKIP_DEVENV:-false}"
+SKIP_VAULT="${SKIP_VAULT:-false}"
+SKIP_BOUNDARY="${SKIP_BOUNDARY:-false}"
+SKIP_VSO="${SKIP_VSO:-false}"
+
+# Auto-detect resume mode based on existing deployments
+auto_detect_resume() {
+    if kubectl get statefulset vault -n vault &>/dev/null && \
+       kubectl get statefulset/vault -n vault -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "1"; then
+        SKIP_VAULT="true"
+        echo "  - Vault: running (skip)"
+    fi
+    if kubectl get deployment boundary-controller -n boundary &>/dev/null && \
+       kubectl get deployment/boundary-controller -n boundary -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "1"; then
+        SKIP_BOUNDARY="true"
+        echo "  - Boundary: running (skip)"
+    fi
+    if kubectl get statefulset devenv -n devenv &>/dev/null && \
+       kubectl get statefulset/devenv -n devenv -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "1"; then
+        SKIP_DEVENV="true"
+        echo "  - DevEnv: running (skip)"
+    fi
+}
+
 echo "=========================================="
 echo "  Complete Platform Deployment"
 echo "=========================================="
@@ -47,6 +73,31 @@ echo "  4. Vault Secrets Operator - Secret synchronization"
 echo "  5. Keycloak - Identity Provider (optional)"
 echo "  6. Boundary Targets & OIDC - Access configuration"
 echo ""
+echo "Parallel mode: $PARALLEL"
+echo ""
+
+# Auto-detect resume if RESUME=auto or existing deployments found
+if [[ "$RESUME" == "auto" ]] || [[ -n "$EXISTING" ]]; then
+    echo "Detecting existing deployments..."
+    auto_detect_resume
+    echo ""
+fi
+
+# Helper function to run commands in background if parallel mode
+run_parallel() {
+    if [[ "$PARALLEL" == "true" ]]; then
+        "$@" &
+    else
+        "$@"
+    fi
+}
+
+# Wait for background jobs if parallel mode
+wait_parallel() {
+    if [[ "$PARALLEL" == "true" ]]; then
+        wait
+    fi
+}
 
 # Check prerequisites
 echo "Checking prerequisites..."
@@ -106,6 +157,7 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
     if ! command -v docker &> /dev/null; then
         echo "Docker not found, using pre-built image: $BASE_IMAGE"
         BUILD_IMAGE="false"
+        FULL_IMAGE="${BASE_IMAGE}"
     else
         # Use the claude-code Dockerfile which builds on the base image
         DOCKERFILE="$K8S_DIR/../.devcontainer/claude-code/Dockerfile"
@@ -113,21 +165,23 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
             echo "Dockerfile not found at $DOCKERFILE"
             echo "Using pre-built image: $BASE_IMAGE"
             BUILD_IMAGE="false"
+            FULL_IMAGE="${BASE_IMAGE}"
         else
-            # Determine full image name
+            # Determine full image name for custom build
             if [[ -n "$DOCKER_REGISTRY" ]]; then
-                FULL_IMAGE="${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+                CUSTOM_IMAGE="${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
             else
-                FULL_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+                CUSTOM_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
             fi
 
-            echo "Building image: $FULL_IMAGE"
+            echo "Building image: $CUSTOM_IMAGE"
             echo "Base image: $BASE_IMAGE"
             echo "Dockerfile: $DOCKERFILE"
             echo ""
 
             # Build the image from .devcontainer/claude-code/Dockerfile
-            if docker build -t "$FULL_IMAGE" -f "$DOCKERFILE" "$K8S_DIR/.." ; then
+            if docker build -t "$CUSTOM_IMAGE" -f "$DOCKERFILE" "$K8S_DIR/.." ; then
+                FULL_IMAGE="${CUSTOM_IMAGE}"
                 echo "✅ Image built successfully: $FULL_IMAGE"
 
                 # Load into Kind cluster if using Kind
@@ -143,8 +197,6 @@ if [[ "$BUILD_IMAGE" == "true" ]]; then
                         echo "⚠️  Failed to push image, continuing with local image"
                     fi
                 fi
-
-                USE_CUSTOM_IMAGE="true"
             else
                 echo "❌ Image build failed"
                 echo "Falling back to pre-built image: $BASE_IMAGE"
@@ -157,6 +209,7 @@ else
     echo ""
     echo "Skipping image build (BUILD_IMAGE=false)"
     echo "Using pre-built image: $BASE_IMAGE"
+    FULL_IMAGE="${BASE_IMAGE}"
 fi
 
 echo ""
@@ -165,76 +218,111 @@ echo "  Step 1: Deploy Agent Sandbox"
 echo "=========================================="
 echo ""
 
-# Create devenv namespace and secrets
-kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+if [[ "$SKIP_DEVENV" != "true" ]]; then
+    # Create devenv namespace and secrets
+    kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
 
-# Check if secrets exist
-if ! kubectl get secret devenv-secrets -n devenv &>/dev/null; then
-    echo "Creating placeholder secrets..."
-    kubectl create secret generic devenv-secrets \
-        --namespace=devenv \
-        --from-literal=GITHUB_TOKEN=placeholder \
-        --from-literal=TFE_TOKEN=placeholder \
-        --from-literal=AWS_ACCESS_KEY_ID=placeholder \
-        --from-literal=AWS_SECRET_ACCESS_KEY=placeholder \
-        --dry-run=client -o yaml | kubectl apply -f -
-    echo "⚠️  Update devenv-secrets with real values later"
-fi
+    # Check if secrets exist
+    if ! kubectl get secret devenv-secrets -n devenv &>/dev/null; then
+        echo "Creating placeholder secrets..."
+        kubectl create secret generic devenv-secrets \
+            --namespace=devenv \
+            --from-literal=GITHUB_TOKEN=placeholder \
+            --from-literal=TFE_TOKEN=placeholder \
+            --from-literal=AWS_ACCESS_KEY_ID=placeholder \
+            --from-literal=AWS_SECRET_ACCESS_KEY=placeholder \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo "⚠️  Update devenv-secrets with real values later"
+    fi
 
-# Apply devenv manifests using kustomize base
-echo "Deploying with image: $FULL_IMAGE"
+    # Apply devenv manifests using kustomize base
+    echo "Deploying with image: $FULL_IMAGE"
 
-# Update the sandbox.yaml with the correct image and apply via kustomize
-SANDBOX_YAML="$K8S_DIR/agent-sandbox/manifests/base/sandbox.yaml"
-if [[ -f "$SANDBOX_YAML" ]]; then
-    # Apply base manifests with image override
-    sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$SANDBOX_YAML" > /tmp/sandbox-patched.yaml
-    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/namespace.yaml"
-    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/service.yaml"
-    kubectl apply -f /tmp/sandbox-patched.yaml
-    rm -f /tmp/sandbox-patched.yaml
+    # Update the sandbox.yaml with the correct image and apply via kustomize
+    SANDBOX_YAML="$K8S_DIR/agent-sandbox/manifests/base/sandbox.yaml"
+    if [[ -f "$SANDBOX_YAML" ]]; then
+        # Apply base manifests with image override
+        sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$SANDBOX_YAML" > /tmp/sandbox-patched.yaml
+        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/namespace.yaml"
+        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/base/service.yaml"
+        kubectl apply -f /tmp/sandbox-patched.yaml
+        rm -f /tmp/sandbox-patched.yaml
+    else
+        # Fallback to old structure
+        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
+        kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
+        sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" | kubectl apply -f -
+    fi
+
+    # Don't wait for DevEnv - continue with infrastructure deployment
+    echo "✅ DevEnv manifests applied (pod starting in background)"
 else
-    # Fallback to old structure
-    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/01-namespace.yaml"
-    kubectl apply -f "$K8S_DIR/agent-sandbox/manifests/06-service.yaml"
-    sed "s|image:.*terraform-ai-tools.*|image: ${FULL_IMAGE}|g" "$K8S_DIR/agent-sandbox/manifests/sandbox-override.yaml" | kubectl apply -f -
+    echo "⏭️  Skipping DevEnv deployment (SKIP_DEVENV=true)"
 fi
 
-# Wait for pod to be ready
-echo "Waiting for agent-sandbox pod..."
-kubectl rollout status statefulset/devenv -n devenv --timeout=300s || true
-
-echo "✅ DevEnv deployed"
-
 echo ""
 echo "=========================================="
-echo "  Step 2: Deploy Vault"
+echo "  Step 2-3: Deploy Vault & Boundary (Parallel)"
 echo "=========================================="
 echo ""
 
-kubectl apply -f "$K8S_DIR/platform/vault/manifests/01-namespace.yaml"
-kubectl apply -f "$K8S_DIR/platform/vault/manifests/03-configmap.yaml"
-kubectl apply -f "$K8S_DIR/platform/vault/manifests/04-rbac.yaml"
-kubectl apply -f "$K8S_DIR/platform/vault/manifests/05-statefulset.yaml"
-kubectl apply -f "$K8S_DIR/platform/vault/manifests/06-service.yaml"
+# Deploy Vault in background
+deploy_vault() {
+    if [[ "$SKIP_VAULT" != "true" ]]; then
+        echo "[Vault] Deploying..."
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/01-namespace.yaml"
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/03-configmap.yaml"
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/04-rbac.yaml"
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/05-statefulset.yaml"
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/06-service.yaml"
+        echo "[Vault] Manifests applied"
+    else
+        echo "[Vault] Skipping (SKIP_VAULT=true)"
+    fi
+}
 
-echo "⏳ Waiting for Vault..."
-kubectl rollout status statefulset/vault -n vault --timeout=180s
+# Deploy Boundary base (namespace + postgres) in background
+deploy_boundary_base() {
+    if [[ "$SKIP_BOUNDARY" != "true" ]]; then
+        echo "[Boundary] Creating namespace and secrets..."
+        kubectl create namespace boundary --dry-run=client -o yaml | kubectl apply -f -
+    else
+        echo "[Boundary] Skipping (SKIP_BOUNDARY=true)"
+    fi
+}
 
-# Initialize Vault
-echo "Initializing Vault..."
-sleep 5
-VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false}')
-INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
+# Add Helm repos in background (for later VSO install)
+setup_helm_repos() {
+    echo "[Helm] Setting up repositories..."
+    helm repo add hashicorp https://helm.releases.hashicorp.com 2>/dev/null || true
+    helm repo update >/dev/null 2>&1
+    echo "[Helm] Repositories ready"
+}
 
-if [[ "$INITIALIZED" == "false" ]]; then
-    INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json)
-    UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
-    ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
+# Run deployments in parallel
+run_parallel deploy_vault
+run_parallel deploy_boundary_base
+run_parallel setup_helm_repos
+wait_parallel
 
-    kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY"
+if [[ "$SKIP_VAULT" != "true" ]]; then
+    echo "⏳ Waiting for Vault..."
+    kubectl rollout status statefulset/vault -n vault --timeout=180s
 
-    cat > "$K8S_DIR/platform/vault/scripts/vault-keys.txt" << EOF
+    # Initialize Vault
+    echo "Initializing Vault..."
+    sleep 5
+    VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false}')
+    INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
+
+    if [[ "$INITIALIZED" == "false" ]]; then
+        INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json)
+        UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
+        ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
+
+        kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY"
+
+        cat > "$K8S_DIR/platform/vault/scripts/vault-keys.txt" << EOF
 ========================================
   VAULT KEYS - SAVE SECURELY!
 ========================================
@@ -242,31 +330,36 @@ Unseal Key: $UNSEAL_KEY
 Root Token: $ROOT_TOKEN
 ========================================
 EOF
-    chmod 600 "$K8S_DIR/platform/vault/scripts/vault-keys.txt"
-    echo "✅ Vault initialized - keys saved to platform/vault/scripts/vault-keys.txt"
+        chmod 600 "$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+        echo "✅ Vault initialized - keys saved to platform/vault/scripts/vault-keys.txt"
+    else
+        echo "✅ Vault already initialized"
+        ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+    fi
+
+    # Configure Vault basics
+    if [[ -n "$ROOT_TOKEN" ]]; then
+        K8S_HOST="https://kubernetes.default.svc"
+        K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d)
+
+        kubectl exec -n vault vault-0 -- sh -c "
+            export VAULT_TOKEN='$ROOT_TOKEN'
+            vault auth enable kubernetes 2>/dev/null || true
+            vault write auth/kubernetes/config kubernetes_host='$K8S_HOST' kubernetes_ca_cert='$K8S_CA_CERT' disable_local_ca_jwt=false
+            vault secrets enable -path=secret kv-v2 2>/dev/null || true
+            vault secrets enable -path=ssh ssh 2>/dev/null || true
+            vault secrets enable -path=terraform terraform 2>/dev/null || true
+        " 2>/dev/null
+        echo "✅ Vault configured"
+
+        # Export Vault CA certificate for devenv pods
+        echo "Exporting Vault CA certificate..."
+        "$K8S_DIR/platform/vault/scripts/export-vault-ca.sh" vault devenv
+    fi
 else
-    echo "✅ Vault already initialized"
+    echo "⏭️  Skipping Vault initialization and configuration (SKIP_VAULT=true)"
+    # Try to load ROOT_TOKEN from existing vault-keys.txt for VSO configuration
     ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
-fi
-
-# Configure Vault basics
-if [[ -n "$ROOT_TOKEN" ]]; then
-    K8S_HOST="https://kubernetes.default.svc"
-    K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d)
-
-    kubectl exec -n vault vault-0 -- sh -c "
-        export VAULT_TOKEN='$ROOT_TOKEN'
-        vault auth enable kubernetes 2>/dev/null || true
-        vault write auth/kubernetes/config kubernetes_host='$K8S_HOST' kubernetes_ca_cert='$K8S_CA_CERT' disable_local_ca_jwt=false
-        vault secrets enable -path=secret kv-v2 2>/dev/null || true
-        vault secrets enable -path=ssh ssh 2>/dev/null || true
-        vault secrets enable -path=terraform terraform 2>/dev/null || true
-    " 2>/dev/null
-    echo "✅ Vault configured"
-
-    # Export Vault CA certificate for devenv pods
-    echo "Exporting Vault CA certificate..."
-    "$K8S_DIR/platform/vault/scripts/export-vault-ca.sh" vault devenv
 fi
 
 echo ""
@@ -275,14 +368,14 @@ echo "  Step 3: Deploy Boundary"
 echo "=========================================="
 echo ""
 
-# Create boundary namespace and secrets
-kubectl create namespace boundary --dry-run=client -o yaml | kubectl apply -f -
-
-if ! kubectl get secret boundary-db-secrets -n boundary &>/dev/null; then
+if [[ "$SKIP_BOUNDARY" != "true" ]]; then
+    # Boundary namespace already created in parallel step above
+    if ! kubectl get secret boundary-db-secrets -n boundary &>/dev/null; then
     ROOT_KEY=$(openssl rand -hex 16)
     WORKER_KEY=$(openssl rand -hex 16)
     RECOVERY_KEY=$(openssl rand -hex 16)
-    POSTGRES_PASSWORD=$(openssl rand -base64 16 | tr -d '\n')
+    # Use hex for password to avoid special characters breaking HCL/URL parsing
+    POSTGRES_PASSWORD=$(openssl rand -hex 16)
 
     kubectl create secret generic boundary-db-secrets \
         --namespace=boundary \
@@ -297,7 +390,7 @@ if ! kubectl get secret boundary-db-secrets -n boundary &>/dev/null; then
         --from-literal=BOUNDARY_RECOVERY_KEY="$RECOVERY_KEY" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    # Create configmaps with embedded keys
+    # Create configmaps with embedded keys (proper multi-line HCL format)
     POSTGRES_USER="boundary"
     cat <<EOF | kubectl apply -f -
 apiVersion: v1
@@ -308,18 +401,52 @@ metadata:
 data:
   controller.hcl: |
     disable_mlock = true
+
     controller {
       name = "kubernetes-controller"
       database {
         url = "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable"
       }
     }
-    listener "tcp" { address = "0.0.0.0:9200"; purpose = "api"; tls_disable = true }
-    listener "tcp" { address = "0.0.0.0:9201"; purpose = "cluster"; tls_disable = true }
-    listener "tcp" { address = "0.0.0.0:9203"; purpose = "ops"; tls_disable = true }
-    kms "aead" { purpose = "root"; aead_type = "aes-gcm"; key = "${ROOT_KEY}"; key_id = "global_root" }
-    kms "aead" { purpose = "worker-auth"; aead_type = "aes-gcm"; key = "${WORKER_KEY}"; key_id = "global_worker-auth" }
-    kms "aead" { purpose = "recovery"; aead_type = "aes-gcm"; key = "${RECOVERY_KEY}"; key_id = "global_recovery" }
+
+    listener "tcp" {
+      address = "0.0.0.0:9200"
+      purpose = "api"
+      tls_disable = true
+    }
+
+    listener "tcp" {
+      address = "0.0.0.0:9201"
+      purpose = "cluster"
+      tls_disable = true
+    }
+
+    listener "tcp" {
+      address = "0.0.0.0:9203"
+      purpose = "ops"
+      tls_disable = true
+    }
+
+    kms "aead" {
+      purpose = "root"
+      aead_type = "aes-gcm"
+      key = "${ROOT_KEY}"
+      key_id = "global_root"
+    }
+
+    kms "aead" {
+      purpose = "worker-auth"
+      aead_type = "aes-gcm"
+      key = "${WORKER_KEY}"
+      key_id = "global_worker-auth"
+    }
+
+    kms "aead" {
+      purpose = "recovery"
+      aead_type = "aes-gcm"
+      key = "${RECOVERY_KEY}"
+      key_id = "global_recovery"
+    }
 EOF
 
     cat <<EOF | kubectl apply -f -
@@ -331,14 +458,31 @@ metadata:
 data:
   worker.hcl: |
     disable_mlock = true
+
     worker {
       name = "kubernetes-worker"
       controllers = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
       public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
     }
-    listener "tcp" { address = "0.0.0.0:9202"; purpose = "proxy"; tls_disable = true }
-    listener "tcp" { address = "0.0.0.0:9203"; purpose = "ops"; tls_disable = true }
-    kms "aead" { purpose = "worker-auth"; aead_type = "aes-gcm"; key = "${WORKER_KEY}"; key_id = "global_worker-auth" }
+
+    listener "tcp" {
+      address = "0.0.0.0:9202"
+      purpose = "proxy"
+      tls_disable = true
+    }
+
+    listener "tcp" {
+      address = "0.0.0.0:9203"
+      purpose = "ops"
+      tls_disable = true
+    }
+
+    kms "aead" {
+      purpose = "worker-auth"
+      aead_type = "aes-gcm"
+      key = "${WORKER_KEY}"
+      key_id = "global_worker-auth"
+    }
 EOF
 fi
 
@@ -366,13 +510,34 @@ metadata:
 data:
   init.hcl: |
     disable_mlock = true
+
     controller {
       name = "init"
-      database { url = "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable" }
+      database {
+        url = "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable"
+      }
     }
-    kms "aead" { purpose = "root"; aead_type = "aes-gcm"; key = "${ROOT_KEY}"; key_id = "global_root" }
-    kms "aead" { purpose = "worker-auth"; aead_type = "aes-gcm"; key = "${WORKER_KEY}"; key_id = "global_worker-auth" }
-    kms "aead" { purpose = "recovery"; aead_type = "aes-gcm"; key = "${RECOVERY_KEY}"; key_id = "global_recovery" }
+
+    kms "aead" {
+      purpose = "root"
+      aead_type = "aes-gcm"
+      key = "${ROOT_KEY}"
+      key_id = "global_root"
+    }
+
+    kms "aead" {
+      purpose = "worker-auth"
+      aead_type = "aes-gcm"
+      key = "${WORKER_KEY}"
+      key_id = "global_worker-auth"
+    }
+
+    kms "aead" {
+      purpose = "recovery"
+      aead_type = "aes-gcm"
+      key = "${RECOVERY_KEY}"
+      key_id = "global_recovery"
+    }
 EOF
 
     cat <<EOF | kubectl apply -f -
@@ -387,7 +552,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: init
-        image: hashicorp/boundary:0.17
+        image: hashicorp/boundary:latest
         command: ["boundary", "database", "init", "-config=/config/init.hcl"]
         volumeMounts:
         - name: config
@@ -402,11 +567,14 @@ EOF
     kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=60s || true
 fi
 
-kubectl apply -f "$K8S_DIR/platform/boundary/manifests/05-controller.yaml"
-kubectl apply -f "$K8S_DIR/platform/boundary/manifests/06-worker.yaml"
-kubectl apply -f "$K8S_DIR/platform/boundary/manifests/07-service.yaml"
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/05-controller.yaml"
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/06-worker.yaml"
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/07-service.yaml"
 
-echo "✅ Boundary deployed"
+    echo "✅ Boundary deployed"
+else
+    echo "⏭️  Skipping Boundary deployment (SKIP_BOUNDARY=true)"
+fi
 
 echo ""
 echo "=========================================="
@@ -414,57 +582,59 @@ echo "  Step 4: Deploy Vault Secrets Operator"
 echo "=========================================="
 echo ""
 
-helm repo add hashicorp https://helm.releases.hashicorp.com 2>/dev/null || true
-helm repo update
+if [[ "$SKIP_VSO" != "true" ]]; then
+    # Helm repos already set up in parallel step
+    kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/01-namespace.yaml"
 
-kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/01-namespace.yaml"
+    helm upgrade --install vault-secrets-operator hashicorp/vault-secrets-operator \
+        --namespace vault-secrets-operator-system \
+        --set defaultVaultConnection.enabled=false \
+        --set defaultAuthMethod.enabled=false \
+        --wait --timeout 5m
 
-helm upgrade --install vault-secrets-operator hashicorp/vault-secrets-operator \
-    --namespace vault-secrets-operator-system \
-    --set defaultVaultConnection.enabled=false \
-    --set defaultAuthMethod.enabled=false \
-    --wait --timeout 5m
+    # Apply VSO custom resources
+    kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/02-vaultconnection.yaml"
+    kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/03-vaultauth.yaml"
 
-# Apply VSO custom resources
-kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/02-vaultconnection.yaml"
-kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/03-vaultauth.yaml"
-
-# Configure Vault for VSO
-if [[ -n "$ROOT_TOKEN" ]]; then
-    kubectl exec -n vault vault-0 -- sh -c "
-        export VAULT_TOKEN='$ROOT_TOKEN'
-        vault policy write vault-secrets-operator - <<'POLICY'
+    # Configure Vault for VSO
+    if [[ -n "$ROOT_TOKEN" ]]; then
+        kubectl exec -n vault vault-0 -- sh -c "
+            export VAULT_TOKEN='$ROOT_TOKEN'
+            vault policy write vault-secrets-operator - <<'POLICY'
 path \"secret/*\" { capabilities = [\"read\", \"list\"] }
 path \"ssh/*\" { capabilities = [\"read\", \"list\", \"create\", \"update\"] }
 path \"terraform/*\" { capabilities = [\"read\", \"list\"] }
 POLICY
-        vault policy write devenv-secrets - <<'POLICY'
+            vault policy write devenv-secrets - <<'POLICY'
 path \"secret/data/devenv/*\" { capabilities = [\"read\", \"list\"] }
 path \"ssh/sign/devenv-access\" { capabilities = [\"create\", \"update\"] }
 path \"terraform/creds/*\" { capabilities = [\"read\"] }
 POLICY
-        vault write auth/kubernetes/role/vault-secrets-operator bound_service_account_names=vault-secrets-operator-controller-manager bound_service_account_namespaces=vault-secrets-operator-system policies=vault-secrets-operator ttl=1h
-        vault write auth/kubernetes/role/devenv-secrets bound_service_account_names='*' bound_service_account_namespaces=devenv policies=devenv-secrets ttl=1h
-    " 2>/dev/null
+            vault write auth/kubernetes/role/vault-secrets-operator bound_service_account_names=vault-secrets-operator-controller-manager bound_service_account_namespaces=vault-secrets-operator-system policies=vault-secrets-operator ttl=1h
+            vault write auth/kubernetes/role/devenv-secrets bound_service_account_names='*' bound_service_account_namespaces=devenv policies=devenv-secrets ttl=1h
+        " 2>/dev/null
 
-    # Store initial credentials in Vault KV (placeholder values)
-    # These should be updated with real values using configure-secrets.sh
-    echo "Storing initial credentials in Vault KV..."
-    kubectl exec -n vault vault-0 -- sh -c "
-        export VAULT_TOKEN='$ROOT_TOKEN'
-        vault kv put secret/devenv/credentials \
-            github_token=placeholder-update-me \
-            langfuse_host= \
-            langfuse_public_key= \
-            langfuse_secret_key=
-    " 2>/dev/null
-    echo "⚠️  Update credentials with: ./platform/vault/scripts/configure-secrets.sh"
+        # Store initial credentials in Vault KV (placeholder values)
+        # These should be updated with real values using configure-secrets.sh
+        echo "Storing initial credentials in Vault KV..."
+        kubectl exec -n vault vault-0 -- sh -c "
+            export VAULT_TOKEN='$ROOT_TOKEN'
+            vault kv put secret/devenv/credentials \
+                github_token=placeholder-update-me \
+                langfuse_host= \
+                langfuse_public_key= \
+                langfuse_secret_key=
+        " 2>/dev/null
+        echo "⚠️  Update credentials with: ./platform/vault/scripts/configure-secrets.sh"
+    fi
+
+    # Apply example secret sync
+    kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/04-vaultstaticsecret-example.yaml"
+
+    echo "✅ Vault Secrets Operator deployed"
+else
+    echo "⏭️  Skipping Vault Secrets Operator deployment (SKIP_VSO=true)"
 fi
-
-# Apply example secret sync
-kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/04-vaultstaticsecret-example.yaml"
-
-echo "✅ Vault Secrets Operator deployed"
 
 echo ""
 echo "=========================================="
