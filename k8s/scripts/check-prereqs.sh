@@ -131,7 +131,7 @@ install_helm() {
 
     if command -v helm &> /dev/null; then
         echo "  Helm installed successfully"
-        ((INSTALLED++))
+        INSTALLED=$((INSTALLED + 1))
         return 0
     else
         echo "  Failed to install Helm"
@@ -177,7 +177,7 @@ install_jq() {
 
     if command -v jq &> /dev/null; then
         echo "  jq installed successfully"
-        ((INSTALLED++))
+        INSTALLED=$((INSTALLED + 1))
         return 0
     else
         echo "  Failed to install jq"
