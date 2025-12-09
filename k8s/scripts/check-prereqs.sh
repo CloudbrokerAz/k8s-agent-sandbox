@@ -380,7 +380,7 @@ else
             VERSION=$(openssl version 2>/dev/null | awk '{print $2}' || echo "installed")
             echo "  Installed: $VERSION"
         else
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
 fi
