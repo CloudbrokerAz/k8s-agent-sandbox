@@ -1,0 +1,49 @@
+# VaultAuth - configures authentication method for VSO
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth
+  namespace: vault-secrets-operator-system
+spec:
+  # Reference to VaultConnection
+  vaultConnectionRef: vault-connection
+
+  # Kubernetes auth method
+  method: kubernetes
+
+  # Mount path for the auth method in Vault
+  mount: kubernetes
+
+  # Kubernetes auth specific config
+  kubernetes:
+    # Role to authenticate as
+    role: vault-secrets-operator
+
+    # ServiceAccount to use for auth
+    serviceAccount: vault-secrets-operator-controller-manager
+
+---
+# VaultConnection for devenv namespace
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: vault-connection
+  namespace: devenv
+spec:
+  address: http://vault.vault.svc.cluster.local:8200
+  skipTLSVerify: true
+
+---
+# VaultAuth for devenv namespace
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: devenv-vault-auth
+  namespace: devenv
+spec:
+  vaultConnectionRef: vault-connection
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: devenv-secrets
+    serviceAccount: default

@@ -1,216 +1,187 @@
-# Getting Started with Kubernetes DevEnv Deployment
+# Getting Started with Agent Sandbox Platform
 
-This guide walks you through deploying your devcontainer to a Kubernetes cluster step by step.
+This guide walks you through deploying the complete Agent Sandbox Platform to a Kubernetes cluster step by step.
 
 ## Prerequisites Checklist
 
 - [ ] Docker installed and running
-- [ ] Docker Hub account created
 - [ ] kubectl installed (`kubectl version --client`)
-- [ ] Kubernetes cluster running (kind, K8s, or OpenShift)
+- [ ] Helm 3.x installed (`helm version`)
+- [ ] Kubernetes cluster running (Kind, K8s, or OpenShift)
 - [ ] kubectl configured to access your cluster (`kubectl cluster-info`)
-- [ ] Required credentials ready:
-  - GitHub Personal Access Token
-  - Terraform Cloud/Enterprise Token
-  - AWS Access Key ID and Secret Access Key
 
-## Step 1: Verify Your Environment
+## Step 1: Validate Prerequisites
 
-On your **local machine** (Mac), run:
+Run the prerequisite check script:
 
 ```bash
-# Check Docker
-docker --version
-docker ps
-
-# Check kubectl
-kubectl version --client
-
-# Check cluster connectivity
-kubectl cluster-info
-
-# Verify you can access your kind cluster
-kubectl get nodes
-```
-
-Expected output: You should see your kind cluster nodes.
-
-## Step 2: Authenticate with Docker Hub
-
-```bash
-# Login to Docker Hub
-docker login
-
-# Enter your Docker Hub username and password when prompted
-```
-
-## Step 3: Build and Push the Image
-
-From your **local machine**, navigate to where you cloned this repository:
-
-```bash
-# Navigate to the project
-cd /Users/aarone/Documents/repos/testing-ai-sandbox-code
-
-# Build and push (replace 'yourname' with your Docker Hub username)
-./k8s/scripts/build-and-push.sh yourname
-
-# This will take 10-15 minutes on first build
-```
-
-**Important**: Copy the full image name from the output (e.g., `yourname/terraform-devenv:latest`)
-
-## Step 4: Update the StatefulSet Manifest
-
-Edit the file `k8s/manifests/05-statefulset.yaml`:
-
-```bash
-# On Mac
-open k8s/manifests/05-statefulset.yaml
-
-# Or use any text editor
-code k8s/manifests/05-statefulset.yaml
-```
-
-Find this line (around line 30):
-```yaml
-image: YOUR_DOCKERHUB_USERNAME/terraform-devenv:latest
-```
-
-Replace with your actual Docker Hub username:
-```yaml
-image: yourname/terraform-devenv:latest
-```
-
-Save the file.
-
-## Step 5: Create Kubernetes Secrets
-
-```bash
-# Run the interactive secret creation script
-./k8s/scripts/create-secrets.sh
-```
-
-You'll be prompted for:
-
-1. **GITHUB_TOKEN**:
-   - Go to https://github.com/settings/tokens
-   - Generate a new token (classic) with `repo` scope
-   - Paste the token (it won't be visible as you type)
-
-2. **TFE_TOKEN**:
-   - Go to https://app.terraform.io/app/settings/tokens
-   - Generate a new API token
-   - Paste the token
-
-3. **AWS_ACCESS_KEY_ID** and **AWS_SECRET_ACCESS_KEY**:
-   - From your AWS IAM console
-   - Or use `aws configure` output
-
-4. **Optional values**: Press Enter to skip if you don't have them
-
-## Step 6: Deploy to Kubernetes
-
-```bash
-# Deploy all manifests
-./k8s/scripts/deploy.sh
+cd k8s/scripts
+./check-prereqs.sh
 ```
 
 Expected output:
 ```
-✅ Namespace created/updated
-✅ Service created/updated
-✅ StatefulSet created/updated
-✅ Deployment complete!
+==========================================
+  Agent Sandbox Platform Prerequisites
+==========================================
+
+Checking kubectl... OK (v1.28.0)
+Checking cluster connectivity... OK (context: kind-sandbox)
+Checking Helm... OK (v3.12.0)
+Checking Docker... OK (24.0.6)
+Checking jq... OK (jq-1.6)
+Checking openssl... OK (3.0.2)
+
+==========================================
+  All prerequisites met
+==========================================
+
+Ready to deploy. Run:
+  ./deploy-all.sh
 ```
 
-## Step 7: Verify Deployment
+## Step 2: Create a Local Cluster (Optional)
+
+If you don't have a Kubernetes cluster, create one with Kind:
 
 ```bash
-# Check if the pod is running (may take 2-5 minutes to start)
-kubectl get pods -n devenv -w
-
-# You should see:
-# NAME       READY   STATUS    RESTARTS   AGE
-# devenv-0   1/1     Running   0          2m
+cd k8s/scripts
+./setup-kind.sh
 ```
 
-**Troubleshooting**:
-- If status is `ImagePullBackOff`: Double-check the image name in step 4
-- If status is `Pending`: Check PVC status with `kubectl get pvc -n devenv`
-- If status is `CrashLoopBackOff`: Check logs with `kubectl logs -n devenv devenv-0`
+This creates a cluster named `sandbox` with proper port mappings.
 
-## Step 8: Access Your Dev Environment
+## Step 3: Configure the Platform (Optional)
+
+Customize the deployment by copying and editing the configuration:
 
 ```bash
-# Shell into the pod
-kubectl exec -it -n devenv devenv-0 -- /bin/zsh
+# Copy default config
+cp scripts/platform.env scripts/.env
 
-# You should now be inside the dev environment!
-# Try running some commands:
-terraform version
-claude --version
-aws --version
-gh --version
+# Edit configuration
+vi scripts/.env
 ```
 
-## Step 9: Test Your Setup
+Key options:
+- `DEVENV_REPLICAS` - Number of agent sandbox pods (default: 1)
+- `DEPLOY_BOUNDARY` - Enable Boundary secure access (default: true)
+- `DEPLOY_VAULT` - Enable Vault secrets management (default: true)
+- `DEPLOY_VSO` - Enable Vault Secrets Operator (default: true)
 
-Inside the pod (from step 8):
+## Step 4: Deploy the Platform
+
+Deploy all components with a single command:
 
 ```bash
-# Test GitHub authentication
-gh auth status
-
-# Test Terraform Cloud authentication
-terraform login -no-input
-# Should see: "Saved API token"
-
-# Test AWS authentication
-aws sts get-caller-identity
-
-# Clone a test repository
-cd /workspace
-git clone https://github.com/yourusername/your-repo.git
+cd k8s/scripts
+./deploy-all.sh
 ```
 
-## Step 10: Access from Multiple Terminals (Multi-User)
+This deploys:
+1. **Agent Sandbox** - Multi-user development environments
+2. **Vault** - Secrets management (auto-initialized)
+3. **Boundary** - Secure access management
+4. **Vault Secrets Operator** - Automatic secret synchronization
 
-To simulate multiple users or just have multiple sessions:
+Expected output includes:
+```
+==========================================
+  DEPLOYMENT COMPLETE
+==========================================
 
-```bash
-# Terminal 1
-kubectl exec -it -n devenv devenv-0 -- /bin/zsh
-
-# Terminal 2 (same pod)
-kubectl exec -it -n devenv devenv-0 -- /bin/zsh
-
-# Or scale to multiple users:
-./k8s/scripts/scale.sh 3
-
-# Then access different pods:
-kubectl exec -it -n devenv devenv-0 -- /bin/zsh  # User 1
-kubectl exec -it -n devenv devenv-1 -- /bin/zsh  # User 2
-kubectl exec -it -n devenv devenv-2 -- /bin/zsh  # User 3
+Status:
+devenv        devenv-0                        1/1     Running
+vault         vault-0                         1/1     Running
+boundary      boundary-controller-...         1/1     Running
+boundary      boundary-worker-...             1/1     Running
 ```
 
-## Understanding Your Persistent Storage
+## Step 5: Verify Deployment
 
-Your data persists across pod restarts in these locations:
-
-- `/workspace`: Your code and projects (10Gi PVC)
-- `/commandhistory`: Bash/zsh history (1Gi PVC)
-- `/home/node/.claude`: Claude Code configuration (1Gi PVC)
+Check all pods are running:
 
 ```bash
-# View your persistent volumes
-kubectl get pvc -n devenv
+# Check all platform pods
+kubectl get pods -A | grep -E "(devenv|boundary|vault)"
 
-# Example output:
-# NAME                        STATUS   VOLUME                 CAPACITY
-# workspace-devenv-0          Bound    pvc-abc123...         10Gi
-# bash-history-devenv-0       Bound    pvc-def456...         1Gi
-# claude-config-devenv-0      Bound    pvc-ghi789...         1Gi
+# Check secrets are synced (if VSO deployed)
+kubectl get secret devenv-vault-secrets -n devenv
+```
+
+## Step 6: Access Your Environment
+
+### Shell Access
+
+```bash
+# Get shell access to the agent sandbox
+kubectl exec -it -n devenv devenv-0 -- /bin/bash
+
+# You're now inside the development environment!
+```
+
+### Vault UI
+
+```bash
+# Port-forward to Vault
+kubectl port-forward -n vault vault-0 8200:8200
+
+# Open http://localhost:8200
+# Use token from: k8s/platform/vault/scripts/vault-keys.txt
+```
+
+## Step 7: Configure Additional Services (Optional)
+
+### SSH Secrets Engine
+
+Generate SSH certificates for secure access:
+
+```bash
+./platform/vault/scripts/configure-ssh-engine.sh
+```
+
+### Terraform Enterprise Integration
+
+Connect to Terraform Cloud/Enterprise for dynamic tokens:
+
+```bash
+./platform/vault/scripts/configure-tfe-engine.sh
+```
+
+## Step 8: Scale for Multiple Users
+
+Scale the agent sandbox for multiple users:
+
+```bash
+# Scale to 3 replicas
+cd k8s/agent-sandbox/scripts
+./scale.sh 3
+
+# Access different user environments
+kubectl exec -it -n devenv devenv-0 -- /bin/bash  # User 1
+kubectl exec -it -n devenv devenv-1 -- /bin/bash  # User 2
+kubectl exec -it -n devenv devenv-2 -- /bin/bash  # User 3
+```
+
+## Platform Architecture
+
+```
+                           Agent Sandbox Platform
+┌────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌────────────────┐ │
+│  │  Agent Sandbox  │    │      Vault      │    │    Boundary    │ │
+│  │   (devenv-0)    │◄───│  Secrets Mgmt   │    │  Secure Access │ │
+│  │   (devenv-1)    │    │  - KV v2        │    │  - Controller  │ │
+│  │   (devenv-N)    │    │  - SSH Certs    │    │  - Worker      │ │
+│  └────────┬────────┘    │  - TFE Tokens   │    └────────────────┘ │
+│           │              └────────▲────────┘                        │
+│           │                       │                                 │
+│           │              ┌────────┴────────┐                       │
+│           └──────────────│      VSO        │                       │
+│              (synced)    │  Secret Sync    │                       │
+│                          └─────────────────┘                       │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Common Tasks
@@ -218,85 +189,146 @@ kubectl get pvc -n devenv
 ### View Logs
 
 ```bash
-# Follow logs in real-time
+# Agent sandbox logs
 kubectl logs -n devenv devenv-0 -f
 
-# View last 100 lines
-kubectl logs -n devenv devenv-0 --tail=100
+# Vault logs
+kubectl logs -n vault vault-0 -f
+
+# VSO controller logs
+kubectl logs -n vault-secrets-operator-system -l app.kubernetes.io/name=vault-secrets-operator
 ```
 
-### Restart the Pod
+### Restart Components
 
 ```bash
-# Delete the pod (StatefulSet will recreate it)
+# Restart agent sandbox (data persists)
 kubectl delete pod devenv-0 -n devenv
 
-# Your data is safe on the PVCs!
+# Restart Vault (may require unseal)
+kubectl delete pod vault-0 -n vault
 ```
 
-### Port Forwarding (for web services)
+### Port Forwarding
 
 ```bash
-# If you're running a web server on port 8080 inside the pod
-kubectl port-forward -n devenv devenv-0 8080:8080
+# Vault UI
+kubectl port-forward -n vault vault-0 8200:8200
 
-# Access at http://localhost:8080 on your Mac
+# Boundary API
+kubectl port-forward -n boundary svc/boundary-api 9200:9200
 ```
 
-### Copy Files In/Out
+### Copy Files
 
 ```bash
-# Copy FROM your Mac TO the pod
+# Copy TO the pod
 kubectl cp ./myfile.txt devenv/devenv-0:/workspace/myfile.txt
 
-# Copy FROM the pod TO your Mac
+# Copy FROM the pod
 kubectl cp devenv/devenv-0:/workspace/output.txt ./output.txt
 ```
 
-## What You've Accomplished
+## Persistent Storage
 
-✅ Built a production-ready Docker image from your devcontainer
-✅ Deployed it to Kubernetes with persistent storage
-✅ Configured secrets management
-✅ Set up isolated dev environments
-✅ Created a scalable multi-user platform
+Data persists across pod restarts:
 
-## Next Steps
-
-1. **Add Remote Access**: Set up ingress for web-based access
-2. **User Authentication**: Implement OAuth for user management
-3. **Monitoring**: Add Prometheus/Grafana for observability
-4. **Backup Strategy**: Automate workspace backups
-5. **CI/CD Integration**: Automate builds and deployments
-
-## Getting Help
-
-If something isn't working:
+| Volume | Path | Purpose |
+|--------|------|---------|
+| workspace | /workspace | Code and projects |
+| bash-history | /commandhistory | Shell history |
+| claude-config | /home/node/.claude | Claude Code config |
 
 ```bash
-# Check pod status
-kubectl describe pod devenv-0 -n devenv
-
-# Check events
-kubectl get events -n devenv --sort-by='.lastTimestamp'
-
-# Check secret exists
-kubectl get secret devenv-secrets -n devenv
-
 # Check PVCs
 kubectl get pvc -n devenv
 ```
 
-## Cleanup (When Done)
+## Troubleshooting
+
+### Pod Not Starting
 
 ```bash
-# Remove everything (CAUTION: deletes all data!)
-./k8s/scripts/teardown.sh
+# Check pod events
+kubectl describe pod devenv-0 -n devenv
 
-# Or just scale down (keeps data)
-./k8s/scripts/scale.sh 0
+# Check PVC binding
+kubectl get pvc -n devenv
 ```
+
+### Vault Sealed
+
+```bash
+# Check Vault status
+kubectl exec -n vault vault-0 -- vault status
+
+# Unseal if needed (get key from vault-keys.txt)
+kubectl exec -n vault vault-0 -- vault operator unseal <UNSEAL_KEY>
+```
+
+### Secrets Not Syncing
+
+```bash
+# Check VaultStaticSecret status
+kubectl describe vaultstaticsecret -n devenv
+
+# Check VSO logs
+kubectl logs -n vault-secrets-operator-system -l app.kubernetes.io/name=vault-secrets-operator
+```
+
+## Cleanup
+
+### Remove Everything
+
+```bash
+cd k8s/scripts
+./teardown-all.sh
+```
+
+This removes:
+1. Vault Secrets Operator
+2. Boundary (controller, worker, postgres)
+3. Vault
+4. Agent Sandbox
+
+### Remove Kind Cluster
+
+```bash
+kind delete cluster --name sandbox
+```
+
+### Keep Data, Scale Down
+
+```bash
+# Scale to zero (keeps PVCs)
+./agent-sandbox/scripts/scale.sh 0
+```
+
+## What You've Accomplished
+
+- Deployed a complete secrets management platform (Vault)
+- Set up secure access infrastructure (Boundary)
+- Configured automatic secret synchronization (VSO)
+- Created scalable, isolated development environments
+- Enabled multi-user access with persistent storage
+
+## Next Steps
+
+1. **Configure SSH Engine**: Generate SSH certificates for secure access
+2. **Integrate TFE**: Connect to Terraform Cloud for dynamic tokens
+3. **Add Users**: Scale to multiple replicas for team access
+4. **Set Up Ingress**: Expose services externally
+5. **Add Monitoring**: Integrate Prometheus/Grafana
+
+## Documentation
+
+- [Platform README](README.md) - Full platform documentation
+- [Agent Sandbox](agent-sandbox/README.md) - Development environment details
+- [Architecture](ARCHITECTURE.md) - Platform architecture
+- [Vault Integration](platform/vault/README.md) - Vault configuration
+- [Boundary Access](platform/boundary/README.md) - Boundary setup
+- [VSO Configuration](platform/vault-secrets-operator/README.md) - Secret sync
 
 ---
 
-**Congratulations!** You now have a cloud-native, multi-user development platform running on Kubernetes! 🎉
+**Congratulations!** You now have a complete Agent Sandbox Platform running on Kubernetes!

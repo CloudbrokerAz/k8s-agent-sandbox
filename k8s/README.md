@@ -1,75 +1,135 @@
-# Kubernetes Deployment for Terraform DevEnv
+# Agent Sandbox Platform - Kubernetes Deployment
 
-This directory contains everything needed to deploy the Terraform development environment to Kubernetes (kind, standard K8s, or OpenShift).
+This directory contains the complete platform for deploying AI agent development environments to Kubernetes, including secrets management, secure access, and secret synchronization.
+
+## Directory Structure
+
+```
+k8s/
+├── agent-sandbox/           # Core development environments
+│   ├── manifests/          # DevEnv Kubernetes manifests
+│   └── scripts/            # DevEnv deployment scripts
+├── platform/               # Supporting infrastructure
+│   ├── boundary/           # HashiCorp Boundary (secure access)
+│   ├── vault/              # HashiCorp Vault (secrets management)
+│   └── vault-secrets-operator/  # VSO (secret synchronization)
+├── scripts/                # Master deployment scripts
+│   ├── deploy-all.sh       # Deploy complete platform
+│   ├── teardown-all.sh     # Remove complete platform
+│   └── setup-kind.sh       # Create local Kind cluster
+└── docs/                   # Documentation
+    ├── README.md           # This file
+    ├── GETTING_STARTED.md  # Quick start guide
+    └── ARCHITECTURE.md     # Platform architecture
+```
 
 ## Architecture
 
-- **Multi-user platform**: Each user gets an isolated dev environment (StatefulSet pod)
-- **Persistent storage**: Workspaces, bash history, and Claude config persist across restarts
-- **Secure secrets**: Credentials stored in Kubernetes secrets
-- **Scalable**: Scale up/down based on user demand
-- **OpenShift compatible**: No privileged mode required
+- **Agent Sandbox**: Multi-user isolated development environments (StatefulSet pods)
+- **HashiCorp Vault**: Centralized secrets management with KV, SSH, and TFE engines
+- **HashiCorp Boundary**: Identity-based secure access to agent pods
+- **Vault Secrets Operator**: Automatic sync of secrets from Vault to Kubernetes
+- **Persistent storage**: Workspaces persist across restarts
+- **Network isolation**: Controlled access via NetworkPolicies
 
 ## Prerequisites
 
-1. **Kubernetes cluster** (kind, K8s, OpenShift, etc.)
+1. **Kubernetes cluster** (Kind, K8s, OpenShift, etc.)
 2. **kubectl** installed and configured
-3. **Docker** installed (for building images)
-4. **Docker Hub account** (or private registry)
+3. **Helm 3.x** installed (for VSO deployment)
+4. **Docker** installed (for building images)
+
+### Validate Prerequisites
+
+Run the prerequisite check script before deployment:
+
+```bash
+cd k8s/scripts
+./check-prereqs.sh
+```
+
+This validates:
+- kubectl installation and cluster connectivity
+- Helm installation
+- Docker availability
+- Required CLI tools (jq, openssl)
+
+### Configuration
+
+All platform settings are defined in `scripts/platform.env.example`. To customize:
+
+```bash
+# Copy to .env for local overrides
+cp scripts/platform.env.example scripts/.env
+
+# Edit configuration
+vi scripts/.env
+```
+
+Key configuration options:
+- `DEVENV_REPLICAS` - Number of agent sandbox pods
+- `DEPLOY_BOUNDARY` - Enable/disable Boundary deployment
+- `DEPLOY_VAULT` - Enable/disable Vault deployment
+- `DEPLOY_VSO` - Enable/disable VSO deployment
+- `DEBUG` - Enable verbose output
 
 ## Quick Start
 
-### 1. Build and Push Image
+### Option 1: Full Platform Deployment (Recommended)
 
-```bash
-# Build and push to Docker Hub
-cd k8s/scripts
-./build-and-push.sh <your-dockerhub-username>
-
-# Or with a custom tag
-./build-and-push.sh <your-dockerhub-username> v1.0.0
-```
-
-### 2. Update Image Reference
-
-Edit `k8s/manifests/05-statefulset.yaml` and replace:
-```yaml
-image: YOUR_DOCKERHUB_USERNAME/terraform-devenv:latest
-```
-
-With your actual Docker Hub username.
-
-### 3. Create Secrets
+Deploy the complete platform including Vault, Boundary, and VSO:
 
 ```bash
 cd k8s/scripts
+
+# Create a local Kind cluster (if needed)
+./setup-kind.sh
+
+# Deploy all components
+./deploy-all.sh
+```
+
+This will deploy:
+1. **Agent Sandbox** - Multi-user development environments
+2. **Vault** - Secrets management (auto-initialized)
+3. **Boundary** - Secure access management
+4. **VSO** - Automatic secret synchronization
+
+### Option 2: Agent Sandbox Only
+
+Deploy just the development environments:
+
+```bash
+cd k8s/agent-sandbox/scripts
+
+# Create secrets
 ./create-secrets.sh
-```
 
-You'll be prompted to enter:
-- **GitHub Token** (required): Personal access token with repo permissions
-- **Terraform Cloud Token** (required): API token from app.terraform.io
-- **AWS Credentials** (required): Access key, secret key, and optional session token
-- **Langfuse Keys** (optional): For observability (can skip)
-
-### 4. Deploy to Kubernetes
-
-```bash
-cd k8s/scripts
+# Deploy
 ./deploy.sh
 ```
 
-### 5. Access Your Dev Environment
+### Access Your Environment
 
 ```bash
 # Check pod status
 kubectl get pods -n devenv
 
 # Access the dev environment
-kubectl exec -it -n devenv devenv-0 -- /bin/zsh
+kubectl exec -it -n devenv devenv-0 -- /bin/bash
 
 # View logs
 kubectl logs -n devenv devenv-0 -f
+```
+
+### Configure Additional Services
+
+```bash
+# Configure SSH secrets engine
+./platform/vault/scripts/configure-ssh-engine.sh
+
+# Configure TFE secrets engine (for Terraform Cloud)
+./platform/vault/scripts/configure-tfe-engine.sh
 ```
 
 ## Multi-User Setup
@@ -80,12 +140,12 @@ Each replica in the StatefulSet is an isolated dev environment:
 
 ```bash
 # Scale to 3 users
-./k8s/scripts/scale.sh 3
+./k8s/agent-sandbox/scripts/scale.sh 3
 
 # Access specific user environments
-kubectl exec -it -n devenv devenv-0 -- /bin/zsh  # User 1
-kubectl exec -it -n devenv devenv-1 -- /bin/zsh  # User 2
-kubectl exec -it -n devenv devenv-2 -- /bin/zsh  # User 3
+kubectl exec -it -n devenv devenv-0 -- /bin/bash  # User 1
+kubectl exec -it -n devenv devenv-1 -- /bin/bash  # User 2
+kubectl exec -it -n devenv devenv-2 -- /bin/bash  # User 3
 ```
 
 ### Per-User Configuration
@@ -110,7 +170,7 @@ kubectl get storageclass
 
 ### For Standard Kubernetes
 
-Update `k8s/manifests/05-statefulset.yaml` to use your cluster's StorageClass:
+Update `k8s/agent-sandbox/manifests/05-statefulset.yaml` to use your cluster's StorageClass:
 
 ```yaml
 storageClassName: your-storage-class  # e.g., gp2, ebs, nfs, etc.
@@ -327,7 +387,12 @@ kubectl exec -n devenv devenv-0 -- tar xzf /tmp/backup.tar.gz -C /
 
 ```bash
 cd k8s/scripts
-./teardown.sh
+
+# Remove complete platform (Vault, Boundary, VSO, DevEnv)
+./teardown-all.sh
+
+# Remove only agent sandbox
+./agent-sandbox/scripts/teardown.sh
 ```
 
 ### Remove Specific Components
