@@ -199,17 +199,78 @@ wait_for_sandbox() {
 }
 
 # -----------------------------------------------------------------------------
-# Phase 6: Print Access Instructions
+# Phase 6: Capture Sandbox Configuration
+# -----------------------------------------------------------------------------
+capture_sandbox_config() {
+    local sandbox_name="claude-code-sandbox"
+    local pod_name=$(kubectl get pod -n "${NAMESPACE}" -l app="${sandbox_name}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+    echo ""
+    echo "========================================="
+    echo "  Sandbox Configuration"
+    echo "========================================="
+    echo ""
+
+    # Sandbox resource
+    echo "--- Sandbox Resource ---"
+    kubectl get sandbox "${sandbox_name}" -n "${NAMESPACE}" -o wide 2>/dev/null || echo "  (not available)"
+    echo ""
+
+    # Pod details
+    echo "--- Pod Details ---"
+    if [[ -n "$pod_name" ]]; then
+        echo "  Name:      ${pod_name}"
+        echo "  Status:    $(kubectl get pod -n "${NAMESPACE}" "${pod_name}" -o jsonpath='{.status.phase}' 2>/dev/null)"
+        echo "  Node:      $(kubectl get pod -n "${NAMESPACE}" "${pod_name}" -o jsonpath='{.spec.nodeName}' 2>/dev/null)"
+        echo "  IP:        $(kubectl get pod -n "${NAMESPACE}" "${pod_name}" -o jsonpath='{.status.podIP}' 2>/dev/null)"
+        echo "  Image:     $(kubectl get pod -n "${NAMESPACE}" "${pod_name}" -o jsonpath='{.spec.containers[0].image}' 2>/dev/null)"
+    else
+        echo "  (pod not found)"
+    fi
+    echo ""
+
+    # PVCs
+    echo "--- Persistent Volume Claims ---"
+    kubectl get pvc -n "${NAMESPACE}" 2>/dev/null | grep -E "NAME|${sandbox_name}" || echo "  (none found)"
+    echo ""
+
+    # Services
+    echo "--- Services ---"
+    kubectl get svc "${sandbox_name}" -n "${NAMESPACE}" -o wide 2>/dev/null || echo "  (not found)"
+    echo ""
+
+    # Environment variables (non-sensitive)
+    echo "--- Environment Configuration ---"
+    if [[ -n "$pod_name" ]]; then
+        echo "  CLAUDE_CONFIG_DIR: $(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- printenv CLAUDE_CONFIG_DIR 2>/dev/null || echo 'not set')"
+        echo "  VAULT_ADDR:        $(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- printenv VAULT_ADDR 2>/dev/null || echo 'not set')"
+        echo "  GITHUB_TOKEN:      $(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- sh -c 'if [ -n "$GITHUB_TOKEN" ]; then echo "configured"; else echo "not set"; fi' 2>/dev/null)"
+        echo "  TFE_TOKEN:         $(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- sh -c 'if [ -n "$TFE_TOKEN" ]; then echo "configured"; else echo "not set"; fi' 2>/dev/null)"
+    fi
+    echo ""
+
+    # Installed tools
+    echo "--- Installed Tools ---"
+    if [[ -n "$pod_name" ]]; then
+        local claude_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- /usr/local/share/npm-global/bin/claude --version 2>/dev/null || echo "not found")
+        local node_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- node --version 2>/dev/null || echo "not found")
+        local terraform_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' | cut -d'"' -f4 || echo "not found")
+        echo "  Claude Code: ${claude_version}"
+        echo "  Node.js:     ${node_version}"
+        echo "  Terraform:   ${terraform_version}"
+    fi
+    echo ""
+}
+
+# -----------------------------------------------------------------------------
+# Phase 7: Print Access Instructions
 # -----------------------------------------------------------------------------
 print_access_instructions() {
     local sandbox_name="claude-code-sandbox"
 
-    echo ""
     echo "========================================="
-    echo "  Claude Code Sandbox Deployed!"
+    echo "  Access Methods"
     echo "========================================="
-    echo ""
-    echo "Access Methods:"
     echo ""
     echo "1. kubectl exec (direct shell):"
     echo "   kubectl exec -it -n ${NAMESPACE} \$(kubectl get pod -n ${NAMESPACE} -l app=${sandbox_name} -o jsonpath='{.items[0].metadata.name}') -- /bin/bash"
@@ -245,6 +306,7 @@ main() {
     create_namespace
     apply_manifests
     wait_for_sandbox
+    capture_sandbox_config
     print_access_instructions
 }
 
