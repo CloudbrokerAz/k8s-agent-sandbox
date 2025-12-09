@@ -268,6 +268,110 @@ if [[ "$BOUNDARY_CTRL_STATUS" == "Running" ]]; then
 fi
 
 # ==========================================
+# Keycloak
+# ==========================================
+echo ""
+echo "--- Keycloak (Identity Provider) ---"
+
+KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-keycloak}"
+
+# Check namespace
+if kubectl get namespace "$KEYCLOAK_NAMESPACE" &>/dev/null; then
+    check_pass "Namespace '$KEYCLOAK_NAMESPACE' exists"
+else
+    check_warn "Namespace '$KEYCLOAK_NAMESPACE' does not exist (Keycloak optional)"
+fi
+
+# Check Keycloak deployment/pod (uses Deployment, not StatefulSet)
+KEYCLOAK_POD=$(kubectl get pod -l app=keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+KEYCLOAK_STATUS=$(kubectl get pod -l app=keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
+    check_pass "Keycloak pod running"
+elif [[ -z "$KEYCLOAK_POD" ]] || [[ "$KEYCLOAK_STATUS" == "NotFound" ]]; then
+    check_warn "Keycloak not deployed"
+else
+    check_fail "Keycloak pod status: $KEYCLOAK_STATUS"
+fi
+
+# Check PostgreSQL pod (uses Deployment, not StatefulSet)
+POSTGRES_STATUS=$(kubectl get pod -l app=keycloak-postgres -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+if [[ "$POSTGRES_STATUS" == "Running" ]]; then
+    check_pass "Keycloak PostgreSQL running"
+elif [[ "$POSTGRES_STATUS" == "NotFound" ]]; then
+    check_warn "Keycloak PostgreSQL not deployed"
+else
+    check_fail "Keycloak PostgreSQL status: $POSTGRES_STATUS"
+fi
+
+# Check Keycloak health and realm via service endpoint (Keycloak container has no curl)
+if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
+    # Use kubectl run to check health via service
+    KC_HEALTH=$(kubectl run -n "$KEYCLOAK_NAMESPACE" curl-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+        -- curl -sf http://keycloak:8080/health/ready 2>&1 | grep -o '"status"' | head -1 || echo "")
+    if [[ -n "$KC_HEALTH" ]]; then
+        check_pass "Keycloak health endpoint responding"
+    else
+        check_warn "Keycloak health endpoint not responding"
+    fi
+
+    # Check agent-sandbox realm exists via well-known OIDC endpoint
+    OIDC_CONFIG=$(kubectl run -n "$KEYCLOAK_NAMESPACE" oidc-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+        -- curl -sf http://keycloak:8080/realms/agent-sandbox/.well-known/openid-configuration 2>&1 | grep -o '"issuer"' | head -1 || echo "")
+    if [[ -n "$OIDC_CONFIG" ]]; then
+        check_pass "Realm 'agent-sandbox' OIDC configured"
+    else
+        # Fall back to realm endpoint check
+        REALM_CHECK=$(kubectl run -n "$KEYCLOAK_NAMESPACE" realm-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+            -- curl -sf http://keycloak:8080/realms/agent-sandbox 2>&1 | grep -o '"realm"' | head -1 || echo "")
+        if [[ -n "$REALM_CHECK" ]]; then
+            check_pass "Realm 'agent-sandbox' configured"
+        else
+            check_warn "Realm 'agent-sandbox' not configured (run configure-realm.sh)"
+        fi
+    fi
+fi
+
+# ==========================================
+# OIDC Integration Testing
+# ==========================================
+echo ""
+echo "--- OIDC Integration Testing ---"
+echo "Note: User login tests are optional - users must be created via configure-realm.sh"
+
+# Only run if Keycloak is running
+if [[ "$KEYCLOAK_STATUS" == "Running" ]] && [[ -n "$OIDC_CONFIG" ]]; then
+    # Test user authentication using admin-cli (public client with direct access grants)
+    # Uses the demo developer user created by configure-realm.sh
+    # Note: Passwords contain special chars that need URL encoding: ! = %21, @ = %40, # = %23
+    LOGIN_RESULT=$(kubectl run -n "$KEYCLOAK_NAMESPACE" login-test-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+        -- curl -sf -X POST "http://keycloak:8080/realms/agent-sandbox/protocol/openid-connect/token" \
+            -d "grant_type=password" \
+            -d "client_id=admin-cli" \
+            -d "username=developer" \
+            -d "password=Dev123%21%40%23" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
+    if [[ -n "$LOGIN_RESULT" ]]; then
+        check_pass "User authentication (developer)"
+    else
+        check_info "User authentication failed for developer (users need to be created via configure-realm.sh)"
+    fi
+
+    # Test realmadmin user authentication (realm admin, not master admin)
+    ADMIN_LOGIN=$(kubectl run -n "$KEYCLOAK_NAMESPACE" admin-login-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+        -- curl -sf -X POST "http://keycloak:8080/realms/agent-sandbox/protocol/openid-connect/token" \
+            -d "grant_type=password" \
+            -d "client_id=admin-cli" \
+            -d "username=realmadmin" \
+            -d "password=Admin123%21%40%23" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
+    if [[ -n "$ADMIN_LOGIN" ]]; then
+        check_pass "User authentication (realmadmin)"
+    else
+        check_info "User authentication failed for realmadmin (users need to be created via configure-realm.sh)"
+    fi
+else
+    check_info "OIDC tests skipped (Keycloak or realm not available)"
+fi
+
+# ==========================================
 # Vault Secrets Operator
 # ==========================================
 echo ""
@@ -355,5 +459,37 @@ elif [[ $WARNINGS -gt 0 ]]; then
     exit 0
 else
     echo -e "${GREEN}HEALTH: HEALTHY${NC} - All systems operational"
-    exit 0
 fi
+
+# ==========================================
+# Access Credentials
+# ==========================================
+echo ""
+echo "=========================================="
+echo "  Access Credentials"
+echo "=========================================="
+echo ""
+echo -e "${BLUE}Vault:${NC}"
+echo "  URL: http://vault.vault.svc.cluster.local:8200"
+echo "  Root Token: See platform/vault/scripts/vault-keys.txt"
+echo ""
+echo -e "${BLUE}Keycloak:${NC}"
+echo "  URL: http://keycloak.keycloak.svc.cluster.local:8080"
+echo "  Admin Console: /admin/master/console/"
+echo "  Master Admin: admin / admin123!@#"
+echo "  Realm: agent-sandbox"
+echo "  Demo Users:"
+echo "    developer / Dev123!@# (developers group)"
+echo "    realmadmin / Admin123!@# (admins group)"
+echo ""
+echo -e "${BLUE}Boundary:${NC}"
+echo "  Controller API: http://boundary-controller-api.boundary.svc.cluster.local:9200"
+echo "  Worker: boundary-worker.boundary.svc.cluster.local:9202"
+echo ""
+echo -e "${BLUE}Agent Sandbox:${NC}"
+echo "  Namespace: devenv"
+echo "  Pod: claude-code-sandbox"
+echo "  Connect: kubectl exec -it -n devenv claude-code-sandbox -- /bin/bash"
+echo ""
+
+exit 0

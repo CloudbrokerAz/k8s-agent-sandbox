@@ -12,6 +12,22 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-keycloak}"
 
+# URL encode function for special characters in form data
+url_encode() {
+    local string="$1"
+    # Encode special characters: ! @ # $ % & * etc.
+    string="${string//\!/\%21}"
+    string="${string//@/\%40}"
+    string="${string//#/\%23}"
+    string="${string//\$/\%24}"
+    string="${string//%/\%25}"
+    string="${string//&/\%26}"
+    string="${string//\*/\%2A}"
+    string="${string//+/\%2B}"
+    string="${string// /\%20}"
+    echo "$string"
+}
+
 # Detect in-cluster mode
 IN_CLUSTER="${IN_CLUSTER:-false}"
 if [[ "$1" == "--in-cluster" ]] || [[ "$1" == "-i" ]]; then
@@ -78,9 +94,9 @@ setup_curl_pod() {
         # Delete any existing pod
         kubectl delete pod "$CURL_POD_NAME" -n "$KEYCLOAK_NAMESPACE" --ignore-not-found=true &>/dev/null
 
-        # Create a persistent curl pod that sleeps
+        # Create a persistent helper pod with curl and jq (using dwdraju/alpine-curl-jq)
         kubectl run "$CURL_POD_NAME" -n "$KEYCLOAK_NAMESPACE" \
-            --image=curlimages/curl \
+            --image=dwdraju/alpine-curl-jq:latest \
             --restart=Never \
             --command -- sleep 3600 &>/dev/null
 
@@ -99,18 +115,32 @@ kc_curl() {
     fi
 }
 
+# Helper to run jq in the cluster
+kc_jq() {
+    if [[ "$IN_CLUSTER" == "true" ]]; then
+        kubectl exec -i -n "$KEYCLOAK_NAMESPACE" "$CURL_POD_NAME" -- jq "$@" 2>/dev/null
+    else
+        jq "$@"
+    fi
+}
+
 # Function to get admin token
 get_admin_token() {
     echo "Authenticating as admin..."
     local response
+    local encoded_pass
+    encoded_pass=$(url_encode "${ADMIN_PASS}")
     response=$(kc_curl -s -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=${ADMIN_USER}" \
-        -d "password=${ADMIN_PASS}" \
+        -d "password=${encoded_pass}" \
         -d "grant_type=password" \
         -d "client_id=admin-cli")
 
-    if command -v jq &> /dev/null; then
+    # Use kc_jq if in-cluster, otherwise try local jq or fallback to grep
+    if [[ "$IN_CLUSTER" == "true" ]]; then
+        echo "$response" | kc_jq -r '.access_token'
+    elif command -v jq &> /dev/null; then
         echo "$response" | jq -r '.access_token'
     else
         echo "$response" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4
@@ -190,7 +220,7 @@ echo ""
 # Get client UUID for setting secret
 echo "4. Setting client secret..."
 CLIENT_UUID=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r '.[0].id')
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.[0].id')
 
 if [ -n "$CLIENT_UUID" ] && [ "$CLIENT_UUID" != "null" ]; then
     kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
@@ -249,7 +279,7 @@ create_user() {
     # Get user ID
     local user_id
     user_id=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users?username=${username}" \
-        -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r '.[0].id')
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.[0].id')
 
     if [ -n "$user_id" ] && [ "$user_id" != "null" ]; then
         # Set password
@@ -265,7 +295,7 @@ create_user() {
         # Add to group
         local group_id
         group_id=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" | jq -r ".[] | select(.name==\"${group}\") | .id")
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r ".[] | select(.name==\"${group}\") | .id")
 
         if [ -n "$group_id" ] && [ "$group_id" != "null" ]; then
             kc_curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/users/${user_id}/groups/${group_id}" \
