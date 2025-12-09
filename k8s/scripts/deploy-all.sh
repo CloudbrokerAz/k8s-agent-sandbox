@@ -146,12 +146,68 @@ if ! command -v helm &> /dev/null; then
     curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 fi
 
+# Check for Kubernetes cluster - auto-create Kind cluster if not available
 if ! kubectl cluster-info &> /dev/null; then
-    echo "❌ Cannot connect to Kubernetes cluster"
+    echo "⚠️  No Kubernetes cluster available"
     echo ""
-    echo "To create a local cluster:"
-    echo "  ./setup-kind.sh"
-    exit 1
+
+    # Check if Kind is installed or can be installed
+    if command -v docker &> /dev/null && docker info &> /dev/null; then
+        echo "Docker is available. Creating Kind cluster..."
+        echo ""
+
+        # Run setup-kind.sh to create the cluster
+        if [[ -f "$SCRIPT_DIR/setup-kind.sh" ]]; then
+            "$SCRIPT_DIR/setup-kind.sh" "${KIND_CLUSTER_NAME:-sandbox}"
+        else
+            # Fallback: inline Kind cluster creation
+            if ! command -v kind &> /dev/null; then
+                echo "📦 Installing kind..."
+                curl -sLo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+                chmod +x ./kind
+                sudo mv ./kind /usr/local/bin/kind
+            fi
+
+            CLUSTER_NAME="${KIND_CLUSTER_NAME:-sandbox}"
+            echo "🚀 Creating kind cluster '$CLUSTER_NAME'..."
+            cat <<EOF | kind create cluster --name "$CLUSTER_NAME" --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      - containerPort: 9200
+        hostPort: 9200
+        protocol: TCP
+      - containerPort: 9202
+        hostPort: 9202
+        protocol: TCP
+EOF
+            echo "⏳ Waiting for cluster to be ready..."
+            kubectl wait --for=condition=Ready nodes --all --timeout=60s
+        fi
+
+        echo "✅ Kind cluster created"
+    else
+        echo "❌ Cannot connect to Kubernetes cluster and Docker is not available"
+        echo ""
+        echo "Options:"
+        echo "  1. Start Docker and run: ./setup-kind.sh"
+        echo "  2. Configure kubectl to connect to an existing cluster"
+        exit 1
+    fi
 fi
 
 echo "✅ Prerequisites met"
@@ -338,13 +394,15 @@ if [[ "$SKIP_VAULT" != "true" ]]; then
     echo "⏳ Waiting for Vault..."
     kubectl rollout status statefulset/vault -n vault --timeout=180s
 
-    # Initialize Vault
-    echo "Initializing Vault..."
+    # Initialize and/or unseal Vault
+    echo "Checking Vault status..."
     sleep 5
-    VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false}')
+    VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false,"sealed":true}')
     INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
+    SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed')
 
     if [[ "$INITIALIZED" == "false" ]]; then
+        echo "Initializing Vault..."
         INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json)
         UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
         ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
@@ -363,7 +421,23 @@ EOF
         echo "✅ Vault initialized - keys saved to platform/vault/scripts/vault-keys.txt"
     else
         echo "✅ Vault already initialized"
+        # Load keys from saved file
+        UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
         ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+
+        # Check if Vault needs unsealing (after pod restart)
+        if [[ "$SEALED" == "true" ]]; then
+            echo "🔒 Vault is sealed - unsealing..."
+            if [[ -n "$UNSEAL_KEY" ]]; then
+                kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY"
+                echo "✅ Vault unsealed"
+            else
+                echo "❌ No unseal key found in vault-keys.txt"
+                echo "   Please unseal manually: kubectl exec -n vault vault-0 -- vault operator unseal <key>"
+            fi
+        else
+            echo "✅ Vault is already unsealed"
+        fi
     fi
 
     # Configure Vault basics
