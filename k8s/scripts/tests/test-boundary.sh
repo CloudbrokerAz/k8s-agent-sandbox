@@ -22,17 +22,17 @@ WARNINGS=0
 
 test_pass() {
     echo -e "${GREEN}✅ PASS${NC}: $1"
-    ((PASSED++))
+    PASSED=$((PASSED + 1))
 }
 
 test_fail() {
     echo -e "${RED}❌ FAIL${NC}: $1"
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
 }
 
 test_warn() {
     echo -e "${YELLOW}⚠️  WARN${NC}: $1"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 }
 
 test_info() {

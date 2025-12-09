@@ -1,0 +1,11 @@
+========================================
+  VAULT KEYS - SAVE SECURELY!
+========================================
+Unseal Key 1: QaXuQHixgIBz/OU2r5QPXqIf7d86nlgmoMFatGfZcVSq
+Unseal Key 2: hmzIy+HlPrYtVkb3WhiAPMWsCQ9FpJsl6/iAAncxNo30
+Unseal Key 3: 5lrMt3cw46EZYXZbEaxFVpIfM5G5130NHhR2JUzcmXo7
+Unseal Key 4: ELGsdFfo+l0d3sr8kGqB+RSBcJvpPtpTeu1/3iH1eRsf
+Unseal Key 5: WEEh8fFsLi3BoNBV4HW+T6JXsnwebXYZ2RN2RV/PqNSN
+
+Root Token: hvs.lU5AoEchsvC84WZZLuWJcz83
+========================================

@@ -25,7 +25,7 @@ run_test_suite() {
     local name="$1"
     local script="$2"
 
-    ((TOTAL_SUITES++))
+    TOTAL_SUITES=$((TOTAL_SUITES + 1))
 
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -35,7 +35,7 @@ run_test_suite() {
 
     if [[ ! -f "$script" ]]; then
         echo -e "${YELLOW}⚠️  Test script not found: $script${NC}"
-        ((WARNED_SUITES++))
+        WARNED_SUITES=$((WARNED_SUITES + 1))
         return
     fi
 
@@ -49,11 +49,11 @@ run_test_suite() {
     set -e
 
     if [[ $result -eq 0 ]]; then
-        ((PASSED_SUITES++))
+        PASSED_SUITES=$((PASSED_SUITES + 1))
     elif [[ $result -eq 1 ]]; then
-        ((FAILED_SUITES++))
+        FAILED_SUITES=$((FAILED_SUITES + 1))
     else
-        ((WARNED_SUITES++))
+        WARNED_SUITES=$((WARNED_SUITES + 1))
     fi
 }
 

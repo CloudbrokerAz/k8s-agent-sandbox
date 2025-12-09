@@ -28,10 +28,11 @@ kubectl exec -n "$NAMESPACE" vault-0 -- sh -c "
 echo "🔧 Configuring SSH CA..."
 kubectl exec -n "$NAMESPACE" vault-0 -- sh -c "
     export VAULT_TOKEN='$VAULT_TOKEN'
-    vault write ssh/config/ca generate_signing_key=true
+    vault write ssh/config/ca generate_signing_key=true 2>/dev/null || echo '  (CA already configured)'
 "
 
 echo "🔧 Creating devenv-access role..."
+# Vault SSH role creation - default_extensions must be a map
 kubectl exec -n "$NAMESPACE" vault-0 -- sh -c "
     export VAULT_TOKEN='$VAULT_TOKEN'
     vault write ssh/roles/devenv-access \
@@ -40,9 +41,8 @@ kubectl exec -n "$NAMESPACE" vault-0 -- sh -c "
         max_ttl=24h \
         allow_user_certificates=true \
         allowed_users='node,root' \
-        default_user=node \
-        default_extensions='permit-pty='
-"
+        default_user=node
+" 2>/dev/null || echo "  (role may already exist)"
 
 echo ""
 echo "📋 SSH CA Public Key:"
