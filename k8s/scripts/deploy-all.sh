@@ -547,26 +547,87 @@ EOF
     fi
 else
     echo "⏭️  Skipping Vault deployment (SKIP_VAULT=true)"
-    # Try to load ROOT_TOKEN from existing vault-keys.txt for VSO configuration
-    ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
-    UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
 
-    # Even when skipping deployment, ensure Vault is unsealed if it exists
+    # Even when skipping deployment, ensure Vault is initialized and unsealed
     if kubectl get statefulset vault -n vault &>/dev/null; then
-        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"sealed":true}')
+        echo "Checking Vault status..."
+        sleep 3
+        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false,"sealed":true}')
+        INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
         SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed')
 
-        if [[ "$SEALED" == "true" ]]; then
-            echo "🔒 Vault is sealed - attempting to unseal..."
-            if [[ -n "$UNSEAL_KEY" ]]; then
+        if [[ "$INITIALIZED" == "false" ]]; then
+            echo "⚠️  Vault not initialized - initializing now..."
+            INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json 2>/dev/null)
+            if [[ -n "$INIT_OUTPUT" ]]; then
+                UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
+                ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
+
                 kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY" >/dev/null 2>&1
-                echo "✅ Vault unsealed"
-            else
-                echo "⚠️  Cannot unseal Vault - no unseal key found"
-                echo "   Run: ./platform/vault/scripts/unseal-vault.sh"
+
+                cat > "$K8S_DIR/platform/vault/scripts/vault-keys.txt" << EOF
+========================================
+  VAULT KEYS - SAVE SECURELY!
+========================================
+Unseal Key: $UNSEAL_KEY
+Root Token: $ROOT_TOKEN
+========================================
+EOF
+                chmod 600 "$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+                echo "✅ Vault initialized and unsealed - keys saved"
+                SEALED="false"
+
+                # Configure Vault basics since it's newly initialized
+                K8S_HOST="https://kubernetes.default.svc"
+                K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d)
+
+                kubectl exec -n vault vault-0 -- sh -c "
+                    export VAULT_TOKEN='$ROOT_TOKEN'
+                    vault auth enable kubernetes 2>/dev/null || true
+                    vault write auth/kubernetes/config kubernetes_host='$K8S_HOST' kubernetes_ca_cert='$K8S_CA_CERT' disable_local_ca_jwt=false
+                    vault secrets enable -path=secret kv-v2 2>/dev/null || true
+                    vault secrets enable -path=ssh ssh 2>/dev/null || true
+                    vault secrets enable -path=terraform terraform 2>/dev/null || true
+                " 2>/dev/null
+                echo "✅ Vault configured"
+
+                # Configure SSH CA
+                echo "Configuring SSH CA..."
+                kubectl exec -n vault vault-0 -- sh -c "
+                    export VAULT_TOKEN='$ROOT_TOKEN'
+                    vault write ssh/config/ca generate_signing_key=true 2>/dev/null || true
+                    vault write ssh/roles/devenv-access key_type=ca ttl=1h max_ttl=24h allow_user_certificates=true allowed_users='node,root' default_user=node 2>/dev/null || true
+                " 2>/dev/null
+
+                # Export SSH CA public key
+                SSH_CA_KEY=$(kubectl exec -n vault vault-0 -- sh -c "export VAULT_TOKEN='$ROOT_TOKEN'; vault read -field=public_key ssh/config/ca 2>/dev/null" || echo "")
+                if [[ -n "$SSH_CA_KEY" ]]; then
+                    echo "$SSH_CA_KEY" > "$K8S_DIR/platform/vault/scripts/vault-ssh-ca.pub"
+                    kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+                    kubectl create secret generic vault-ssh-ca --namespace=devenv --from-literal=vault-ssh-ca.pub="$SSH_CA_KEY" --dry-run=client -o yaml | kubectl apply -f -
+                    echo "✅ SSH CA configured"
+                fi
+
+                # Export Vault CA
+                "$K8S_DIR/platform/vault/scripts/export-vault-ca.sh" vault devenv 2>/dev/null || true
             fi
         else
-            echo "✅ Vault is already unsealed"
+            # Try to load keys from saved file
+            ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+            UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+
+            if [[ "$SEALED" == "true" ]]; then
+                echo "🔒 Vault is sealed - attempting to unseal..."
+                if [[ -n "$UNSEAL_KEY" ]]; then
+                    kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY" >/dev/null 2>&1
+                    echo "✅ Vault unsealed"
+                else
+                    echo "⚠️  Cannot unseal Vault - no unseal key found"
+                    echo "   Run: ./platform/vault/scripts/unseal-vault.sh"
+                fi
+            else
+                echo "✅ Vault is already unsealed"
+            fi
         fi
     fi
 fi
