@@ -40,21 +40,30 @@ spec:
             set -e
             echo "Agent Sandbox starting..."
 
-            # Install Claude Code if not present
+            # Install Claude Code if not present (non-interactive)
             if ! command -v claude &> /dev/null; then
               echo "Installing Claude Code..."
-              curl -fsSL https://claude.ai/install.sh | bash || echo "Claude Code install failed, continuing..."
+              # Use npm install as fallback since install.sh may hang
+              npm install -g @anthropic-ai/claude-code 2>/dev/null || {
+                echo "npm install failed, trying curl..."
+                curl -fsSL https://claude.ai/install.sh | TERM=dumb bash 2>/dev/null || echo "Claude Code install failed, continuing..."
+              }
             fi
 
-            # Install bun and ccstatusline for status line support
+            # Install bun for ccstatusline
             if ! command -v bun &> /dev/null; then
               echo "Installing Bun..."
-              curl -fsSL https://bun.sh/install | bash || echo "Bun install failed, continuing..."
-              export BUN_INSTALL="/root/.bun"
-              export PATH="$BUN_INSTALL/bin:$PATH"
+              curl -fsSL https://bun.sh/install | TERM=dumb bash 2>/dev/null || echo "Bun install failed, continuing..."
             fi
-            # Setup ccstatusline (run with bunx)
-            echo "export PATH=\"/root/.bun/bin:\$PATH\"" >> /home/node/.zshenv
+
+            # Install ccstatusline globally with bunx
+            if command -v /root/.bun/bin/bun &> /dev/null; then
+              echo "Installing ccstatusline..."
+              /root/.bun/bin/bunx ccstatusline@latest 2>/dev/null || echo "ccstatusline install failed, continuing..."
+            fi
+
+            # Add bun and claude to PATH for node user
+            echo "export PATH=\"/root/.bun/bin:/root/.claude/local/bin:\$PATH\"" >> /home/node/.zshenv
 
             # Create required directories
             mkdir -p /workspace /commandhistory /home/node/.claude /run/sshd
