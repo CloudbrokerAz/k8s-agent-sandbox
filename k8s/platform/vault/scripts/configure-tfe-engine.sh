@@ -69,25 +69,50 @@ kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
 "
 
 echo ""
-echo "→ Creating organization role..."
+echo "→ Creating TFE roles..."
 read -p "Enter your TFC/TFE organization name: " TFE_ORG
 
-kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
-    export VAULT_TOKEN='$VAULT_TOKEN'
+echo ""
+echo "Token type options:"
+echo "  1. Team token (recommended for CI/CD and agent-sandbox)"
+echo "  2. Organization token"
+echo ""
+read -p "Select token type [1]: " TOKEN_TYPE_CHOICE
+TOKEN_TYPE_CHOICE="${TOKEN_TYPE_CHOICE:-1}"
 
-    # Create role for organization tokens
-    vault write terraform/role/org-token \
-        organization='$TFE_ORG' \
-        token_type=organization \
-        ttl=1h \
-        max_ttl=24h
+if [[ "$TOKEN_TYPE_CHOICE" == "1" ]]; then
+    read -p "Enter Team ID (from TFE team settings URL): " TEAM_ID
+    if [[ -z "$TEAM_ID" ]]; then
+        echo "❌ Team ID is required for team tokens"
+        exit 1
+    fi
 
-    # Create role for user tokens (requires user_id)
-    # vault write terraform/role/user-token \
-    #     user_id='<user-id>' \
-    #     token_type=user \
-    #     ttl=1h
-"
+    kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
+        export VAULT_TOKEN='$VAULT_TOKEN'
+
+        # Create role for team tokens (recommended)
+        vault write terraform/role/team-token \
+            organization='$TFE_ORG' \
+            team_id='$TEAM_ID' \
+            ttl=1h \
+            max_ttl=24h
+    "
+    ROLE_NAME="team-token"
+    echo "✅ Created team-token role"
+else
+    kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
+        export VAULT_TOKEN='$VAULT_TOKEN'
+
+        # Create role for organization tokens
+        vault write terraform/role/org-token \
+            organization='$TFE_ORG' \
+            token_type=organization \
+            ttl=1h \
+            max_ttl=24h
+    "
+    ROLE_NAME="org-token"
+    echo "✅ Created org-token role"
+fi
 
 echo ""
 echo "→ Creating Vault policy for TFE access..."
@@ -95,7 +120,10 @@ kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
     export VAULT_TOKEN='$VAULT_TOKEN'
 
     vault policy write tfe-secrets - <<'POLICY'
-# Read TFE tokens
+# Read TFE tokens (both team and org)
+path \"terraform/creds/team-token\" {
+  capabilities = [\"read\"]
+}
 path \"terraform/creds/org-token\" {
   capabilities = [\"read\"]
 }
@@ -114,6 +142,9 @@ path \"secret/data/devenv/*\" {
 path \"ssh/sign/devenv-access\" {
   capabilities = [\"create\", \"update\"]
 }
+path \"terraform/creds/team-token\" {
+  capabilities = [\"read\"]
+}
 path \"terraform/creds/org-token\" {
   capabilities = [\"read\"]
 }
@@ -129,19 +160,23 @@ echo "Configuration:"
 echo "  - Engine path: terraform/"
 echo "  - TFE Host: $TFE_HOST"
 echo "  - Organization: $TFE_ORG"
-echo "  - Role: org-token (generates org-level tokens)"
+echo "  - Role: $ROLE_NAME"
 echo ""
 echo "Usage:"
 echo "  # Generate a dynamic TFE token"
-echo "  vault read terraform/creds/org-token"
+echo "  vault read terraform/creds/$ROLE_NAME"
 echo ""
 echo "  # Use in Terraform"
-echo "  export TFE_TOKEN=\$(vault read -field=token terraform/creds/org-token)"
+echo "  export TFE_TOKEN=\$(vault read -field=token terraform/creds/$ROLE_NAME)"
 echo ""
-echo "VSO Integration:"
-echo "  Use VaultDynamicSecret to sync TFE tokens to Kubernetes:"
-echo ""
-cat << 'YAML'
+
+# Create VaultDynamicSecret manifest
+MANIFEST_DIR="$(dirname "$SCRIPT_DIR")/../vault-secrets-operator/manifests"
+mkdir -p "$MANIFEST_DIR"
+
+cat > "$MANIFEST_DIR/05-vaultdynamicsecret-tfe.yaml" << EOF
+# VaultDynamicSecret for TFE token injection into agent-sandbox
+# This syncs a dynamic TFE token from Vault to a Kubernetes secret
 apiVersion: secrets.hashicorp.com/v1beta1
 kind: VaultDynamicSecret
 metadata:
@@ -150,9 +185,49 @@ metadata:
 spec:
   vaultAuthRef: devenv-vault-auth
   mount: terraform
-  path: creds/org-token
+  path: creds/${ROLE_NAME}
   destination:
     name: tfe-dynamic-token
     create: true
+    transformation:
+      excludeRaw: true
+      templates:
+        TFE_TOKEN:
+          text: "{{ .Secrets.token }}"
   renewalPercent: 67
+EOF
+
+echo "Created VaultDynamicSecret manifest: $MANIFEST_DIR/05-vaultdynamicsecret-tfe.yaml"
+echo ""
+
+# Apply the manifest
+read -p "Apply VaultDynamicSecret now? (yes/no) [yes]: " APPLY_NOW
+APPLY_NOW="${APPLY_NOW:-yes}"
+
+if [[ "$APPLY_NOW" == "yes" ]]; then
+    kubectl apply -f "$MANIFEST_DIR/05-vaultdynamicsecret-tfe.yaml"
+    echo "✅ VaultDynamicSecret applied"
+    echo ""
+    echo "The TFE token will be synced to secret 'tfe-dynamic-token' in namespace 'devenv'"
+    echo "with the key 'TFE_TOKEN'"
+fi
+
+echo ""
+echo "To use in agent-sandbox, add this to your StatefulSet:"
+echo ""
+cat << 'YAML'
+envFrom:
+  - secretRef:
+      name: tfe-dynamic-token
+YAML
+echo ""
+echo "Or reference directly:"
+echo ""
+cat << 'YAML'
+env:
+  - name: TFE_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: tfe-dynamic-token
+        key: TFE_TOKEN
 YAML

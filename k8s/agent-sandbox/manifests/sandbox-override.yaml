@@ -49,10 +49,17 @@ spec:
               name: devenv-secrets
               key: GITHUB_TOKEN
               optional: true
+        # TFE_TOKEN from Vault dynamic secret (auto-renewed)
         - name: TFE_TOKEN
           valueFrom:
             secretKeyRef:
-              name: devenv-secrets
+              name: tfe-dynamic-token
+              key: TFE_TOKEN
+              optional: true
+        - name: TF_TOKEN_app_terraform_io
+          valueFrom:
+            secretKeyRef:
+              name: tfe-dynamic-token
               key: TFE_TOKEN
               optional: true
 
