@@ -640,7 +640,7 @@ path \"ssh/sign/devenv-access\" { capabilities = [\"create\", \"update\"] }
 path \"terraform/creds/*\" { capabilities = [\"read\"] }
 POLICY
             vault write auth/kubernetes/role/vault-secrets-operator bound_service_account_names=vault-secrets-operator-controller-manager bound_service_account_namespaces=vault-secrets-operator-system policies=vault-secrets-operator ttl=1h
-            vault write auth/kubernetes/role/devenv-secrets bound_service_account_names='*' bound_service_account_namespaces=devenv policies=devenv-secrets ttl=1h
+            vault write auth/kubernetes/role/devenv-secrets bound_service_account_names='*' bound_service_account_namespaces=devenv,vault-secrets-operator-system policies=devenv-secrets ttl=1h
         " 2>/dev/null
 
         # Store initial credentials in Vault KV (placeholder values)

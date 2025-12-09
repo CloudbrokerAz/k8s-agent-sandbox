@@ -121,10 +121,11 @@ kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
         policies=vault-secrets-operator \
         ttl=1h
 
-    # Role for devenv
+    # Role for devenv - accept all service accounts in devenv namespace
+    # This allows VSO to authenticate on behalf of the devenv namespace
     vault write auth/kubernetes/role/devenv-secrets \
-        bound_service_account_names=default \
-        bound_service_account_namespaces=devenv \
+        bound_service_account_names='*' \
+        bound_service_account_namespaces=devenv,vault-secrets-operator-system \
         policies=devenv-secrets \
         ttl=1h
 "
@@ -142,17 +143,20 @@ kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
 echo "✅ KV secrets engine enabled"
 echo ""
 
-# Create example secret
+# Create example secret with correct key names for VaultStaticSecret templates
 echo "→ Creating example secret..."
 kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "
     export VAULT_TOKEN='$VAULT_TOKEN'
     vault kv put secret/devenv/credentials \
-        username=devenv-user \
-        password=example-password-change-me \
-        api_key=example-api-key
+        github_token=placeholder-update-me \
+        langfuse_host= \
+        langfuse_public_key= \
+        langfuse_secret_key=
 "
 
 echo "✅ Example secret created at secret/devenv/credentials"
+echo "   Keys: github_token, langfuse_host, langfuse_public_key, langfuse_secret_key"
+echo "   Update with real values using: ./configure-secrets.sh"
 echo ""
 
 echo "=========================================="
