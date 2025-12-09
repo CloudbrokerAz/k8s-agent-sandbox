@@ -16,9 +16,9 @@ spec:
         app: boundary-controller
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 100
-        fsGroup: 100
+        runAsNonRoot: false
+        runAsUser: 0
+        fsGroup: 0
       initContainers:
         # Wait for PostgreSQL to be ready
         - name: wait-for-postgres
