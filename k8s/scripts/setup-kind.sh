@@ -48,13 +48,38 @@ echo "✅ kubectl installed"
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
     echo ""
     echo "⚠️  Cluster '$CLUSTER_NAME' already exists"
-    read -p "Delete and recreate? (yes/no): " confirm
-    if [[ "$confirm" == "yes" ]]; then
-        kind delete cluster --name "$CLUSTER_NAME"
+
+    # Ensure kubeconfig is exported for existing cluster
+    echo "Exporting kubeconfig for existing cluster..."
+    kind export kubeconfig --name "$CLUSTER_NAME"
+
+    # Check if cluster is accessible
+    if kubectl cluster-info &> /dev/null; then
+        echo "✅ Cluster is accessible"
+
+        # Check if interactive or if RECREATE is set
+        if [[ "${RECREATE:-false}" == "true" ]]; then
+            echo "RECREATE=true, deleting and recreating cluster..."
+            kind delete cluster --name "$CLUSTER_NAME"
+        elif [[ -t 0 ]]; then
+            # Interactive mode - ask user
+            read -p "Delete and recreate? (yes/no): " confirm
+            if [[ "$confirm" == "yes" ]]; then
+                kind delete cluster --name "$CLUSTER_NAME"
+            else
+                echo "Using existing cluster"
+                kubectl cluster-info
+                exit 0
+            fi
+        else
+            # Non-interactive mode - use existing cluster
+            echo "Using existing cluster (non-interactive mode)"
+            kubectl cluster-info
+            exit 0
+        fi
     else
-        echo "Using existing cluster"
-        kubectl cluster-info --context "kind-${CLUSTER_NAME}"
-        exit 0
+        echo "⚠️  Cluster exists but is not accessible, recreating..."
+        kind delete cluster --name "$CLUSTER_NAME"
     fi
 fi
 
