@@ -277,14 +277,14 @@ else
     if [[ "$CHECK_ONLY" == "true" ]]; then
         echo "MISSING"
         echo "  Install: https://kubernetes.io/docs/tasks/tools/"
-        ((ERRORS++))
+        ERRORS=$((ERRORS + 1))
     else
         echo "MISSING - installing..."
         if install_kubectl; then
             VERSION=$(kubectl version --client -o json 2>/dev/null | jq -r '.clientVersion.gitVersion' 2>/dev/null || echo "installed")
             echo "  Installed: $VERSION"
         else
-            ((ERRORS++))
+            ERRORS=$((ERRORS + 1))
         fi
     fi
 fi
