@@ -181,11 +181,17 @@ echo ""
 echo "--- Keycloak Connectivity ---"
 if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
     # Test OIDC discovery endpoint via curl pod
-    DISCOVERY_STATUS=$(kubectl run curl-oidc-boundary-test --image=curlimages/curl --rm -i --restart=Never -- \
-        curl -s -o /dev/null -w "%{http_code}" "http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox/.well-known/openid-configuration" 2>/dev/null || echo "000")
+    # Use --quiet to suppress pod lifecycle messages, redirect stderr to /dev/null
+    DISCOVERY_STATUS=$(kubectl run curl-oidc-boundary-test --image=curlimages/curl --rm -i --restart=Never --quiet -- \
+        curl -s -o /dev/null -w "%{http_code}" "http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox/.well-known/openid-configuration" 2>/dev/null | tr -d '[:space:]' || echo "000")
+
+    # Extract just the HTTP status code (last 3 digits)
+    DISCOVERY_STATUS="${DISCOVERY_STATUS: -3}"
 
     if [[ "$DISCOVERY_STATUS" == "200" ]]; then
         test_pass "OIDC discovery endpoint accessible (HTTP 200)"
+    elif [[ "$DISCOVERY_STATUS" == "404" ]]; then
+        test_warn "OIDC realm 'agent-sandbox' not configured (HTTP 404) - run configure-realm.sh"
     else
         test_warn "OIDC discovery endpoint not accessible (HTTP $DISCOVERY_STATUS) - run configure-realm.sh"
     fi

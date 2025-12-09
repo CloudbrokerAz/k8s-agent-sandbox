@@ -741,7 +741,7 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
             echo ""
             echo "Configuring Keycloak realm and demo users..."
             sleep 10  # Give Keycloak time to fully initialize
-            "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" || echo "⚠️  Keycloak realm configuration failed (may need manual setup)"
+            "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" --in-cluster || echo "⚠️  Keycloak realm configuration failed (may need manual setup)"
         fi
 
         echo "✅ Keycloak deployed"

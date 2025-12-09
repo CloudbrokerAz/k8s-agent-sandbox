@@ -9,12 +9,21 @@ flowchart TB
 
     subgraph K8s["Kubernetes Cluster"]
         subgraph devenv["devenv namespace"]
-            DevEnv["Agent Sandbox<br/>StatefulSet<br/>(devenv-0, devenv-1, ...)"]
-            DevEnvSVC["devenv Service<br/>:22 SSH"]
+            subgraph SandboxCRD["Claude Code Sandbox (Sandbox CRD)"]
+                EnvBuilder["envbuilder<br/>Container"]
+                DevContainer["DevContainer<br/>(code-server + Claude Code)"]
+            end
+            SandboxSVC["claude-code-sandbox Service<br/>:22 SSH, :13337 code-server"]
             DevEnvSecrets["devenv-vault-secrets<br/>(VSO Synced)"]
             TFEToken["tfe-dynamic-token<br/>(Vault Dynamic)"]
             SSHCA["vault-ssh-ca<br/>(CA Public Key)"]
             VaultTLSCA["vault-tls-ca<br/>(TLS Certificate)"]
+            subgraph SandboxPVCs["Persistent Storage"]
+                WorkspacePVC["workspaces-pvc<br/>(20Gi)"]
+                ConfigPVC["claude-config-pvc<br/>(1Gi)"]
+                HistoryPVC["bash-history-pvc<br/>(1Gi)"]
+            end
+            DevContainerCM["devcontainer ConfigMap<br/>(devcontainer.json + entrypoint.sh)"]
         end
 
         subgraph vault["vault namespace"]
@@ -54,6 +63,10 @@ flowchart TB
         subgraph vso["vault-secrets-operator-system namespace"]
             VSOController["VSO Controller<br/>Manager"]
         end
+
+        subgraph agentsandbox["agent-sandbox-system namespace"]
+            SandboxController["Sandbox Controller<br/>Manager"]
+        end
     end
 
     %% User Access Flows
@@ -70,8 +83,8 @@ flowchart TB
     %% Boundary SSH Access Flow (via Worker)
     BoundaryCLI -->|"5. Connect SSH"| Controller
     Controller -->|"6. Authorize Session"| Worker
-    Worker -->|"7. SSH Proxy"| DevEnvSVC
-    DevEnvSVC --> DevEnv
+    Worker -->|"7. SSH Proxy"| SandboxSVC
+    SandboxSVC --> DevContainer
 
     %% VS Code SSH via Boundary (through local proxy)
     VSCode -->|"SSH to localhost:2222"| BoundaryCLI
@@ -103,11 +116,22 @@ flowchart TB
     VaultPod --> TFE
     VaultSVC --> VaultPod
 
-    %% DevEnv Secret Consumption
-    DevEnv -->|"GITHUB_TOKEN"| DevEnvSecrets
-    DevEnv -->|"TFE_TOKEN"| TFEToken
-    DevEnv -->|"SSH CA Trust"| SSHCA
-    DevEnv -->|"TLS Trust"| VaultTLSCA
+    %% Sandbox Secret Consumption
+    DevContainer -->|"GITHUB_TOKEN"| DevEnvSecrets
+    DevContainer -->|"TFE_TOKEN"| TFEToken
+    DevContainer -->|"SSH CA Trust"| SSHCA
+    DevContainer -->|"TLS Trust"| VaultTLSCA
+
+    %% Sandbox Internal Flow
+    EnvBuilder -->|"Builds"| DevContainer
+    DevContainer -->|"Mounts"| DevContainerCM
+    DevContainer -->|"Uses"| WorkspacePVC
+    DevContainer -->|"Uses"| ConfigPVC
+    DevContainer -->|"Uses"| HistoryPVC
+
+    %% Sandbox Controller Flow
+    SandboxController -->|"Watch Sandbox CRD"| devenv
+    SandboxController -->|"Create/Manage Pod"| SandboxCRD
 
     %% Boundary Internal
     Controller --> Postgres
@@ -122,14 +146,18 @@ flowchart TB
     classDef vault fill:#FFD700,stroke:#FFA000,color:#000
     classDef boundary fill:#F06292,stroke:#C2185B,color:#fff
     classDef keycloak fill:#00BCD4,stroke:#00838F,color:#fff
-    classDef devenv fill:#9C27B0,stroke:#6A1B9A,color:#fff
+    classDef sandbox fill:#9C27B0,stroke:#6A1B9A,color:#fff
     classDef vso fill:#FF9800,stroke:#E65100,color:#fff
     classDef secret fill:#E8F5E9,stroke:#4CAF50,color:#000
+    classDef storage fill:#607D8B,stroke:#455A64,color:#fff
+    classDef config fill:#8BC34A,stroke:#558B2F,color:#fff
 
     class User,VSCode,BoundaryCLI,VaultCLI external
     class VaultPod,VaultSVC,KV,SSH,TFE vault
     class Controller,Worker,Postgres,Scopes,Targets,CredStore,CredLib boundary
     class KeycloakPod,KeycloakDB,KeycloakSVC,Realm,Client,Users,Groups keycloak
-    class DevEnv,DevEnvSVC devenv
-    class VSOController vso
+    class EnvBuilder,DevContainer,SandboxSVC sandbox
+    class VSOController,SandboxController vso
     class DevEnvSecrets,TFEToken,SSHCA,VaultTLSCA secret
+    class WorkspacePVC,ConfigPVC,HistoryPVC storage
+    class DevContainerCM config

@@ -3,11 +3,36 @@ set -e
 
 # Keycloak Realm Configuration Script
 # Creates the agent-sandbox realm with Boundary client and demo users
+#
+# Usage:
+#   ./configure-realm.sh                    # Uses localhost (requires port-forward)
+#   ./configure-realm.sh --in-cluster       # Uses in-cluster service URL
+#   KEYCLOAK_URL=http://... ./configure-realm.sh  # Custom URL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
-ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
-ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin123!@#}"
+KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-keycloak}"
+
+# Detect in-cluster mode
+IN_CLUSTER="${IN_CLUSTER:-false}"
+if [[ "$1" == "--in-cluster" ]] || [[ "$1" == "-i" ]]; then
+    IN_CLUSTER="true"
+fi
+
+# Set Keycloak URL based on mode
+if [[ "$IN_CLUSTER" == "true" ]]; then
+    KEYCLOAK_URL="${KEYCLOAK_URL:-http://keycloak.${KEYCLOAK_NAMESPACE}.svc.cluster.local:8080}"
+else
+    KEYCLOAK_URL="${KEYCLOAK_URL:-http://localhost:8080}"
+fi
+
+# Get admin credentials from K8s secret if available
+if kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
+    ADMIN_USER="${KEYCLOAK_ADMIN:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.admin-user}' 2>/dev/null | base64 -d || echo "admin")}"
+    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d || echo "admin123!@#")}"
+else
+    ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
+    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin123!@#}"
+fi
 
 # Realm configuration
 REALM_NAME="agent-sandbox"
@@ -15,13 +40,14 @@ CLIENT_ID="boundary"
 CLIENT_SECRET="boundary-client-secret-change-me"
 
 # Boundary redirect URIs (update with your Boundary URLs)
-BOUNDARY_URL="${BOUNDARY_URL:-http://localhost:9200}"
+BOUNDARY_URL="${BOUNDARY_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
 REDIRECT_URIS="[\"${BOUNDARY_URL}/v1/auth-methods/oidc:authenticate:callback\"]"
 
 echo "========================================="
 echo "Configuring Keycloak Realm"
 echo "========================================="
 echo ""
+echo "Mode: $([ "$IN_CLUSTER" == "true" ] && echo "In-Cluster" || echo "Local (port-forward)")"
 echo "Keycloak URL: ${KEYCLOAK_URL}"
 echo "Realm: ${REALM_NAME}"
 echo "Client ID: ${CLIENT_ID}"
@@ -31,6 +57,30 @@ echo ""
 if ! command -v jq &> /dev/null; then
     echo "Warning: jq is not installed. Install it for better output formatting."
 fi
+
+# Function to make API calls (supports in-cluster via kubectl run)
+api_call() {
+    local method="$1"
+    local endpoint="$2"
+    local data="${3:-}"
+    local auth_header="${4:-}"
+
+    if [[ "$IN_CLUSTER" == "true" ]]; then
+        # Use kubectl run with curl for in-cluster calls
+        local curl_args="-s -X $method"
+        [[ -n "$auth_header" ]] && curl_args="$curl_args -H 'Authorization: Bearer $auth_header'"
+        [[ -n "$data" ]] && curl_args="$curl_args -H 'Content-Type: application/json' -d '$data'"
+
+        kubectl run keycloak-api-call-$RANDOM --image=curlimages/curl --rm -i --restart=Never --quiet -- \
+            sh -c "curl $curl_args '${KEYCLOAK_URL}${endpoint}'" 2>/dev/null | grep -v "^pod "
+    else
+        # Direct curl for local calls
+        local curl_cmd="curl -s -X $method"
+        [[ -n "$auth_header" ]] && curl_cmd="$curl_cmd -H 'Authorization: Bearer $auth_header'"
+        [[ -n "$data" ]] && curl_cmd="$curl_cmd -H 'Content-Type: application/json' -d '$data'"
+        eval "$curl_cmd '${KEYCLOAK_URL}${endpoint}'"
+    fi
+}
 
 # Function to get admin token
 get_admin_token() {
