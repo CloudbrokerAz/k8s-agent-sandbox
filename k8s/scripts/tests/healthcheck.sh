@@ -7,11 +7,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-# Source configuration
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
-    source "$SCRIPT_DIR/.env"
-elif [[ -f "$SCRIPT_DIR/platform.env.example" ]]; then
-    source "$SCRIPT_DIR/platform.env.example"
+# Source configuration (look in parent scripts directory)
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+    source "$SCRIPT_DIR/../.env"
+elif [[ -f "$SCRIPT_DIR/../platform.env.example" ]]; then
+    source "$SCRIPT_DIR/../platform.env.example"
 fi
 
 # Defaults
@@ -161,11 +161,18 @@ VAULT_SEALED=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -forma
 if [[ "$VAULT_SEALED" == "false" ]]; then
     check_pass "Vault unsealed and ready"
 else
-    check_fail "Vault is sealed"
+    check_fail "Vault is sealed (run: ./platform/vault/scripts/unseal-vault.sh)"
 fi
 
 # Check secrets engines
-VAULT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+VAULT_KEYS_FILE="$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+if [[ -f "$VAULT_KEYS_FILE" ]]; then
+    VAULT_TOKEN=$(grep "Root Token:" "$VAULT_KEYS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+else
+    VAULT_TOKEN=""
+    check_warn "Vault keys file not found (Vault not initialized)"
+fi
+
 if [[ -n "$VAULT_TOKEN" ]]; then
     # Check KV engine
     if kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_TOKEN' vault secrets list" 2>/dev/null | grep -q "secret/"; then

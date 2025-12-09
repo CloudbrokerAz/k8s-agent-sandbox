@@ -10,11 +10,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
-# Source configuration
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
-    source "$SCRIPT_DIR/.env"
-elif [[ -f "$SCRIPT_DIR/platform.env.example" ]]; then
-    source "$SCRIPT_DIR/platform.env.example"
+# Source configuration (look in parent scripts directory)
+if [[ -f "$SCRIPT_DIR/../.env" ]]; then
+    source "$SCRIPT_DIR/../.env"
+elif [[ -f "$SCRIPT_DIR/../platform.env.example" ]]; then
+    source "$SCRIPT_DIR/../platform.env.example"
 fi
 
 DEVENV_NAMESPACE="${DEVENV_NAMESPACE:-devenv}"
