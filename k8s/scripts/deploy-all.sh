@@ -106,7 +106,7 @@ echo "Parallel mode: $PARALLEL"
 echo ""
 
 # Auto-detect resume if RESUME=auto or existing deployments found
-if [[ "$RESUME" == "auto" ]] || [[ -n "$EXISTING" ]]; then
+if [[ "$RESUME" == "auto" ]] || [[ -n "${EXISTING:-}" ]]; then
     echo "Detecting existing deployments..."
     auto_detect_resume
     echo ""

@@ -24,8 +24,8 @@ spec:
 
       containers:
         - name: devenv
-          image: srlynch1/terraform-ai-tools:latest
-          imagePullPolicy: Always
+          image: agent-sandbox:latest
+          imagePullPolicy: IfNotPresent
 
           # Startup script to install tools
           command: ["/bin/bash", "-c"]
