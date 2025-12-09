@@ -96,6 +96,25 @@ This will deploy:
 2. **Vault** - Secrets management (auto-initialized)
 3. **Boundary** - Secure access management
 4. **VSO** - Automatic secret synchronization
+5. **Keycloak** - Identity provider (optional)
+
+#### Deployment Features
+
+The deploy script supports advanced options:
+
+```bash
+# Resume a partial deployment (skips already-deployed components)
+RESUME=auto ./deploy-all.sh
+
+# Run deployments in parallel (faster but more resource-intensive)
+PARALLEL=true ./deploy-all.sh
+
+# Skip specific components
+SKIP_VAULT=true SKIP_BOUNDARY=true ./deploy-all.sh
+
+# Combined options
+RESUME=auto PARALLEL=true ./deploy-all.sh
+```
 
 ### Option 2: Agent Sandbox Only
 
@@ -199,7 +218,7 @@ storageClassName: your-storage-class  # e.g., gp2, ebs, nfs, etc.
 
 ### Custom Storage Sizes
 
-Edit `k8s/manifests/05-statefulset.yaml`:
+Edit `k8s/agent-sandbox/manifests/05-statefulset.yaml`:
 
 ```yaml
 volumeClaimTemplates:
@@ -236,7 +255,7 @@ kubectl port-forward -n devenv devenv-0 8080:8080
 
 #### Option 2: LoadBalancer (Cloud)
 
-Edit `k8s/manifests/06-service.yaml`:
+Edit `k8s/agent-sandbox/manifests/06-service.yaml`:
 
 ```yaml
 spec:
@@ -430,7 +449,7 @@ kubectl delete secret devenv-secrets -n devenv
    docker scan your-username/terraform-devenv:latest
    ```
 
-5. **Pod Security**: The StatefulSet uses a restrictive security context. Do not enable privileged mode in production.
+5. **Pod Security**: The DevEnv StatefulSet uses a relaxed security context (runs as root) for development convenience. For production deployments, consider tightening the security context in `agent-sandbox/manifests/05-statefulset.yaml`.
 
 ## Cost Optimization
 

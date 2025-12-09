@@ -28,9 +28,24 @@ agent-sandbox/
 - **Isolated Environments**: Each pod runs independently with its own filesystem
 - **Persistent Storage**: Work survives pod restarts via PersistentVolumeClaims
 - **Pre-configured Tools**: Git, Terraform, AWS CLI, kubectl, and development tools
+- **Auto-installed Tools**: Claude Code, Bun, and ccstatusline installed at startup
 - **Secret Injection**: Credentials synced from Vault via VSO
 - **Network Isolation**: Controlled ingress/egress via NetworkPolicies
 - **SSH Access**: Optional SSH access via Boundary
+
+## Pre-installed Tools
+
+Each devenv pod comes with:
+
+| Tool | Description |
+|------|-------------|
+| **Claude Code** | AI-powered coding assistant CLI |
+| **Terraform** | Infrastructure as code tool |
+| **AWS CLI** | AWS command-line interface |
+| **Bun** | Fast JavaScript runtime and package manager |
+| **ccstatusline** | Claude Code status line customization |
+| **Git** | Version control |
+| **kubectl** | Kubernetes CLI |
 
 ## Quick Start
 
@@ -97,12 +112,25 @@ Default resource allocation per pod:
 ```yaml
 resources:
   requests:
-    memory: "512Mi"
-    cpu: "250m"
-  limits:
     memory: "2Gi"
-    cpu: "1000m"
+    cpu: "500m"
+  limits:
+    memory: "4Gi"
+    cpu: "2000m"
 ```
+
+### Security Context
+
+The devenv pods run with a relaxed security context for development convenience:
+
+```yaml
+securityContext:
+  runAsUser: 0      # Root user for full permissions
+  runAsGroup: 0
+  fsGroup: 0
+```
+
+For production deployments, consider tightening permissions.
 
 ### Storage
 

@@ -2,7 +2,36 @@
 set -euo pipefail
 
 # Master deployment script for the complete K8s platform
-# Deploys: DevEnv, Boundary, Vault, and Vault Secrets Operator
+# Deploys: DevEnv, Boundary, Vault, Vault Secrets Operator, and Keycloak
+#
+# USAGE:
+#   ./deploy-all.sh                     # Full deployment
+#   RESUME=auto ./deploy-all.sh         # Resume partial deployment (skip running components)
+#   PARALLEL=true ./deploy-all.sh       # Run independent deployments in parallel
+#   SKIP_VAULT=true ./deploy-all.sh     # Skip specific components
+#
+# ENVIRONMENT VARIABLES:
+#   RESUME=auto|false     - Auto-detect and skip already-running components
+#   PARALLEL=true|false   - Run independent deployments concurrently (default: true)
+#   SKIP_DEVENV=true      - Skip Agent Sandbox deployment
+#   SKIP_VAULT=true       - Skip Vault deployment
+#   SKIP_BOUNDARY=true    - Skip Boundary deployment
+#   SKIP_VSO=true         - Skip Vault Secrets Operator deployment
+#   BUILD_IMAGE=false     - Skip Docker image build
+#   DEBUG=true            - Enable verbose output
+#
+# EXAMPLES:
+#   # Fresh full deployment
+#   ./deploy-all.sh
+#
+#   # Resume after failure (skips running components)
+#   RESUME=auto ./deploy-all.sh
+#
+#   # Deploy only DevEnv and Vault
+#   SKIP_BOUNDARY=true SKIP_VSO=true ./deploy-all.sh
+#
+#   # Fast parallel deployment with resume
+#   RESUME=auto PARALLEL=true ./deploy-all.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(dirname "$SCRIPT_DIR")"

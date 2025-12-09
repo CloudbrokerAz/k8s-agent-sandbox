@@ -52,8 +52,19 @@ Boundary provides identity-based access management for dynamic infrastructure. T
 
 ## Quick Start
 
+### Option 1: Full Platform Deployment (Recommended)
+
+Boundary is deployed automatically as part of the full platform:
+
 ```bash
-cd /workspace/k8s/boundary/scripts
+cd /workspace/k8s/scripts
+./deploy-all.sh
+```
+
+### Option 2: Standalone Deployment
+
+```bash
+cd /workspace/k8s/platform/boundary/scripts
 
 # 1. Create secrets (database credentials and KMS keys)
 ./create-boundary-secrets.sh
@@ -64,6 +75,38 @@ cd /workspace/k8s/boundary/scripts
 # 3. Initialize configuration (interactive guide)
 ./init-boundary.sh
 ```
+
+## Configuration Notes
+
+### HCL Configuration Format
+
+Boundary uses HCL (HashiCorp Configuration Language) for its configuration. The configuration must use **multi-line format** (not single-line with semicolons):
+
+```hcl
+# Correct format
+listener "tcp" {
+  address = "0.0.0.0:9200"
+  purpose = "api"
+  tls_disable = true
+}
+
+# Incorrect format (will cause parsing errors)
+# listener "tcp" { address = "0.0.0.0:9200"; purpose = "api"; tls_disable = true }
+```
+
+### Worker Configuration
+
+The Boundary worker uses `initial_upstreams` to connect to the controller:
+
+```hcl
+worker {
+  name = "kubernetes-worker"
+  initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
+  public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
+}
+```
+
+Note: Older Boundary versions used `controllers` instead of `initial_upstreams`.
 
 ## Directory Structure
 
