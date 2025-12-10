@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Deploy HashiCorp Boundary to Kubernetes
-# Following pattern from /workspace/k8s/scripts/deploy.sh
+# Following pattern from scripts/deploy.sh in the k8s root
 
 NAMESPACE="${1:-boundary}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

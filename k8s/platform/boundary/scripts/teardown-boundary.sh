@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Teardown Boundary deployment
-# Following pattern from /workspace/k8s/scripts/teardown.sh
+# Following pattern from scripts/teardown.sh in the k8s root
 
 NAMESPACE="${1:-boundary}"
 

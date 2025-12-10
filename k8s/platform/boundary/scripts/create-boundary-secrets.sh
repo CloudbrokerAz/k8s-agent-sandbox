@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Create Boundary secrets for Kubernetes deployment
-# Following pattern from /workspace/k8s/scripts/create-secrets.sh
+# Following pattern from scripts/create-secrets.sh in the k8s root
 
 NAMESPACE="${1:-boundary}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
