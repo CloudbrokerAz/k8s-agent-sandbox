@@ -143,6 +143,36 @@ wait_parallel() {
     fi
 }
 
+# Get Vault status with retries
+# Returns valid JSON or default on failure
+# Usage: VAULT_STATUS=$(get_vault_status [max_attempts] [sleep_interval])
+get_vault_status() {
+    local max_attempts="${1:-5}"
+    local sleep_interval="${2:-5}"
+    local attempt=1
+    local vault_output=""
+
+    while [[ $attempt -le $max_attempts ]]; do
+        vault_output=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null) || true
+
+        # Check if we got valid JSON
+        if echo "$vault_output" | jq -e . >/dev/null 2>&1; then
+            echo "$vault_output"
+            return 0
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            echo "⚠️  Vault not responding (attempt $attempt/$max_attempts), waiting ${sleep_interval}s..." >&2
+            sleep "$sleep_interval"
+        fi
+        ((attempt++))
+    done
+
+    # Return default if all attempts failed
+    echo '{"initialized":false,"sealed":true}'
+    return 1
+}
+
 # Check and install prerequisites
 echo "Checking prerequisites..."
 
@@ -458,14 +488,8 @@ if [[ "$SKIP_VAULT" != "true" ]]; then
 
     # Initialize and/or unseal Vault
     echo "Checking Vault status..."
-    sleep 5
-    VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>&1) || true
-    # Validate JSON output
-    if ! echo "$VAULT_STATUS" | jq -e . >/dev/null 2>&1; then
-        echo "⚠️  Vault not responding properly, waiting 10s..."
-        sleep 10
-        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>&1) || echo '{"initialized":false,"sealed":true}'
-    fi
+    sleep 3
+    VAULT_STATUS=$(get_vault_status 5 5)  # 5 attempts, 5 seconds apart
     INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
     SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
 
@@ -596,15 +620,9 @@ else
     # Even when skipping deployment, ensure Vault is initialized and unsealed
     if kubectl get statefulset vault -n vault &>/dev/null; then
         echo "Checking Vault status..."
-        sleep 3
-        # Note: vault status returns exit code 2 when sealed, so we capture output first
-        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>&1) || true
-        # If output doesn't look like JSON, use default
-        if ! echo "$VAULT_STATUS" | jq -e . >/dev/null 2>&1; then
-            VAULT_STATUS='{"initialized":false,"sealed":true}'
-        fi
-        INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
-        SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed')
+        VAULT_STATUS=$(get_vault_status 5 5)  # 5 attempts, 5 seconds apart
+        INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
+        SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
 
         if [[ "$INITIALIZED" == "false" ]]; then
             echo "⚠️  Vault not initialized - initializing now..."
@@ -951,8 +969,8 @@ if [[ "$SKIP_VSO" != "true" ]]; then
     # Configure Vault for VSO - first ensure Vault is unsealed
     if [[ -n "$ROOT_TOKEN" ]]; then
         # Re-check if Vault needs unsealing (may have been sealed during pod restart)
-        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"sealed":true}')
-        SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed')
+        VAULT_STATUS=$(get_vault_status 3 3)  # Quick check: 3 attempts, 3 seconds apart
+        SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
         if [[ "$SEALED" == "true" ]]; then
             UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
             if [[ -n "$UNSEAL_KEY" ]]; then
