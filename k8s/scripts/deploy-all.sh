@@ -491,7 +491,8 @@ if [[ "$SKIP_VAULT" != "true" ]]; then
     sleep 3
     VAULT_STATUS=$(get_vault_status 5 5)  # 5 attempts, 5 seconds apart
     INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
-    SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
+    # Note: Cannot use '.sealed // true' because jq's // operator treats false as falsy
+    SEALED=$(echo "$VAULT_STATUS" | jq -r 'if .sealed == null then true else .sealed end')
 
     if [[ "$INITIALIZED" == "false" ]]; then
         echo "Initializing Vault..."
@@ -622,7 +623,8 @@ else
         echo "Checking Vault status..."
         VAULT_STATUS=$(get_vault_status 5 5)  # 5 attempts, 5 seconds apart
         INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
-        SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
+        # Note: Cannot use '.sealed // true' because jq's // operator treats false as falsy
+    SEALED=$(echo "$VAULT_STATUS" | jq -r 'if .sealed == null then true else .sealed end')
 
         if [[ "$INITIALIZED" == "false" ]]; then
             echo "⚠️  Vault not initialized - initializing now..."
@@ -970,7 +972,8 @@ if [[ "$SKIP_VSO" != "true" ]]; then
     if [[ -n "$ROOT_TOKEN" ]]; then
         # Re-check if Vault needs unsealing (may have been sealed during pod restart)
         VAULT_STATUS=$(get_vault_status 3 3)  # Quick check: 3 attempts, 3 seconds apart
-        SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
+        # Note: Cannot use '.sealed // true' because jq's // operator treats false as falsy
+    SEALED=$(echo "$VAULT_STATUS" | jq -r 'if .sealed == null then true else .sealed end')
         if [[ "$SEALED" == "true" ]]; then
             UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
             if [[ -n "$UNSEAL_KEY" ]]; then

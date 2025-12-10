@@ -160,7 +160,8 @@ fi
 VAULT_STATUS_JSON=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -format=json 2>&1) || true
 if echo "$VAULT_STATUS_JSON" | jq -e . >/dev/null 2>&1; then
     VAULT_INITIALIZED=$(echo "$VAULT_STATUS_JSON" | jq -r '.initialized // false')
-    VAULT_SEALED=$(echo "$VAULT_STATUS_JSON" | jq -r '.sealed // true')
+    # Note: Cannot use '.sealed // true' because jq's // operator treats false as falsy
+    VAULT_SEALED=$(echo "$VAULT_STATUS_JSON" | jq -r 'if .sealed == null then true else .sealed end')
 
     if [[ "$VAULT_INITIALIZED" == "false" ]]; then
         check_fail "Vault not initialized (run: ./platform/vault/scripts/init-vault.sh or re-run deploy-all.sh)"
