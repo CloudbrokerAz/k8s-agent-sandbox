@@ -45,8 +45,8 @@ fi
 
 # Get admin credentials from K8s secret if available
 if kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
-    ADMIN_USER="${KEYCLOAK_ADMIN:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.admin-user}' 2>/dev/null | base64 -d || echo "admin")}"
-    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d || echo "admin123!@#")}"
+    ADMIN_USER="${KEYCLOAK_ADMIN:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN}' 2>/dev/null | base64 -d || echo "admin")}"
+    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "admin123!@#")}"
 else
     ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
     ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin123!@#}"
@@ -128,7 +128,7 @@ kc_jq() {
 
 # Function to get admin token
 get_admin_token() {
-    echo "Authenticating as admin..."
+    echo "Authenticating as admin..." >&2
     local response
     local encoded_pass
     encoded_pass=$(url_encode "${ADMIN_PASS}")
@@ -192,29 +192,63 @@ fi
 echo "Successfully authenticated!"
 echo ""
 
+# Function to create realm with retry
+create_realm() {
+    local token="$1"
+    local realm_json
+    realm_json=$(cat <<EOF
+{
+    "realm": "${REALM_NAME}",
+    "enabled": true,
+    "displayName": "Agent Sandbox Platform",
+    "loginTheme": "keycloak",
+    "accessTokenLifespan": 3600,
+    "ssoSessionIdleTimeout": 1800,
+    "ssoSessionMaxLifespan": 36000
+}
+EOF
+)
+    kc_curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${KEYCLOAK_URL}/admin/realms" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Content-Type: application/json" \
+        -d "$realm_json" 2>&1
+}
+
 # Create realm
 echo "3. Creating realm: ${REALM_NAME}..."
-REALM_RESPONSE=$(kc_curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${KEYCLOAK_URL}/admin/realms" \
-    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{
-        \"realm\": \"${REALM_NAME}\",
-        \"enabled\": true,
-        \"displayName\": \"Agent Sandbox Platform\",
-        \"loginTheme\": \"keycloak\",
-        \"accessTokenLifespan\": 3600,
-        \"ssoSessionIdleTimeout\": 1800,
-        \"ssoSessionMaxLifespan\": 36000
-    }" 2>&1)
+REALM_RESPONSE=$(create_realm "$ACCESS_TOKEN")
 
 REALM_HTTP_CODE=$(echo "$REALM_RESPONSE" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)
+REALM_BODY=$(echo "$REALM_RESPONSE" | grep -v 'HTTP_CODE:')
+
 if [[ "$REALM_HTTP_CODE" == "201" ]]; then
     echo "Realm created successfully!"
 elif [[ "$REALM_HTTP_CODE" == "409" ]]; then
     echo "Realm already exists"
+elif [[ "$REALM_HTTP_CODE" == "400" || "$REALM_HTTP_CODE" == "401" ]]; then
+    echo "Realm creation failed (HTTP $REALM_HTTP_CODE), refreshing token and retrying..."
+    ACCESS_TOKEN=$(get_admin_token)
+    if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
+        echo "Error: Failed to refresh access token"
+        exit 1
+    fi
+    REALM_RESPONSE=$(create_realm "$ACCESS_TOKEN")
+    REALM_HTTP_CODE=$(echo "$REALM_RESPONSE" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)
+    REALM_BODY=$(echo "$REALM_RESPONSE" | grep -v 'HTTP_CODE:')
+
+    if [[ "$REALM_HTTP_CODE" == "201" ]]; then
+        echo "Realm created successfully on retry!"
+    elif [[ "$REALM_HTTP_CODE" == "409" ]]; then
+        echo "Realm already exists"
+    else
+        echo "Error: Realm creation failed after retry (HTTP $REALM_HTTP_CODE)"
+        echo "Response: $REALM_BODY"
+        exit 1
+    fi
 else
-    echo "Warning: Realm creation returned HTTP $REALM_HTTP_CODE"
-    echo "Response: $(echo "$REALM_RESPONSE" | grep -v 'HTTP_CODE:')"
+    echo "Error: Realm creation returned HTTP $REALM_HTTP_CODE"
+    echo "Response: $REALM_BODY"
+    exit 1
 fi
 echo ""
 

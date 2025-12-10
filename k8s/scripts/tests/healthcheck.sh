@@ -442,15 +442,15 @@ if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
     fi
 
     # Check agent-sandbox realm exists via well-known OIDC endpoint
-    # Extract JSON line (starts with {) to filter kubectl pod lifecycle messages
+    # Filter out kubectl pod lifecycle messages (e.g., "pod X deleted")
     OIDC_RESPONSE=$(kubectl run -n "$KEYCLOAK_NAMESPACE" oidc-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
-        -- curl -sf http://keycloak:8080/realms/agent-sandbox/.well-known/openid-configuration 2>&1 | grep '^{' || echo "")
+        -- curl -sf http://keycloak:8080/realms/agent-sandbox/.well-known/openid-configuration 2>/dev/null | grep -v '^pod ' || echo "")
     if [[ -n "$OIDC_RESPONSE" ]] && echo "$OIDC_RESPONSE" | grep -q '"issuer"'; then
         check_pass "Realm 'agent-sandbox' OIDC configured"
     else
         # Fall back to realm endpoint check
         REALM_RESPONSE=$(kubectl run -n "$KEYCLOAK_NAMESPACE" realm-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
-            -- curl -sf http://keycloak:8080/realms/agent-sandbox 2>&1 | grep '^{' || echo "")
+            -- curl -sf http://keycloak:8080/realms/agent-sandbox 2>/dev/null | grep -v '^pod ' || echo "")
         if [[ -n "$REALM_RESPONSE" ]] && echo "$REALM_RESPONSE" | grep -q '"realm"'; then
             check_pass "Realm 'agent-sandbox' configured"
         else
