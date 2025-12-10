@@ -345,25 +345,22 @@ echo "Note: Tests Boundary authentication and target configuration"
 if [[ "$BOUNDARY_CTRL_STATUS" == "Running" ]]; then
     CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
-    if [[ -n "$CONTROLLER_POD" ]] && [[ -f "$BOUNDARY_CREDS_FILE" ]]; then
-        # Get password auth method ID from credentials file
-        AUTH_METHOD_ID=$(grep "Auth Method ID:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $4}' || echo "")
-        ADMIN_PASS=$(grep "Password:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+    if [[ -n "$CONTROLLER_POD" ]]; then
+        # Get admin password from init job (this is the global admin password)
+        ADMIN_PASS=$(kubectl logs -n "$BOUNDARY_NAMESPACE" job/boundary-db-init 2>/dev/null | grep "Password:" | head -1 | awk '{print $2}' || echo "")
 
-        if [[ -n "$AUTH_METHOD_ID" ]] && [[ -n "$ADMIN_PASS" ]]; then
-            # Test admin authentication via password auth method
-            # Note: Boundary CLI requires env:// or file:// syntax for password
-            # Use /bin/ash -c to run the full command in the container's shell to handle quoting properly
+        if [[ -n "$ADMIN_PASS" ]]; then
+            # Test admin authentication using global scope (admin account is in global scope)
             AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-                /bin/ash -c "export BOUNDARY_ADDR=http://127.0.0.1:9200; export BOUNDARY_PASSWORD='$ADMIN_PASS'; boundary authenticate password -auth-method-id='$AUTH_METHOD_ID' -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json" 2>/dev/null | jq -r '.item.attributes.token // .item.id // empty' 2>/dev/null || echo "")
+                /bin/ash -c "export BOUNDARY_ADDR=http://127.0.0.1:9200; export BOUNDARY_PASSWORD='$ADMIN_PASS'; boundary authenticate password -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json" 2>/dev/null | jq -r '.item.attributes.token // .item.id // empty' 2>/dev/null || echo "")
 
             if [[ -n "$AUTH_RESULT" ]]; then
-                check_pass "Boundary admin authentication"
+                check_pass "Boundary admin login"
             else
-                check_info "Boundary admin authentication failed (credentials may have changed)"
+                check_info "Boundary admin login failed"
             fi
         else
-            check_info "Boundary credentials not found (run configure-targets.sh)"
+            check_info "Boundary admin password not found (check boundary-db-init job)"
         fi
     else
         check_info "Boundary controller pod or credentials not available"
