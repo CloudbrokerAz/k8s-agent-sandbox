@@ -86,6 +86,8 @@ spec:
           value: "/vault-ca/vault-ca.crt"
 
         # Claude Code configuration
+        - name: PATH
+          value: "/usr/local/share/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         - name: CLAUDE_CONFIG_DIR
           value: "/home/node/.claude"
         - name: NODE_OPTIONS

@@ -51,11 +51,34 @@ if [[ -z "$ADMIN_PASSWORD" ]]; then
 fi
 echo "✅ Found admin credentials"
 
-# Get devenv service info
-DEVENV_SVC_IP=$(kubectl get svc devenv -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+# Get devenv service info - try known service names
+DEVENV_SVC_NAME=""
+DEVENV_SVC_IP=""
+
+# Try to find the service by common names
+for SVC_NAME in "claude-code-sandbox" "devenv" "sandbox"; do
+    DEVENV_SVC_IP=$(kubectl get svc "$SVC_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    if [[ -n "$DEVENV_SVC_IP" ]]; then
+        DEVENV_SVC_NAME="$SVC_NAME"
+        break
+    fi
+done
+
 if [[ -z "$DEVENV_SVC_IP" ]]; then
-    echo "⚠️  DevEnv service not found, using placeholder"
-    DEVENV_SVC_IP="devenv.devenv.svc.cluster.local"
+    # Fallback: find any SSH-capable service (port 22) in the namespace
+    DEVENV_SVC_NAME=$(kubectl get svc -n "$DEVENV_NAMESPACE" -o jsonpath='{.items[?(@.spec.ports[*].port==22)].metadata.name}' 2>/dev/null | awk '{print $1}' || echo "")
+    if [[ -n "$DEVENV_SVC_NAME" ]]; then
+        DEVENV_SVC_IP=$(kubectl get svc "$DEVENV_SVC_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    fi
+fi
+
+if [[ -z "$DEVENV_SVC_IP" ]]; then
+    echo "⚠️  No SSH service found in $DEVENV_NAMESPACE namespace"
+    echo "   Using DNS placeholder (will resolve if service is created later)"
+    DEVENV_SVC_IP="claude-code-sandbox.$DEVENV_NAMESPACE.svc.cluster.local"
+    DEVENV_SVC_NAME="claude-code-sandbox"
+else
+    echo "✅ Found service: $DEVENV_SVC_NAME"
 fi
 echo "DevEnv service address: $DEVENV_SVC_IP"
 

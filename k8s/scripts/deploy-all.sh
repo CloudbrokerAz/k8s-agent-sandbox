@@ -1140,7 +1140,9 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
             echo ""
             echo "Configuring Boundary OIDC with Keycloak..."
             if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" ]]; then
-                "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" || echo "⚠️  OIDC configuration failed (may need manual setup)"
+                # Pass the client secret created by configure-realm.sh
+                KEYCLOAK_CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-boundary-client-secret-change-me}" \
+                    "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" || echo "⚠️  OIDC configuration failed (may need manual setup)"
             fi
         fi
     fi

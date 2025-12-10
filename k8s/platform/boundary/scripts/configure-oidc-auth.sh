@@ -132,14 +132,15 @@ echo "  Client ID: $KEYCLOAK_CLIENT_ID"
 echo "  Issuer: $OIDC_ISSUER"
 echo ""
 
-# Function to get Keycloak admin token
-get_keycloak_admin_token() {
-    local KEYCLOAK_POD
-    KEYCLOAK_POD=$(kubectl get pod -l app=keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-    if [[ -z "$KEYCLOAK_POD" ]]; then
-        echo ""
-        return 1
-    fi
+# Function to get or create Boundary client in Keycloak and return its secret
+# Uses port-forward since curl may not be available in the Keycloak container
+get_keycloak_client_secret() {
+    local KEYCLOAK_LOCAL_PORT=18080
+
+    # Start port-forward to Keycloak
+    kubectl port-forward -n "$KEYCLOAK_NAMESPACE" svc/keycloak ${KEYCLOAK_LOCAL_PORT}:8080 >/dev/null 2>&1 &
+    local PF_PID=$!
+    sleep 2
 
     # Get admin credentials from Kubernetes secret
     local ADMIN_USER ADMIN_PASS
@@ -147,46 +148,37 @@ get_keycloak_admin_token() {
     ADMIN_PASS=$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "")
 
     if [[ -z "$ADMIN_PASS" ]]; then
+        kill $PF_PID 2>/dev/null || true
         echo ""
         return 1
     fi
 
     # Get admin token
-    local TOKEN_RESPONSE
-    TOKEN_RESPONSE=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
-        -X POST "http://localhost:8080/realms/master/protocol/openid-connect/token" \
+    local TOKEN_RESPONSE ADMIN_TOKEN
+    TOKEN_RESPONSE=$(curl -s -X POST "http://localhost:${KEYCLOAK_LOCAL_PORT}/realms/master/protocol/openid-connect/token" \
         -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "username=$ADMIN_USER" \
-        -d "password=$ADMIN_PASS" \
+        -d "username=${ADMIN_USER}" \
+        -d "password=${ADMIN_PASS}" \
         -d "grant_type=password" \
         -d "client_id=admin-cli" 2>/dev/null || echo "{}")
 
-    echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null
-}
-
-# Function to get or create Boundary client in Keycloak and return its secret
-get_keycloak_client_secret() {
-    local KEYCLOAK_POD ADMIN_TOKEN
-    KEYCLOAK_POD=$(kubectl get pod -l app=keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-
-    ADMIN_TOKEN=$(get_keycloak_admin_token)
+    ADMIN_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
     if [[ -z "$ADMIN_TOKEN" ]]; then
+        kill $PF_PID 2>/dev/null || true
         echo ""
         return 1
     fi
 
     # Check if client exists
     local CLIENT_ID_INTERNAL
-    CLIENT_ID_INTERNAL=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+    CLIENT_ID_INTERNAL=$(curl -s \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+        "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
 
     if [[ -z "$CLIENT_ID_INTERNAL" ]]; then
         # Create the client
         echo "Creating Boundary client in Keycloak..." >&2
-        local CREATE_RESPONSE
-        CREATE_RESPONSE=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s -w "%{http_code}" \
-            -X POST "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients" \
+        curl -s -X POST "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients" \
             -H "Authorization: Bearer $ADMIN_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
@@ -206,27 +198,32 @@ get_keycloak_client_secret() {
                 ],
                 "webOrigins": ["*"],
                 "defaultClientScopes": ["openid", "profile", "email", "groups"]
-            }' 2>/dev/null)
+            }' >/dev/null 2>&1
 
         # Get the client ID again
         sleep 1
-        CLIENT_ID_INTERNAL=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+        CLIENT_ID_INTERNAL=$(curl -s \
             -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+            "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
     fi
 
     if [[ -z "$CLIENT_ID_INTERNAL" ]]; then
+        kill $PF_PID 2>/dev/null || true
         echo ""
         return 1
     fi
 
     # Get client secret
-    local SECRET_RESPONSE
-    SECRET_RESPONSE=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+    local SECRET_RESPONSE CLIENT_SECRET
+    SECRET_RESPONSE=$(curl -s \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients/${CLIENT_ID_INTERNAL}/client-secret" 2>/dev/null)
+        "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients/${CLIENT_ID_INTERNAL}/client-secret" 2>/dev/null)
 
-    echo "$SECRET_RESPONSE" | jq -r '.value // empty' 2>/dev/null
+    CLIENT_SECRET=$(echo "$SECRET_RESPONSE" | jq -r '.value // empty' 2>/dev/null)
+
+    # Cleanup port-forward
+    kill $PF_PID 2>/dev/null || true
+    echo "$CLIENT_SECRET"
 }
 
 # Get organization ID (should be created by configure-targets.sh)
