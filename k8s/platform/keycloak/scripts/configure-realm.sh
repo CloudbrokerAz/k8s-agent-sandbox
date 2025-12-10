@@ -155,8 +155,27 @@ if [[ "$IN_CLUSTER" == "true" ]]; then
     echo ""
 fi
 
+# Wait for Keycloak to be ready
+echo "1. Waiting for Keycloak to be ready..."
+MAX_WAIT=120
+WAITED=0
+while [[ $WAITED -lt $MAX_WAIT ]]; do
+    HEALTH=$(kc_curl -sf "${KEYCLOAK_URL}/health/ready" 2>/dev/null || echo "")
+    if echo "$HEALTH" | grep -q '"status"'; then
+        echo "   Keycloak health check passed"
+        break
+    fi
+    echo "   Waiting for Keycloak... (${WAITED}s)"
+    sleep 10
+    WAITED=$((WAITED + 10))
+done
+
+if [[ $WAITED -ge $MAX_WAIT ]]; then
+    echo "Warning: Keycloak health check timed out, attempting to proceed anyway..."
+fi
+
 # Get admin token
-echo "1. Obtaining admin access token..."
+echo "2. Obtaining admin access token..."
 ACCESS_TOKEN=$(get_admin_token)
 
 if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" == "null" ]; then
@@ -172,7 +191,7 @@ echo "Successfully authenticated!"
 echo ""
 
 # Create realm
-echo "2. Creating realm: ${REALM_NAME}..."
+echo "3. Creating realm: ${REALM_NAME}..."
 kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
@@ -190,7 +209,7 @@ echo "Realm created/updated!"
 echo ""
 
 # Create Boundary OIDC client
-echo "3. Creating OIDC client: ${CLIENT_ID}..."
+echo "4. Creating OIDC client: ${CLIENT_ID}..."
 kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
@@ -218,7 +237,7 @@ echo "OIDC client created/updated!"
 echo ""
 
 # Get client UUID for setting secret
-echo "4. Setting client secret..."
+echo "5. Setting client secret..."
 CLIENT_UUID=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.[0].id')
 
@@ -235,7 +254,7 @@ fi
 echo ""
 
 # Create groups
-echo "5. Creating user groups..."
+echo "6. Creating user groups..."
 for group in "admins" "developers" "readonly"; do
     echo "  - Creating group: ${group}"
     kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
@@ -250,7 +269,7 @@ echo "Groups created!"
 echo ""
 
 # Create demo users
-echo "6. Creating demo users..."
+echo "7. Creating demo users..."
 
 # Helper function to create user
 create_user() {
