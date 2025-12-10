@@ -449,19 +449,34 @@ if [[ "$SKIP_VAULT" != "true" ]]; then
     # Initialize and/or unseal Vault
     echo "Checking Vault status..."
     sleep 5
-    VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>/dev/null || echo '{"initialized":false,"sealed":true}')
-    INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized')
-    SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed')
+    VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>&1) || true
+    # Validate JSON output
+    if ! echo "$VAULT_STATUS" | jq -e . >/dev/null 2>&1; then
+        echo "⚠️  Vault not responding properly, waiting 10s..."
+        sleep 10
+        VAULT_STATUS=$(kubectl exec -n vault vault-0 -- vault status -format=json 2>&1) || echo '{"initialized":false,"sealed":true}'
+    fi
+    INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
+    SEALED=$(echo "$VAULT_STATUS" | jq -r '.sealed // true')
 
     if [[ "$INITIALIZED" == "false" ]]; then
         echo "Initializing Vault..."
-        INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json)
-        UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
-        ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
+        INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json 2>&1)
+        INIT_EXIT_CODE=$?
 
-        kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY"
+        if [[ $INIT_EXIT_CODE -ne 0 ]] || ! echo "$INIT_OUTPUT" | jq -e . >/dev/null 2>&1; then
+            echo "❌ Failed to initialize Vault"
+            echo "   Output: $INIT_OUTPUT"
+            echo "   You can initialize manually later with: ./platform/vault/scripts/init-vault.sh"
+            echo ""
+            echo "⚠️  Continuing deployment, but Vault will need manual initialization"
+        else
+            UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
+            ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
 
-        cat > "$K8S_DIR/platform/vault/scripts/vault-keys.txt" << EOF
+            kubectl exec -n vault vault-0 -- vault operator unseal "$UNSEAL_KEY"
+
+            cat > "$K8S_DIR/platform/vault/scripts/vault-keys.txt" << EOF
 ========================================
   VAULT KEYS - SAVE SECURELY!
 ========================================
@@ -469,8 +484,9 @@ Unseal Key: $UNSEAL_KEY
 Root Token: $ROOT_TOKEN
 ========================================
 EOF
-        chmod 600 "$K8S_DIR/platform/vault/scripts/vault-keys.txt"
-        echo "✅ Vault initialized - keys saved to platform/vault/scripts/vault-keys.txt"
+            chmod 600 "$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+            echo "✅ Vault initialized - keys saved to platform/vault/scripts/vault-keys.txt"
+        fi
     else
         echo "✅ Vault already initialized"
         # Load keys from saved file
@@ -563,8 +579,15 @@ else
 
         if [[ "$INITIALIZED" == "false" ]]; then
             echo "⚠️  Vault not initialized - initializing now..."
-            INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json 2>/dev/null)
-            if [[ -n "$INIT_OUTPUT" ]]; then
+            INIT_OUTPUT=$(kubectl exec -n vault vault-0 -- vault operator init -key-shares=1 -key-threshold=1 -format=json 2>&1)
+            INIT_EXIT_CODE=$?
+
+            if [[ $INIT_EXIT_CODE -ne 0 ]] || [[ -z "$INIT_OUTPUT" ]]; then
+                echo "❌ Failed to initialize Vault"
+                echo "   Output: $INIT_OUTPUT"
+                echo "   You can initialize manually by running: ./platform/vault/scripts/init-vault.sh"
+                # Continue deployment but warn user
+            elif echo "$INIT_OUTPUT" | jq -e . >/dev/null 2>&1; then
                 UNSEAL_KEY=$(echo "$INIT_OUTPUT" | jq -r '.unseal_keys_b64[0]')
                 ROOT_TOKEN=$(echo "$INIT_OUTPUT" | jq -r '.root_token')
 
@@ -615,6 +638,10 @@ EOF
 
                 # Export Vault CA
                 "$K8S_DIR/platform/vault/scripts/export-vault-ca.sh" vault devenv 2>/dev/null || true
+                echo "✅ Vault initialized and configured successfully"
+            else
+                echo "❌ Vault initialization output is not valid JSON"
+                echo "   Output: $INIT_OUTPUT"
             fi
         else
             # Try to load keys from saved file

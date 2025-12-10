@@ -91,7 +91,7 @@ echo ""
 echo "Looking up organization scope..."
 ORG_RESULT=$(run_boundary scopes list -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
 
-ORG_ID=$(echo "$ORG_RESULT" | jq -r '.items[] | select(.name=="DevOps") | .id' || echo "")
+ORG_ID=$(echo "$ORG_RESULT" | jq -r '.items[]? | select(.name=="DevOps") | .id' 2>/dev/null || echo "")
 if [[ -z "$ORG_ID" ]]; then
     echo "❌ DevOps organization not found"
     echo ""
@@ -101,7 +101,7 @@ fi
 echo "✅ Found organization: DevOps ($ORG_ID)"
 
 # Get project ID
-PROJECT_ID=$(run_boundary scopes list -scope-id="$ORG_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[] | select(.name=="Agent-Sandbox") | .id' || echo "")
+PROJECT_ID=$(run_boundary scopes list -scope-id="$ORG_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[]? | select(.name=="Agent-Sandbox") | .id' 2>/dev/null || echo "")
 if [[ -z "$PROJECT_ID" ]]; then
     echo "❌ Agent-Sandbox project not found"
     exit 1
@@ -111,7 +111,7 @@ echo "✅ Found project: Agent-Sandbox ($PROJECT_ID)"
 # Check if OIDC auth method already exists
 echo ""
 echo "Checking for existing OIDC auth method..."
-EXISTING_OIDC=$(run_boundary auth-methods list -scope-id="$ORG_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[] | select(.type=="oidc") | .id' || echo "")
+EXISTING_OIDC=$(run_boundary auth-methods list -scope-id="$ORG_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[]? | select(.type=="oidc") | .id' 2>/dev/null || echo "")
 
 if [[ -n "$EXISTING_OIDC" ]]; then
     echo "✅ OIDC auth method already exists ($EXISTING_OIDC)"
@@ -193,7 +193,7 @@ create_managed_group() {
     local DESCRIPTION=$3
 
     # Check if group already exists
-    EXISTING_GROUP=$(run_boundary managed-groups list -auth-method-id="$AUTH_METHOD_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r ".items[] | select(.name==\"$GROUP_NAME\") | .id" || echo "")
+    EXISTING_GROUP=$(run_boundary managed-groups list -auth-method-id="$AUTH_METHOD_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r ".items[]? | select(.name==\"$GROUP_NAME\") | .id" 2>/dev/null || echo "")
 
     if [[ -n "$EXISTING_GROUP" ]]; then
         echo "  ✅ Managed group '$GROUP_NAME' already exists ($EXISTING_GROUP)"
@@ -253,7 +253,7 @@ create_role() {
     local SCOPE_ID=$5
 
     # Check if role already exists
-    EXISTING_ROLE=$(run_boundary roles list -scope-id="$SCOPE_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r ".items[] | select(.name==\"$ROLE_NAME\") | .id" || echo "")
+    EXISTING_ROLE=$(run_boundary roles list -scope-id="$SCOPE_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r ".items[]? | select(.name==\"$ROLE_NAME\") | .id" 2>/dev/null || echo "")
 
     if [[ -n "$EXISTING_ROLE" ]]; then
         echo "  ✅ Role '$ROLE_NAME' already exists ($EXISTING_ROLE)"

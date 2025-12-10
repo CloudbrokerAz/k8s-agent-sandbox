@@ -157,11 +157,20 @@ else
 fi
 
 # Check Vault sealed/unsealed status
-VAULT_SEALED=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -format=json 2>/dev/null | jq -r '.sealed' || echo "true")
-if [[ "$VAULT_SEALED" == "false" ]]; then
-    check_pass "Vault unsealed and ready"
+VAULT_STATUS_JSON=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -format=json 2>&1) || true
+if echo "$VAULT_STATUS_JSON" | jq -e . >/dev/null 2>&1; then
+    VAULT_INITIALIZED=$(echo "$VAULT_STATUS_JSON" | jq -r '.initialized // false')
+    VAULT_SEALED=$(echo "$VAULT_STATUS_JSON" | jq -r '.sealed // true')
+
+    if [[ "$VAULT_INITIALIZED" == "false" ]]; then
+        check_fail "Vault not initialized (run: ./platform/vault/scripts/init-vault.sh or re-run deploy-all.sh)"
+    elif [[ "$VAULT_SEALED" == "false" ]]; then
+        check_pass "Vault unsealed and ready"
+    else
+        check_fail "Vault is sealed (run: ./platform/vault/scripts/unseal-vault.sh)"
+    fi
 else
-    check_fail "Vault is sealed (run: ./platform/vault/scripts/unseal-vault.sh)"
+    check_fail "Vault not responding (status: $VAULT_STATUS)"
 fi
 
 # Check secrets engines
