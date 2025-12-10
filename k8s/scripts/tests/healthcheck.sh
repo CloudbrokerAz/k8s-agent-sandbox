@@ -480,17 +480,17 @@ if [[ "$KEYCLOAK_STATUS" == "Running" ]] && [[ -n "${OIDC_RESPONSE:-}" ]]; then
         check_info "User authentication failed for developer (users need to be created via configure-realm.sh)"
     fi
 
-    # Test realmadmin user authentication (realm admin, not master admin)
+    # Test admin user authentication (realm admin user created by configure-realm.sh)
     ADMIN_LOGIN=$(kubectl run -n "$KEYCLOAK_NAMESPACE" admin-login-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
         -- curl -sf -X POST "http://keycloak:8080/realms/agent-sandbox/protocol/openid-connect/token" \
             -d "grant_type=password" \
             -d "client_id=admin-cli" \
-            -d "username=realmadmin" \
+            -d "username=admin" \
             -d "password=Admin123%21%40%23" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
     if [[ -n "$ADMIN_LOGIN" ]]; then
-        check_pass "User authentication (realmadmin)"
+        check_pass "User authentication (admin)"
     else
-        check_info "User authentication failed for realmadmin (users need to be created via configure-realm.sh)"
+        check_info "User authentication failed for admin (users need to be created via configure-realm.sh)"
     fi
 else
     check_info "OIDC tests skipped (Keycloak or realm not available)"
@@ -605,7 +605,7 @@ echo "  Master Admin: admin / admin123!@#"
 echo "  Realm: agent-sandbox"
 echo "  Demo Users:"
 echo "    developer / Dev123!@# (developers group)"
-echo "    realmadmin / Admin123!@# (admins group)"
+echo "    admin / Admin123!@# (admins group)"
 echo ""
 echo -e "${BLUE}Boundary:${NC}"
 echo "  Controller API: http://boundary-controller-api.boundary.svc.cluster.local:9200"
