@@ -126,10 +126,20 @@ run_parallel() {
     fi
 }
 
-# Wait for background jobs if parallel mode
+# Wait for background jobs if parallel mode and check for failures
 wait_parallel() {
     if [[ "$PARALLEL" == "true" ]]; then
-        wait
+        local failed=0
+        local job_pids=$(jobs -p)
+        for pid in $job_pids; do
+            if ! wait "$pid"; then
+                ((failed++))
+            fi
+        done
+        if [[ $failed -gt 0 ]]; then
+            echo "❌ $failed parallel task(s) failed"
+            return 1
+        fi
     fi
 }
 
@@ -490,8 +500,21 @@ EOF
     else
         echo "✅ Vault already initialized"
         # Load keys from saved file
-        UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
-        ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+        VAULT_KEYS_FILE="$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+        if [[ -f "$VAULT_KEYS_FILE" ]]; then
+            UNSEAL_KEY=$(grep "Unseal Key:" "$VAULT_KEYS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+            ROOT_TOKEN=$(grep "Root Token:" "$VAULT_KEYS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+            if [[ -z "$UNSEAL_KEY" ]] || [[ -z "$ROOT_TOKEN" ]]; then
+                echo "⚠️  vault-keys.txt exists but keys could not be parsed"
+                echo "   File: $VAULT_KEYS_FILE"
+            fi
+        else
+            echo "⚠️  vault-keys.txt not found - Vault was initialized elsewhere"
+            echo "   Expected: $VAULT_KEYS_FILE"
+            echo "   You may need to unseal/configure Vault manually"
+            UNSEAL_KEY=""
+            ROOT_TOKEN=""
+        fi
 
         # Check if Vault needs unsealing (after pod restart)
         if [[ "$SEALED" == "true" ]]; then
@@ -511,7 +534,13 @@ EOF
     # Configure Vault basics
     if [[ -n "$ROOT_TOKEN" ]]; then
         K8S_HOST="https://kubernetes.default.svc"
-        K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d)
+        K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null | base64 -d 2>/dev/null) || true
+
+        if [[ -z "$K8S_CA_CERT" ]]; then
+            echo "⚠️  Failed to retrieve Kubernetes CA certificate"
+            echo "   Vault Kubernetes auth may not work correctly"
+            echo "   You can configure manually later with: ./platform/vault/scripts/configure-k8s-auth.sh"
+        fi
 
         kubectl exec -n vault vault-0 -- sh -c "
             export VAULT_TOKEN='$ROOT_TOKEN'
@@ -607,7 +636,12 @@ EOF
 
                 # Configure Vault basics since it's newly initialized
                 K8S_HOST="https://kubernetes.default.svc"
-                K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d)
+                K8S_CA_CERT=$(kubectl config view --raw --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null | base64 -d 2>/dev/null) || true
+
+                if [[ -z "$K8S_CA_CERT" ]]; then
+                    echo "⚠️  Failed to retrieve Kubernetes CA certificate"
+                    echo "   Vault Kubernetes auth may not work correctly"
+                fi
 
                 kubectl exec -n vault vault-0 -- sh -c "
                     export VAULT_TOKEN='$ROOT_TOKEN'
@@ -645,8 +679,19 @@ EOF
             fi
         else
             # Try to load keys from saved file
-            ROOT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
-            UNSEAL_KEY=$(grep "Unseal Key:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
+            VAULT_KEYS_FILE="$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+            if [[ -f "$VAULT_KEYS_FILE" ]]; then
+                ROOT_TOKEN=$(grep "Root Token:" "$VAULT_KEYS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+                UNSEAL_KEY=$(grep "Unseal Key:" "$VAULT_KEYS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+                if [[ -z "$UNSEAL_KEY" ]] || [[ -z "$ROOT_TOKEN" ]]; then
+                    echo "⚠️  vault-keys.txt exists but keys could not be parsed"
+                fi
+            else
+                echo "⚠️  vault-keys.txt not found at $VAULT_KEYS_FILE"
+                echo "   Vault may have been initialized elsewhere"
+                ROOT_TOKEN=""
+                UNSEAL_KEY=""
+            fi
 
             if [[ "$SEALED" == "true" ]]; then
                 echo "🔒 Vault is sealed - attempting to unseal..."
@@ -866,7 +911,12 @@ spec:
   backoffLimit: 1
 EOF
     echo "⏳ Initializing Boundary database..."
-    kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=60s || true
+    if ! kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=60s; then
+        echo "⚠️  Boundary database init job timed out or failed"
+        echo "   Check job status: kubectl get job boundary-db-init -n boundary"
+        echo "   Check logs: kubectl logs job/boundary-db-init -n boundary"
+        echo "   Continuing, but Boundary may not work correctly..."
+    fi
 fi
 
     kubectl apply -f "$K8S_DIR/platform/boundary/manifests/05-controller.yaml"
@@ -1018,7 +1068,11 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
 
         # Wait for Keycloak to be ready
         echo "⏳ Waiting for Keycloak to be ready..."
-        kubectl rollout status deployment/keycloak -n keycloak --timeout=300s || true
+        if ! kubectl rollout status deployment/keycloak -n keycloak --timeout=300s; then
+            echo "⚠️  Keycloak rollout timed out or failed"
+            echo "   Check status: kubectl get pods -n keycloak"
+            echo "   Continuing, but Keycloak may not be fully ready..."
+        fi
 
         # Configure realm and demo users
         if [[ -f "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" ]]; then
@@ -1050,7 +1104,11 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
 
     # Wait for Boundary to be fully ready
     echo "⏳ Waiting for Boundary controller..."
-    kubectl rollout status deployment/boundary-controller -n boundary --timeout=180s || true
+    if ! kubectl rollout status deployment/boundary-controller -n boundary --timeout=180s; then
+        echo "⚠️  Boundary controller rollout timed out or failed"
+        echo "   Check status: kubectl get pods -n boundary"
+        echo "   Continuing, but Boundary configuration may fail..."
+    fi
     sleep 5
 
     if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" ]]; then
