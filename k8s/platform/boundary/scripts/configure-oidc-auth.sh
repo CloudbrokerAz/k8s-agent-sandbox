@@ -54,22 +54,67 @@ if [[ "$KEYCLOAK_STATUS" != "Running" ]]; then
 fi
 echo "✅ Keycloak running"
 
-# Get recovery key for configuration
-RECOVERY_KEY=$(kubectl get secret boundary-kms-keys -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.data.BOUNDARY_RECOVERY_KEY}' 2>/dev/null | base64 -d || echo "")
-if [[ -z "$RECOVERY_KEY" ]]; then
-    echo "❌ Cannot find Boundary recovery key"
-    exit 1
-fi
-echo "✅ Found recovery key"
-
 # Get controller pod
 CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}')
 
-# Function to run boundary commands
+# Try to get admin credentials from the credentials file
+CREDS_FILE="$SCRIPT_DIR/boundary-credentials.txt"
+if [[ -f "$CREDS_FILE" ]]; then
+    ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+else
+    echo "⚠️  Credentials file not found at $CREDS_FILE"
+    ADMIN_PASSWORD=""
+fi
+
+# Authenticate and get token
+if [[ -n "$ADMIN_PASSWORD" ]]; then
+    echo "Authenticating with Boundary..."
+    AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash -c "
+        export BOUNDARY_ADDR=http://127.0.0.1:9200
+        export BOUNDARY_PASSWORD='$ADMIN_PASSWORD'
+        boundary authenticate password -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json
+    " 2>/dev/null | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
+
+    if [[ -n "$AUTH_TOKEN" ]]; then
+        echo "✅ Authenticated successfully"
+    else
+        echo "⚠️  Token auth failed, falling back to recovery key"
+        AUTH_TOKEN=""
+    fi
+else
+    AUTH_TOKEN=""
+fi
+
+# Get recovery key as fallback
+if [[ -z "$AUTH_TOKEN" ]]; then
+    RECOVERY_KEY=$(kubectl get secret boundary-kms-keys -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.data.BOUNDARY_RECOVERY_KEY}' 2>/dev/null | base64 -d || echo "")
+    if [[ -z "$RECOVERY_KEY" ]]; then
+        echo "❌ Cannot find Boundary recovery key or authenticate"
+        exit 1
+    fi
+    echo "✅ Using recovery key"
+fi
+
+# Function to run boundary commands with auth token
 run_boundary() {
-    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- \
-        env BOUNDARY_ADDR=http://127.0.0.1:9200 \
-        boundary "$@" 2>/dev/null
+    local cmd="boundary"
+    for arg in "$@"; do
+        # Escape single quotes in arguments
+        arg="${arg//\'/\'\\\'\'}"
+        cmd="$cmd '$arg'"
+    done
+    if [[ -n "$AUTH_TOKEN" ]]; then
+        kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+            /bin/ash -c "export BOUNDARY_ADDR=http://127.0.0.1:9200; export BOUNDARY_TOKEN='$AUTH_TOKEN'; $cmd"
+    else
+        # Use recovery key - write HCL to temp file to avoid quoting issues
+        kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+            /bin/ash -c "
+                export BOUNDARY_ADDR=http://127.0.0.1:9200
+                echo 'kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }' > /tmp/recovery.hcl
+                $cmd -recovery-kms-hcl=file:///tmp/recovery.hcl
+            "
+    fi
 }
 
 # Keycloak configuration
@@ -89,7 +134,7 @@ echo ""
 
 # Get organization ID (should be created by configure-targets.sh)
 echo "Looking up organization scope..."
-ORG_RESULT=$(run_boundary scopes list -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+ORG_RESULT=$(run_boundary scopes list -format=json 2>/dev/null || echo "{}")
 
 ORG_ID=$(echo "$ORG_RESULT" | jq -r '.items[]? | select(.name=="DevOps") | .id' 2>/dev/null || echo "")
 if [[ -z "$ORG_ID" ]]; then
@@ -101,7 +146,7 @@ fi
 echo "✅ Found organization: DevOps ($ORG_ID)"
 
 # Get project ID
-PROJECT_ID=$(run_boundary scopes list -scope-id="$ORG_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[]? | select(.name=="Agent-Sandbox") | .id' 2>/dev/null || echo "")
+PROJECT_ID=$(run_boundary scopes list -scope-id="$ORG_ID" -format=json 2>/dev/null | jq -r '.items[]? | select(.name=="Agent-Sandbox") | .id' 2>/dev/null || echo "")
 if [[ -z "$PROJECT_ID" ]]; then
     echo "❌ Agent-Sandbox project not found"
     exit 1
@@ -111,7 +156,7 @@ echo "✅ Found project: Agent-Sandbox ($PROJECT_ID)"
 # Check if OIDC auth method already exists
 echo ""
 echo "Checking for existing OIDC auth method..."
-EXISTING_OIDC=$(run_boundary auth-methods list -scope-id="$ORG_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r '.items[]? | select(.type=="oidc") | .id' 2>/dev/null || echo "")
+EXISTING_OIDC=$(run_boundary auth-methods list -scope-id="$ORG_ID" -format=json 2>/dev/null | jq -r '.items[]? | select(.type=="oidc") | .id' 2>/dev/null || echo "")
 
 if [[ -n "$EXISTING_OIDC" ]]; then
     echo "✅ OIDC auth method already exists ($EXISTING_OIDC)"
@@ -160,7 +205,7 @@ else
         -signing-algorithm=RS256 \
         -api-url-prefix="http://127.0.0.1:9200" \
         -format=json \
-        -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" \
+        \
         <<< "$KEYCLOAK_CLIENT_SECRET" 2>/dev/null || echo "{}")
 
     AUTH_METHOD_ID=$(echo "$AUTH_RESULT" | jq -r '.item.id // empty')
@@ -178,7 +223,7 @@ else
         -claims-scope="profile" \
         -claims-scope="email" \
         -claims-scope="groups" \
-        -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
+        2>/dev/null || true
     echo "✅ Configured claims scopes"
 fi
 
@@ -193,7 +238,7 @@ create_managed_group() {
     local DESCRIPTION=$3
 
     # Check if group already exists
-    EXISTING_GROUP=$(run_boundary managed-groups list -auth-method-id="$AUTH_METHOD_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r ".items[]? | select(.name==\"$GROUP_NAME\") | .id" 2>/dev/null || echo "")
+    EXISTING_GROUP=$(run_boundary managed-groups list -auth-method-id="$AUTH_METHOD_ID" -format=json 2>/dev/null | jq -r ".items[]? | select(.name==\"$GROUP_NAME\") | .id" 2>/dev/null || echo "")
 
     if [[ -n "$EXISTING_GROUP" ]]; then
         echo "  ✅ Managed group '$GROUP_NAME' already exists ($EXISTING_GROUP)"
@@ -205,7 +250,7 @@ create_managed_group() {
             -auth-method-id="$AUTH_METHOD_ID" \
             -filter="$GROUP_FILTER" \
             -format=json \
-            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+            2>/dev/null || echo "{}")
 
         GROUP_ID=$(echo "$GROUP_RESULT" | jq -r '.item.id // empty')
         if [[ -z "$GROUP_ID" ]]; then
@@ -253,7 +298,7 @@ create_role() {
     local SCOPE_ID=$5
 
     # Check if role already exists
-    EXISTING_ROLE=$(run_boundary roles list -scope-id="$SCOPE_ID" -format=json -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null | jq -r ".items[]? | select(.name==\"$ROLE_NAME\") | .id" 2>/dev/null || echo "")
+    EXISTING_ROLE=$(run_boundary roles list -scope-id="$SCOPE_ID" -format=json 2>/dev/null | jq -r ".items[]? | select(.name==\"$ROLE_NAME\") | .id" 2>/dev/null || echo "")
 
     if [[ -n "$EXISTING_ROLE" ]]; then
         echo "  ✅ Role '$ROLE_NAME' already exists ($EXISTING_ROLE)"
@@ -264,7 +309,7 @@ create_role() {
             -description="$ROLE_DESC" \
             -scope-id="$SCOPE_ID" \
             -format=json \
-            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || echo "{}")
+            2>/dev/null || echo "{}")
 
         ROLE_ID=$(echo "$ROLE_RESULT" | jq -r '.item.id // empty')
         if [[ -z "$ROLE_ID" ]]; then
@@ -279,7 +324,7 @@ create_role() {
         run_boundary roles add-grants \
             -id="$ROLE_ID" \
             -grant="$GRANT_STRING" \
-            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
+            2>/dev/null || true
         echo "    - Added grant: $GRANT_STRING"
     fi
 
@@ -288,7 +333,7 @@ create_role() {
         run_boundary roles add-principals \
             -id="$ROLE_ID" \
             -principal="$MANAGED_GROUP_ID" \
-            -recovery-kms-hcl="kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }" 2>/dev/null || true
+            2>/dev/null || true
         echo "    - Added managed group as principal"
     fi
 }

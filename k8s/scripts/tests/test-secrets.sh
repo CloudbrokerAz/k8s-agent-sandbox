@@ -61,13 +61,16 @@ if ! kubectl cluster-info &>/dev/null; then
 fi
 test_pass "Kubernetes cluster reachable"
 
-# Check devenv pod is running
-DEVENV_STATUS=$(kubectl get pod devenv-0 -n "$DEVENV_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+# Check devenv pod is running - find by label (supports both Sandbox CRD and legacy StatefulSet)
+DEVENV_POD=$(kubectl get pod -n "$DEVENV_NAMESPACE" -l app=claude-code-sandbox -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || \
+             kubectl get pod -n "$DEVENV_NAMESPACE" -l app=devenv -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || \
+             echo "devenv-0")
+DEVENV_STATUS=$(kubectl get pod "$DEVENV_POD" -n "$DEVENV_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
 if [[ "$DEVENV_STATUS" != "Running" ]]; then
-    test_fail "DevEnv pod not running (status: $DEVENV_STATUS)"
+    test_fail "DevEnv pod not running (pod=$DEVENV_POD, status: $DEVENV_STATUS)"
     exit 1
 fi
-test_pass "DevEnv pod is running"
+test_pass "DevEnv pod is running ($DEVENV_POD)"
 
 # Check Vault is unsealed
 VAULT_SEALED=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -format=json 2>/dev/null | jq -r '.sealed' || echo "true")
@@ -165,7 +168,7 @@ echo ""
 echo "--- Test 3: Container Environment Variables ---"
 
 # Test GITHUB_TOKEN in container
-CONTAINER_GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv GITHUB_TOKEN 2>/dev/null || echo "")
+CONTAINER_GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- printenv GITHUB_TOKEN 2>/dev/null || echo "")
 if [[ -n "$CONTAINER_GH_TOKEN" ]]; then
     if [[ "$CONTAINER_GH_TOKEN" == "placeholder-update-me" ]]; then
         test_pass "GITHUB_TOKEN visible in container (placeholder)"
@@ -179,7 +182,7 @@ else
 fi
 
 # Test TFE_TOKEN in container
-CONTAINER_TFE_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv TFE_TOKEN 2>/dev/null || echo "")
+CONTAINER_TFE_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- printenv TFE_TOKEN 2>/dev/null || echo "")
 if [[ -n "$CONTAINER_TFE_TOKEN" ]]; then
     MASKED="${CONTAINER_TFE_TOKEN:0:4}...${CONTAINER_TFE_TOKEN: -4}"
     test_pass "TFE_TOKEN visible in container (value: $MASKED)"
@@ -189,7 +192,7 @@ else
 fi
 
 # Test TF_TOKEN_app_terraform_io (alias for TFE_TOKEN)
-CONTAINER_TF_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- printenv TF_TOKEN_app_terraform_io 2>/dev/null || echo "")
+CONTAINER_TF_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- printenv TF_TOKEN_app_terraform_io 2>/dev/null || echo "")
 if [[ -n "$CONTAINER_TF_TOKEN" ]]; then
     test_pass "TF_TOKEN_app_terraform_io visible in container"
 else
@@ -205,7 +208,7 @@ echo "--- Test 4: Functional Token Tests ---"
 
 # Test GitHub token with gh CLI (if available and token is not placeholder)
 if [[ -n "$CONTAINER_GH_TOKEN" ]] && [[ "$CONTAINER_GH_TOKEN" != "placeholder-update-me" ]]; then
-    GH_USER=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- sh -c 'gh api user --jq .login 2>/dev/null' || echo "")
+    GH_USER=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- sh -c 'gh api user --jq .login 2>/dev/null' || echo "")
     if [[ -n "$GH_USER" ]]; then
         test_pass "GitHub API accessible (authenticated as: $GH_USER)"
     else
@@ -218,7 +221,7 @@ fi
 
 # Test Terraform Cloud connection (if TFE token is set)
 if [[ -n "$CONTAINER_TFE_TOKEN" ]]; then
-    TFE_WHOAMI=$(kubectl exec -n "$DEVENV_NAMESPACE" devenv-0 -- sh -c 'curl -s -H "Authorization: Bearer $TFE_TOKEN" https://app.terraform.io/api/v2/account/details 2>/dev/null | jq -r ".data.attributes.username // empty"' || echo "")
+    TFE_WHOAMI=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- sh -c 'curl -s -H "Authorization: Bearer $TFE_TOKEN" https://app.terraform.io/api/v2/account/details 2>/dev/null | jq -r ".data.attributes.username // empty"' || echo "")
     if [[ -n "$TFE_WHOAMI" ]]; then
         test_pass "Terraform Cloud API accessible (user: $TFE_WHOAMI)"
     else
