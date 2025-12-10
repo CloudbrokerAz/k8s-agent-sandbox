@@ -132,6 +132,103 @@ echo "  Client ID: $KEYCLOAK_CLIENT_ID"
 echo "  Issuer: $OIDC_ISSUER"
 echo ""
 
+# Function to get Keycloak admin token
+get_keycloak_admin_token() {
+    local KEYCLOAK_POD
+    KEYCLOAK_POD=$(kubectl get pod -l app=keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [[ -z "$KEYCLOAK_POD" ]]; then
+        echo ""
+        return 1
+    fi
+
+    # Get admin credentials from Kubernetes secret
+    local ADMIN_USER ADMIN_PASS
+    ADMIN_USER=$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN}' 2>/dev/null | base64 -d || echo "admin")
+    ADMIN_PASS=$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "")
+
+    if [[ -z "$ADMIN_PASS" ]]; then
+        echo ""
+        return 1
+    fi
+
+    # Get admin token
+    local TOKEN_RESPONSE
+    TOKEN_RESPONSE=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+        -X POST "http://localhost:8080/realms/master/protocol/openid-connect/token" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "username=$ADMIN_USER" \
+        -d "password=$ADMIN_PASS" \
+        -d "grant_type=password" \
+        -d "client_id=admin-cli" 2>/dev/null || echo "{}")
+
+    echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null
+}
+
+# Function to get or create Boundary client in Keycloak and return its secret
+get_keycloak_client_secret() {
+    local KEYCLOAK_POD ADMIN_TOKEN
+    KEYCLOAK_POD=$(kubectl get pod -l app=keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+    ADMIN_TOKEN=$(get_keycloak_admin_token)
+    if [[ -z "$ADMIN_TOKEN" ]]; then
+        echo ""
+        return 1
+    fi
+
+    # Check if client exists
+    local CLIENT_ID_INTERNAL
+    CLIENT_ID_INTERNAL=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+
+    if [[ -z "$CLIENT_ID_INTERNAL" ]]; then
+        # Create the client
+        echo "Creating Boundary client in Keycloak..." >&2
+        local CREATE_RESPONSE
+        CREATE_RESPONSE=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s -w "%{http_code}" \
+            -X POST "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+                "clientId": "'"${KEYCLOAK_CLIENT_ID}"'",
+                "name": "Boundary",
+                "description": "HashiCorp Boundary OIDC Client",
+                "enabled": true,
+                "protocol": "openid-connect",
+                "publicClient": false,
+                "clientAuthenticatorType": "client-secret",
+                "standardFlowEnabled": true,
+                "directAccessGrantsEnabled": false,
+                "serviceAccountsEnabled": false,
+                "redirectUris": [
+                    "http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback",
+                    "http://boundary-controller-api.'"${BOUNDARY_NAMESPACE}"'.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback"
+                ],
+                "webOrigins": ["*"],
+                "defaultClientScopes": ["openid", "profile", "email", "groups"]
+            }' 2>/dev/null)
+
+        # Get the client ID again
+        sleep 1
+        CLIENT_ID_INTERNAL=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+    fi
+
+    if [[ -z "$CLIENT_ID_INTERNAL" ]]; then
+        echo ""
+        return 1
+    fi
+
+    # Get client secret
+    local SECRET_RESPONSE
+    SECRET_RESPONSE=$(kubectl exec -n "$KEYCLOAK_NAMESPACE" "$KEYCLOAK_POD" -- curl -s \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "http://localhost:8080/admin/realms/${KEYCLOAK_REALM}/clients/${CLIENT_ID_INTERNAL}/client-secret" 2>/dev/null)
+
+    echo "$SECRET_RESPONSE" | jq -r '.value // empty' 2>/dev/null
+}
+
 # Get organization ID (should be created by configure-targets.sh)
 echo "Looking up organization scope..."
 ORG_RESULT=$(run_boundary scopes list -format=json 2>/dev/null || echo "{}")
@@ -170,23 +267,39 @@ else
     echo "Step 1: Create OIDC Auth Method"
     echo "--------------------------------"
 
-    # Note: Client secret should be obtained from Keycloak
-    # For this example, we'll prompt the user to provide it
-    echo ""
-    echo "⚠️  You need to create a client in Keycloak with the following settings:"
-    echo "  - Realm: $KEYCLOAK_REALM"
-    echo "  - Client ID: $KEYCLOAK_CLIENT_ID"
-    echo "  - Client Protocol: openid-connect"
-    echo "  - Access Type: confidential"
-    echo "  - Valid Redirect URIs: http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
-    echo "                         http://boundary-controller-api.${BOUNDARY_NAMESPACE}.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback"
-    echo ""
-
-    # Check if client secret is in environment or prompt
+    # Check if client secret is in environment, auto-fetch from Keycloak, or prompt as fallback
     if [[ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]]; then
-        echo "Please enter the client secret from Keycloak:"
-        read -s KEYCLOAK_CLIENT_SECRET
-        echo ""
+        echo "Fetching client secret from Keycloak..."
+        KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
+
+        if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
+            echo "✅ Retrieved client secret from Keycloak"
+        else
+            # Fallback to manual prompt only if auto-fetch fails and interactive mode
+            echo ""
+            echo "⚠️  Could not auto-fetch client secret from Keycloak."
+            echo "    You need to create a client in Keycloak with the following settings:"
+            echo "    - Realm: $KEYCLOAK_REALM"
+            echo "    - Client ID: $KEYCLOAK_CLIENT_ID"
+            echo "    - Client Protocol: openid-connect"
+            echo "    - Access Type: confidential"
+            echo "    - Valid Redirect URIs: http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
+            echo "                           http://boundary-controller-api.${BOUNDARY_NAMESPACE}.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback"
+            echo ""
+
+            # Check if we're in non-interactive mode
+            if [[ ! -t 0 ]]; then
+                echo "❌ Cannot prompt for client secret in non-interactive mode"
+                echo "   Set KEYCLOAK_CLIENT_SECRET environment variable or ensure Keycloak is accessible"
+                exit 1
+            fi
+
+            echo "Please enter the client secret from Keycloak:"
+            read -s KEYCLOAK_CLIENT_SECRET
+            echo ""
+        fi
+    else
+        echo "Using KEYCLOAK_CLIENT_SECRET from environment"
     fi
 
     if [[ -z "$KEYCLOAK_CLIENT_SECRET" ]]; then

@@ -57,13 +57,18 @@ echo "  Realm: ${KEYCLOAK_REALM}"
 echo "  Client ID: ${KEYCLOAK_CLIENT_ID}"
 echo ""
 
-# Prompt for confirmation
-read -p "Continue with this configuration? (yes/no): " -r
-echo ""
+# Skip confirmation prompt in non-interactive mode or if AUTO_CONFIRM is set
+if [[ "${AUTO_CONFIRM:-}" == "true" ]] || [[ ! -t 0 ]]; then
+    echo "Proceeding automatically (non-interactive mode)..."
+else
+    # Prompt for confirmation only in interactive mode
+    read -p "Continue with this configuration? (yes/no): " -r
+    echo ""
 
-if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-    echo "Configuration cancelled."
-    exit 0
+    if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        echo "Configuration cancelled."
+        exit 0
+    fi
 fi
 
 # Check if already authenticated

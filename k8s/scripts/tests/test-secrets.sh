@@ -73,12 +73,20 @@ fi
 test_pass "DevEnv pod is running ($DEVENV_POD)"
 
 # Check Vault is unsealed
-VAULT_SEALED=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -format=json 2>/dev/null | jq -r '.sealed' || echo "true")
-if [[ "$VAULT_SEALED" != "false" ]]; then
-    test_fail "Vault is sealed or not accessible"
+VAULT_STATUS_JSON=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- vault status -format=json 2>&1) || true
+if echo "$VAULT_STATUS_JSON" | jq -e . >/dev/null 2>&1; then
+    VAULT_SEALED=$(echo "$VAULT_STATUS_JSON" | jq -r '.sealed')
+    if [[ "$VAULT_SEALED" == "false" ]]; then
+        test_pass "Vault is unsealed"
+    else
+        test_fail "Vault is sealed (run: ./platform/vault/scripts/unseal-vault.sh)"
+        exit 1
+    fi
+else
+    test_fail "Cannot connect to Vault (pod may not be ready)"
+    test_info "Error: $VAULT_STATUS_JSON"
     exit 1
 fi
-test_pass "Vault is unsealed"
 
 echo ""
 
