@@ -162,17 +162,18 @@ else
         test_pass "Admin authentication successful"
 
         # Check for agent-sandbox realm (was boundary realm)
-        REALMS=$(kubectl run curl-realms-test --image=curlimages/curl --rm -i --restart=Never -- \
+        # Note: Use grep to filter out kubectl pod lifecycle messages before jq parsing
+        REALMS=$(kubectl run curl-realms-test-$RANDOM --image=curlimages/curl --rm -i --restart=Never -- \
             curl -sf "$KEYCLOAK_URL/admin/realms" \
-            -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.[].realm' 2>/dev/null || echo "")
+            -H "Authorization: Bearer $TOKEN" 2>/dev/null | grep -v '^pod ' | jq -r '.[].realm' 2>/dev/null || echo "")
 
         if echo "$REALMS" | grep -q "agent-sandbox"; then
             test_pass "Agent-sandbox realm exists"
 
             # Check realm clients
-            CLIENTS=$(kubectl run curl-clients-test --image=curlimages/curl --rm -i --restart=Never -- \
+            CLIENTS=$(kubectl run curl-clients-test-$RANDOM --image=curlimages/curl --rm -i --restart=Never -- \
                 curl -sf "$KEYCLOAK_URL/admin/realms/agent-sandbox/clients" \
-                -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.[].clientId' 2>/dev/null || echo "")
+                -H "Authorization: Bearer $TOKEN" 2>/dev/null | grep -v '^pod ' | jq -r '.[].clientId' 2>/dev/null || echo "")
 
             if echo "$CLIENTS" | grep -q "boundary"; then
                 test_pass "Boundary OIDC client configured"
@@ -181,9 +182,9 @@ else
             fi
 
             # Check users
-            USERS=$(kubectl run curl-users-test --image=curlimages/curl --rm -i --restart=Never -- \
+            USERS=$(kubectl run curl-users-test-$RANDOM --image=curlimages/curl --rm -i --restart=Never -- \
                 curl -sf "$KEYCLOAK_URL/admin/realms/agent-sandbox/users" \
-                -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.[].username' 2>/dev/null || echo "")
+                -H "Authorization: Bearer $TOKEN" 2>/dev/null | grep -v '^pod ' | jq -r '.[].username' 2>/dev/null || echo "")
 
             USER_COUNT=$(echo "$USERS" | grep -v '^$' | wc -l)
             if [[ "$USER_COUNT" -ge 3 ]]; then
@@ -193,9 +194,9 @@ else
             fi
 
             # Check groups
-            GROUPS=$(kubectl run curl-groups-test --image=curlimages/curl --rm -i --restart=Never -- \
+            GROUPS=$(kubectl run curl-groups-test-$RANDOM --image=curlimages/curl --rm -i --restart=Never -- \
                 curl -sf "$KEYCLOAK_URL/admin/realms/agent-sandbox/groups" \
-                    -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.[].name' || echo "")
+                -H "Authorization: Bearer $TOKEN" 2>/dev/null | grep -v '^pod ' | jq -r '.[].name' 2>/dev/null || echo "")
 
             GROUP_COUNT=$(echo "$GROUPS" | grep -v '^$' | wc -l)
             if [[ "$GROUP_COUNT" -ge 3 ]]; then
@@ -219,8 +220,9 @@ echo ""
 echo "--- OIDC Endpoint Tests ---"
 
 # Test OIDC discovery endpoint using external curl
-DISCOVERY=$(kubectl run curl-oidc-test --image=curlimages/curl --rm -i --restart=Never -- \
-    curl -sf "$KEYCLOAK_URL/realms/agent-sandbox/.well-known/openid-configuration" 2>/dev/null || echo "")
+# Filter out kubectl pod lifecycle messages before jq parsing
+DISCOVERY=$(kubectl run curl-oidc-test-$RANDOM --image=curlimages/curl --rm -i --restart=Never -- \
+    curl -sf "$KEYCLOAK_URL/realms/agent-sandbox/.well-known/openid-configuration" 2>/dev/null | grep -v '^pod ' || echo "")
 
 if [[ -n "$DISCOVERY" ]] && echo "$DISCOVERY" | jq -e '.issuer' &>/dev/null; then
     test_pass "OIDC discovery endpoint available"
