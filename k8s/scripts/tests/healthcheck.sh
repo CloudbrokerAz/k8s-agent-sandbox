@@ -442,15 +442,16 @@ if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
     fi
 
     # Check agent-sandbox realm exists via well-known OIDC endpoint
-    OIDC_CONFIG=$(kubectl run -n "$KEYCLOAK_NAMESPACE" oidc-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
-        -- curl -sf http://keycloak:8080/realms/agent-sandbox/.well-known/openid-configuration 2>&1 | grep -o '"issuer"' | head -1 || echo "")
-    if [[ -n "$OIDC_CONFIG" ]]; then
+    # Extract JSON line (starts with {) to filter kubectl pod lifecycle messages
+    OIDC_RESPONSE=$(kubectl run -n "$KEYCLOAK_NAMESPACE" oidc-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+        -- curl -sf http://keycloak:8080/realms/agent-sandbox/.well-known/openid-configuration 2>&1 | grep '^{' || echo "")
+    if [[ -n "$OIDC_RESPONSE" ]] && echo "$OIDC_RESPONSE" | grep -q '"issuer"'; then
         check_pass "Realm 'agent-sandbox' OIDC configured"
     else
         # Fall back to realm endpoint check
-        REALM_CHECK=$(kubectl run -n "$KEYCLOAK_NAMESPACE" realm-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
-            -- curl -sf http://keycloak:8080/realms/agent-sandbox 2>&1 | grep -o '"realm"' | head -1 || echo "")
-        if [[ -n "$REALM_CHECK" ]]; then
+        REALM_RESPONSE=$(kubectl run -n "$KEYCLOAK_NAMESPACE" realm-check-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
+            -- curl -sf http://keycloak:8080/realms/agent-sandbox 2>&1 | grep '^{' || echo "")
+        if [[ -n "$REALM_RESPONSE" ]] && echo "$REALM_RESPONSE" | grep -q '"realm"'; then
             check_pass "Realm 'agent-sandbox' configured"
         else
             check_warn "Realm 'agent-sandbox' not configured (run configure-realm.sh)"
@@ -465,8 +466,8 @@ echo ""
 echo "--- OIDC Integration Testing ---"
 echo "Note: User login tests are optional - users must be created via configure-realm.sh"
 
-# Only run if Keycloak is running
-if [[ "$KEYCLOAK_STATUS" == "Running" ]] && [[ -n "$OIDC_CONFIG" ]]; then
+# Only run if Keycloak is running and realm exists
+if [[ "$KEYCLOAK_STATUS" == "Running" ]] && [[ -n "${OIDC_RESPONSE:-}" ]]; then
     # Test user authentication using admin-cli (public client with direct access grants)
     # Uses the demo developer user created by configure-realm.sh
     # Note: Passwords contain special chars that need URL encoding: ! = %21, @ = %40, # = %23

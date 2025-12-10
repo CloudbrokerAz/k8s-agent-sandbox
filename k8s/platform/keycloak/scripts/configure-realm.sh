@@ -15,16 +15,18 @@ KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-keycloak}"
 # URL encode function for special characters in form data
 url_encode() {
     local string="$1"
-    # Encode special characters: ! @ # $ % & * etc.
-    string="${string//\!/\%21}"
-    string="${string//@/\%40}"
-    string="${string//#/\%23}"
-    string="${string//\$/\%24}"
-    string="${string//%/\%25}"
-    string="${string//&/\%26}"
-    string="${string//\*/\%2A}"
-    string="${string//+/\%2B}"
-    string="${string// /\%20}"
+    # IMPORTANT: Encode % FIRST, before other characters create % sequences
+    # Note: # and % need escaping in bash parameter expansion
+    string="${string//\%/%25}"
+    # Then encode other special characters
+    string="${string//!/%21}"
+    string="${string//@/%40}"
+    string="${string//\#/%23}"
+    string="${string//\$/%24}"
+    string="${string//&/%26}"
+    string="${string//\*/%2A}"
+    string="${string//+/%2B}"
+    string="${string// /%20}"
     echo "$string"
 }
 
@@ -192,7 +194,7 @@ echo ""
 
 # Create realm
 echo "3. Creating realm: ${REALM_NAME}..."
-kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms" \
+REALM_RESPONSE=$(kc_curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${KEYCLOAK_URL}/admin/realms" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
     -d "{
@@ -203,9 +205,17 @@ kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms" \
         \"accessTokenLifespan\": 3600,
         \"ssoSessionIdleTimeout\": 1800,
         \"ssoSessionMaxLifespan\": 36000
-    }" || echo "Realm may already exist"
+    }" 2>&1)
 
-echo "Realm created/updated!"
+REALM_HTTP_CODE=$(echo "$REALM_RESPONSE" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)
+if [[ "$REALM_HTTP_CODE" == "201" ]]; then
+    echo "Realm created successfully!"
+elif [[ "$REALM_HTTP_CODE" == "409" ]]; then
+    echo "Realm already exists"
+else
+    echo "Warning: Realm creation returned HTTP $REALM_HTTP_CODE"
+    echo "Response: $(echo "$REALM_RESPONSE" | grep -v 'HTTP_CODE:')"
+fi
 echo ""
 
 # Create Boundary OIDC client
