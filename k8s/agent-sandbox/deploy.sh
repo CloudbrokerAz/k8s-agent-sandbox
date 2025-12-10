@@ -249,12 +249,24 @@ capture_sandbox_config() {
     fi
     echo ""
 
-    # Installed tools
+    # Installed tools - wait for envbuilder init to complete
     echo "--- Installed Tools ---"
     if [[ -n "$pod_name" ]]; then
-        local claude_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- /usr/local/share/npm-global/bin/claude --version 2>/dev/null || echo "not found")
+        # Wait for tools to be available (entrypoint.sh may still be running after pod is Ready)
+        local max_tool_wait=60
+        local tool_waited=0
+        echo "  (waiting for tool installation to complete...)"
+        while [[ $tool_waited -lt $max_tool_wait ]]; do
+            if kubectl exec -n "${NAMESPACE}" "${pod_name}" -- test -x /usr/local/share/npm-global/bin/claude 2>/dev/null; then
+                break
+            fi
+            sleep 5
+            tool_waited=$((tool_waited + 5))
+        done
+
+        local claude_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- claude --version 2>/dev/null || echo "not found")
         local node_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- node --version 2>/dev/null || echo "not found")
-        local terraform_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' | cut -d'"' -f4 || echo "not found")
+        local terraform_version=$(kubectl exec -n "${NAMESPACE}" "${pod_name}" -- sh -c 'terraform version -json 2>/dev/null | jq -r .terraform_version' 2>/dev/null || echo "not found")
         echo "  Claude Code: ${claude_version}"
         echo "  Node.js:     ${node_version}"
         echo "  Terraform:   ${terraform_version}"
