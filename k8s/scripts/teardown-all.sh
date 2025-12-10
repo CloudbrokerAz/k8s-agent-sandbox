@@ -29,10 +29,15 @@ echo ""
 echo "WARNING: This will delete all data!"
 echo ""
 
-read -p "Are you sure you want to proceed? (yes/no): " confirm
-if [[ "$confirm" != "yes" ]]; then
-    echo "Cancelled"
-    exit 0
+# Skip confirmation in non-interactive mode or if AUTO_CONFIRM/FORCE_YES is set
+if [[ "${AUTO_CONFIRM:-}" == "true" ]] || [[ "${FORCE_YES:-}" == "true" ]] || [[ ! -t 0 ]]; then
+    echo "Proceeding automatically (non-interactive mode)..."
+else
+    read -p "Are you sure you want to proceed? (yes/no): " confirm
+    if [[ "$confirm" != "yes" ]]; then
+        echo "Cancelled"
+        exit 0
+    fi
 fi
 
 # ==========================================
