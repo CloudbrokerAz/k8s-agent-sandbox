@@ -407,7 +407,7 @@ if [[ "$SKIP_DEVENV" != "true" ]]; then
     if [[ -f "$AGENT_SANDBOX_DIR/deploy.sh" ]]; then
         # Use the new deploy.sh which handles CRD installation
         echo "Deploying Claude Code Sandbox using kubernetes-sigs/agent-sandbox pattern..."
-        "$AGENT_SANDBOX_DIR/deploy.sh"
+        NAMESPACE="$DEVENV_NAMESPACE" "$AGENT_SANDBOX_DIR/deploy.sh"
     else
         # Fallback: manual deployment
         echo "Deploying Agent Sandbox manually..."
