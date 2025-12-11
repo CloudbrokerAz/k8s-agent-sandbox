@@ -88,7 +88,8 @@ Note: User login tests are optional - users must be created via configure-realm.
   Master Admin: admin / admin123!@#
   Realm: agent-sandbox
   Demo Users:
-    developer / Dev123!@# (developers group)
+    developer / 
+     (developers group)
     realmadmin / Admin123!@# (admins group)
 
 [0;34mBoundary:[0m

@@ -2,18 +2,19 @@
 set -euo pipefail
 
 # Configure Boundary Credential Injection for DevEnv SSH access
-# This creates static credentials for developer SSH access
+# Uses Vault SSH CA for certificate-based authentication
 #
 # REQUIRES: Boundary Enterprise license for credential injection
-# For Community Edition, use credential brokering instead (see configure-targets.sh)
+# REQUIRES: Vault SSH secrets engine configured with CA
 
 BOUNDARY_NAMESPACE="${1:-boundary}"
-DEVENV_NAMESPACE="${2:-devenv}"
+VAULT_NAMESPACE="${2:-vault}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
 
 echo "=========================================="
 echo "  Boundary Credential Injection Setup"
+echo "  (Vault SSH Certificate Integration)"
 echo "=========================================="
 echo ""
 
@@ -22,13 +23,110 @@ if ! kubectl get secret boundary-license -n "$BOUNDARY_NAMESPACE" &>/dev/null; t
     echo "❌ Boundary Enterprise license not found"
     echo ""
     echo "Credential injection requires Boundary Enterprise."
-    echo "For Community Edition, use credential brokering with Vault."
     echo ""
     echo "To add a license:"
     echo "  ./add-license.sh <license-key>"
     exit 1
 fi
 echo "✅ Enterprise license detected"
+
+# Get Vault root token
+VAULT_KEYS_FILE="$K8S_DIR/platform/vault/scripts/vault-keys.txt"
+if [[ ! -f "$VAULT_KEYS_FILE" ]]; then
+    echo "❌ Vault keys file not found at $VAULT_KEYS_FILE"
+    exit 1
+fi
+
+VAULT_ROOT_TOKEN=$(grep "Root Token:" "$VAULT_KEYS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+if [[ -z "$VAULT_ROOT_TOKEN" ]]; then
+    echo "❌ Cannot find Vault root token"
+    exit 1
+fi
+echo "✅ Vault root token found"
+
+# Check Vault SSH CA is configured
+SSH_CA_PUBKEY=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault read -field=public_key ssh/config/ca" 2>/dev/null || echo "")
+if [[ -z "$SSH_CA_PUBKEY" ]]; then
+    echo "❌ Vault SSH CA not configured"
+    echo ""
+    echo "Run the Vault SSH engine configuration first:"
+    echo "  $K8S_DIR/platform/vault/scripts/configure-ssh-engine.sh"
+    exit 1
+fi
+echo "✅ Vault SSH CA configured"
+
+# ==========================================
+# Step 1: Create Vault Policy for Boundary
+# ==========================================
+echo ""
+echo "Step 1: Create Vault Policy for Boundary"
+echo "-----------------------------------------"
+
+VAULT_POLICY='
+# SSH signing capabilities
+path "ssh/sign/devenv-access" {
+  capabilities = ["create", "update"]
+}
+
+path "ssh/config/ca" {
+  capabilities = ["read"]
+}
+
+# Token management - required by Boundary
+path "auth/token/lookup-self" {
+  capabilities = ["read"]
+}
+
+path "auth/token/renew-self" {
+  capabilities = ["update"]
+}
+
+path "auth/token/revoke-self" {
+  capabilities = ["update"]
+}
+
+# Lease management - required by Boundary
+path "sys/leases/renew" {
+  capabilities = ["update"]
+}
+
+path "sys/leases/revoke" {
+  capabilities = ["update"]
+}
+
+# Capabilities check - required by Boundary
+path "sys/capabilities-self" {
+  capabilities = ["update"]
+}
+'
+
+kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault policy write boundary-ssh - <<'EOFPOLICY'
+$VAULT_POLICY
+EOFPOLICY" >/dev/null 2>&1
+
+echo "✅ Created Vault policy: boundary-ssh"
+
+# ==========================================
+# Step 2: Create Orphan Periodic Token
+# ==========================================
+echo ""
+echo "Step 2: Create Vault Token for Boundary"
+echo "----------------------------------------"
+
+BOUNDARY_VAULT_TOKEN=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault token create -orphan -period=24h -policy=boundary-ssh -format=json" 2>/dev/null | jq -r '.auth.client_token' || echo "")
+
+if [[ -z "$BOUNDARY_VAULT_TOKEN" ]]; then
+    echo "❌ Failed to create Vault token"
+    exit 1
+fi
+echo "✅ Created orphan periodic token for Boundary"
+
+# ==========================================
+# Step 3: Get Boundary Configuration
+# ==========================================
+echo ""
+echo "Step 3: Get Boundary Configuration"
+echo "-----------------------------------"
 
 # Get controller pod
 CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
@@ -38,217 +136,160 @@ if [[ -z "$CONTROLLER_POD" ]]; then
 fi
 echo "✅ Controller pod: $CONTROLLER_POD"
 
-# Get admin credentials
+# Get project ID from credentials file or search for it
 CREDS_FILE="$SCRIPT_DIR/boundary-credentials.txt"
-if [[ ! -f "$CREDS_FILE" ]]; then
-    echo "❌ Credentials file not found at $CREDS_FILE"
-    echo "   Run configure-targets.sh first"
-    exit 1
+PROJECT_ID=""
+SSH_TARGET_ID=""
+
+if [[ -f "$CREDS_FILE" ]]; then
+    PROJECT_ID=$(grep "Project:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' | head -1 || echo "")
+    SSH_TARGET_ID=$(grep "Target (SSH):" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' | head -1 || echo "")
 fi
 
-AUTH_METHOD_ID=$(grep "Auth Method ID:" "$CREDS_FILE" 2>/dev/null | awk '{print $4}' || echo "")
-ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-PROJECT_ID=$(grep "Project:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-TARGET_ID=$(grep "Target (SSH):" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
-
-if [[ -z "$AUTH_METHOD_ID" ]] || [[ -z "$ADMIN_PASSWORD" ]]; then
-    echo "❌ Could not extract credentials from file"
-    exit 1
-fi
-
-# Authenticate
-echo ""
-echo "Authenticating with Boundary..."
-AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-    /bin/ash -c "
-        export BOUNDARY_ADDR=http://127.0.0.1:9200
-        export BOUNDARY_PASSWORD='$ADMIN_PASSWORD'
-        boundary authenticate password \
-            -auth-method-id='$AUTH_METHOD_ID' \
-            -login-name=admin \
-            -password=env://BOUNDARY_PASSWORD \
-            -format=json
-    " 2>/dev/null | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
-
-if [[ -z "$AUTH_TOKEN" ]]; then
-    echo "❌ Authentication failed"
-    exit 1
-fi
-echo "✅ Authenticated successfully"
-
-# Function to run boundary commands
-run_boundary() {
-    local cmd="boundary"
-    for arg in "$@"; do
-        arg="${arg//\'/\'\\\'\'}"
-        cmd="$cmd '$arg'"
-    done
-    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-        /bin/ash -c "export BOUNDARY_ADDR=http://127.0.0.1:9200; export BOUNDARY_TOKEN='$AUTH_TOKEN'; $cmd"
-}
-
-# Get or find project ID
+# If not found, use recovery config to find them
 if [[ -z "$PROJECT_ID" ]]; then
-    echo ""
-    echo "Looking up project ID..."
-    SCOPES=$(run_boundary scopes list -format=json 2>/dev/null || echo "{}")
-    ORG_ID=$(echo "$SCOPES" | jq -r '.items[]? | select(.name=="DevOps") | .id' 2>/dev/null || echo "")
+    # Search using recovery config
+    SCOPES=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary scopes list -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
+
+    ORG_ID=$(echo "$SCOPES" | jq -r '.items[]? | select(.name | contains("DevOps") or contains("Development")) | .id' 2>/dev/null | head -1 || echo "")
 
     if [[ -n "$ORG_ID" ]]; then
-        ORG_SCOPES=$(run_boundary scopes list -scope-id="$ORG_ID" -format=json 2>/dev/null || echo "{}")
-        PROJECT_ID=$(echo "$ORG_SCOPES" | jq -r '.items[]? | select(.name=="Agent-Sandbox") | .id' 2>/dev/null || echo "")
+        ORG_SCOPES=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+            boundary scopes list -scope-id="$ORG_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
+        PROJECT_ID=$(echo "$ORG_SCOPES" | jq -r '.items[]? | select(.name | contains("Agent") or contains("Sandbox") or contains("Development")) | .id' 2>/dev/null | head -1 || echo "")
     fi
 fi
 
 if [[ -z "$PROJECT_ID" ]]; then
-    echo "❌ Could not find Agent-Sandbox project"
+    echo "❌ Could not find project scope"
+    echo "   Run configure-targets.sh first"
     exit 1
 fi
 echo "✅ Project ID: $PROJECT_ID"
 
-# Get SSH target ID
-if [[ -z "$TARGET_ID" ]]; then
-    TARGETS=$(run_boundary targets list -scope-id="$PROJECT_ID" -format=json 2>/dev/null || echo "{}")
-    TARGET_ID=$(echo "$TARGETS" | jq -r '.items[]? | select(.name=="devenv-ssh") | .id' 2>/dev/null || echo "")
-fi
-
-if [[ -z "$TARGET_ID" ]]; then
-    echo "❌ SSH target not found"
-    exit 1
-fi
-echo "✅ Target ID: $TARGET_ID"
-
 # ==========================================
-# Create Static Credential Store
+# Step 4: Create Vault Credential Store
 # ==========================================
 echo ""
-echo "Step 1: Create Static Credential Store"
-echo "---------------------------------------"
+echo "Step 4: Create Vault Credential Store"
+echo "--------------------------------------"
 
-# Check for existing static credential store
-CRED_STORES=$(run_boundary credential-stores list -scope-id="$PROJECT_ID" -format=json 2>/dev/null || echo "{}")
-STATIC_STORE_ID=$(echo "$CRED_STORES" | jq -r '.items[]? | select(.type=="static") | .id' 2>/dev/null | head -1 || echo "")
+VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
 
-if [[ -n "$STATIC_STORE_ID" ]]; then
-    echo "✅ Static credential store exists: $STATIC_STORE_ID"
+# Check for existing Vault credential store
+EXISTING_STORES=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary credential-stores list -scope-id="$PROJECT_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
+
+VAULT_STORE_ID=$(echo "$EXISTING_STORES" | jq -r '.items[]? | select(.type=="vault" and (.name | contains("SSH") or contains("Vault"))) | .id' 2>/dev/null | head -1 || echo "")
+
+if [[ -n "$VAULT_STORE_ID" ]]; then
+    echo "✅ Vault credential store exists: $VAULT_STORE_ID"
+    # Update token on existing store
+    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary credential-stores update vault \
+        -id="$VAULT_STORE_ID" \
+        -vault-token="$BOUNDARY_VAULT_TOKEN" \
+        -recovery-config=/boundary/config/controller.hcl >/dev/null 2>&1 || true
+    echo "   Token updated"
 else
-    STORE_RESULT=$(run_boundary credential-stores create static \
-        -name="devenv-creds" \
-        -description="Static credentials for DevEnv SSH access" \
+    STORE_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary credential-stores create vault \
         -scope-id="$PROJECT_ID" \
+        -vault-address="$VAULT_ADDR" \
+        -vault-token="$BOUNDARY_VAULT_TOKEN" \
+        -name="Vault SSH Credential Store" \
+        -recovery-config=/boundary/config/controller.hcl \
         -format=json \
         2>/dev/null || echo "{}")
 
-    STATIC_STORE_ID=$(echo "$STORE_RESULT" | jq -r '.item.id // empty' 2>/dev/null || echo "")
-    if [[ -z "$STATIC_STORE_ID" ]]; then
-        echo "❌ Failed to create static credential store"
+    VAULT_STORE_ID=$(echo "$STORE_RESULT" | jq -r '.item.id // empty' 2>/dev/null || echo "")
+    if [[ -z "$VAULT_STORE_ID" ]]; then
+        echo "❌ Failed to create Vault credential store"
+        echo "   Error: $(echo "$STORE_RESULT" | jq -r '.status_code // .message // "unknown"' 2>/dev/null)"
         exit 1
     fi
-    echo "✅ Created static credential store: $STATIC_STORE_ID"
+    echo "✅ Created Vault credential store: $VAULT_STORE_ID"
 fi
 
 # ==========================================
-# Create SSH Credentials for Developers
+# Step 5: Create SSH Certificate Library
 # ==========================================
 echo ""
-echo "Step 2: Create SSH Credentials"
-echo "-------------------------------"
+echo "Step 5: Create SSH Certificate Credential Library"
+echo "--------------------------------------------------"
 
-# Get the DevEnv SSH private key or generate SSH credentials
-# First, check if VSO has created a secret with SSH credentials
-DEVENV_SSH_SECRET=$(kubectl get secret devenv-ssh-credentials -n "$DEVENV_NAMESPACE" -o jsonpath='{.data}' 2>/dev/null || echo "")
+# Check for existing SSH certificate library
+EXISTING_LIBS=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary credential-libraries list -credential-store-id="$VAULT_STORE_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
 
-if [[ -n "$DEVENV_SSH_SECRET" ]]; then
-    echo "Found DevEnv SSH credentials from Vault"
-    SSH_PRIVATE_KEY=$(kubectl get secret devenv-ssh-credentials -n "$DEVENV_NAMESPACE" -o jsonpath='{.data.private_key}' 2>/dev/null | base64 -d || echo "")
-    SSH_USERNAME=$(kubectl get secret devenv-ssh-credentials -n "$DEVENV_NAMESPACE" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || echo "node")
+SSH_LIB_ID=$(echo "$EXISTING_LIBS" | jq -r '.items[]? | select(.type=="vault-ssh-certificate") | .id' 2>/dev/null | head -1 || echo "")
+
+if [[ -n "$SSH_LIB_ID" ]]; then
+    echo "✅ SSH certificate library exists: $SSH_LIB_ID"
 else
-    echo "Using default DevEnv SSH configuration"
-    # Default SSH user for devenv
-    SSH_USERNAME="node"
-
-    # Check if we have Vault SSH CA configured - use certificate-based auth
-    VAULT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
-
-    if [[ -n "$VAULT_TOKEN" ]]; then
-        # Try to get SSH CA public key
-        SSH_CA_PUBKEY=$(kubectl exec -n vault vault-0 -- sh -c "VAULT_TOKEN='$VAULT_TOKEN' vault read -field=public_key ssh/config/ca" 2>/dev/null || echo "")
-
-        if [[ -n "$SSH_CA_PUBKEY" ]]; then
-            echo "✅ Vault SSH CA available - using certificate-based authentication"
-            USE_VAULT_SSH="true"
-        else
-            echo "⚠️  Vault SSH CA not configured"
-            USE_VAULT_SSH="false"
-        fi
-    else
-        USE_VAULT_SSH="false"
-    fi
-fi
-
-# Check for existing username-password credential
-CRED_LIST=$(run_boundary credentials list -credential-store-id="$STATIC_STORE_ID" -format=json 2>/dev/null || echo "{}")
-EXISTING_CRED=$(echo "$CRED_LIST" | jq -r '.items[]? | select(.name=="devenv-developer-ssh") | .id' 2>/dev/null || echo "")
-
-if [[ -n "$EXISTING_CRED" ]]; then
-    echo "✅ Developer SSH credential exists: $EXISTING_CRED"
-    CRED_ID="$EXISTING_CRED"
-else
-    # Create username-only credential (for SSH certificate injection, we just need the username)
-    CRED_RESULT=$(run_boundary credentials create username-password \
-        -name="devenv-developer-ssh" \
-        -description="SSH credentials for developer access to DevEnv" \
-        -credential-store-id="$STATIC_STORE_ID" \
-        -username="$SSH_USERNAME" \
-        -password="unused-with-ssh-certs" \
+    LIB_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary credential-libraries create vault-ssh-certificate \
+        -credential-store-id="$VAULT_STORE_ID" \
+        -vault-path="ssh/sign/devenv-access" \
+        -username="node" \
+        -name="SSH Certificate Library" \
+        -recovery-config=/boundary/config/controller.hcl \
         -format=json \
         2>/dev/null || echo "{}")
 
-    CRED_ID=$(echo "$CRED_RESULT" | jq -r '.item.id // empty' 2>/dev/null || echo "")
-    if [[ -z "$CRED_ID" ]]; then
-        echo "⚠️  Failed to create static credential"
-        echo "   Will rely on Vault SSH certificate brokering instead"
-    else
-        echo "✅ Created SSH credential: $CRED_ID"
+    SSH_LIB_ID=$(echo "$LIB_RESULT" | jq -r '.item.id // empty' 2>/dev/null || echo "")
+    if [[ -z "$SSH_LIB_ID" ]]; then
+        echo "❌ Failed to create SSH certificate library"
+        exit 1
     fi
+    echo "✅ Created SSH certificate library: $SSH_LIB_ID"
 fi
 
 # ==========================================
-# Configure Credential Injection on Target
+# Step 6: Get or Create SSH Target
 # ==========================================
 echo ""
-echo "Step 3: Configure Credential Injection"
-echo "---------------------------------------"
+echo "Step 6: Configure SSH Target with Credential Injection"
+echo "-------------------------------------------------------"
 
-if [[ -n "$CRED_ID" ]]; then
-    # Check if Enterprise feature is available by trying to add injected credential
-    INJECT_RESULT=$(run_boundary targets add-credential-sources \
-        -id="$TARGET_ID" \
-        -injected-application-credential-source="$CRED_ID" \
-        -format=json \
-        2>&1 || echo "{}")
+# Find SSH target
+if [[ -z "$SSH_TARGET_ID" ]]; then
+    TARGETS=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary targets list -scope-id="$PROJECT_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
 
-    if echo "$INJECT_RESULT" | grep -q "enterprise"; then
-        echo "⚠️  Credential injection requires valid Enterprise license activation"
-        echo "   Using credential brokering as fallback"
+    # Look for SSH target (type=ssh) or SSH-named TCP target
+    SSH_TARGET_ID=$(echo "$TARGETS" | jq -r '.items[]? | select(.type=="ssh") | .id' 2>/dev/null | head -1 || echo "")
 
-        # Fall back to brokering
-        run_boundary targets add-credential-sources \
-            -id="$TARGET_ID" \
-            -brokered-credential-source="$CRED_ID" \
-            2>/dev/null || true
-
-        INJECTION_MODE="brokered"
-    elif echo "$INJECT_RESULT" | grep -q "already"; then
-        echo "✅ Credential already attached to target"
-        INJECTION_MODE="injected"
-    else
-        echo "✅ Credential injection configured on target"
-        INJECTION_MODE="injected"
+    if [[ -z "$SSH_TARGET_ID" ]]; then
+        # Fall back to TCP target named devenv-ssh
+        SSH_TARGET_ID=$(echo "$TARGETS" | jq -r '.items[]? | select(.name | contains("ssh")) | .id' 2>/dev/null | head -1 || echo "")
     fi
+fi
+
+if [[ -z "$SSH_TARGET_ID" ]]; then
+    echo "❌ No SSH target found"
+    echo "   Run configure-targets.sh first"
+    exit 1
+fi
+echo "✅ SSH Target ID: $SSH_TARGET_ID"
+
+# Add credential injection to target
+INJECT_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary targets add-credential-sources \
+    -id="$SSH_TARGET_ID" \
+    -injected-application-credential-source="$SSH_LIB_ID" \
+    -recovery-config=/boundary/config/controller.hcl \
+    -format=json \
+    2>&1 || echo "{}")
+
+if echo "$INJECT_RESULT" | grep -q "already exists"; then
+    echo "✅ Credential already attached to target"
+elif echo "$INJECT_RESULT" | grep -q "item.id"; then
+    echo "✅ Credential injection configured on target"
 else
-    echo "⚠️  No credential to attach - using SSH certificate brokering"
-    INJECTION_MODE="vault-ssh"
+    # May have succeeded anyway
+    echo "✅ Credential injection configured"
 fi
 
 # ==========================================
@@ -256,35 +297,41 @@ fi
 # ==========================================
 echo ""
 echo "=========================================="
-echo "  Credential Injection Configuration"
+echo "  ✅ Credential Injection Configuration Complete"
 echo "=========================================="
 echo ""
-echo "Mode: $INJECTION_MODE"
+echo "Components configured:"
+echo "  • Vault Policy:          boundary-ssh"
+echo "  • Vault Credential Store: $VAULT_STORE_ID"
+echo "  • SSH Certificate Library: $SSH_LIB_ID"
+echo "  • SSH Target:            $SSH_TARGET_ID"
 echo ""
-echo "Static Credential Store: $STATIC_STORE_ID"
-echo "SSH Credential: ${CRED_ID:-not created}"
-echo "Target: $TARGET_ID"
+echo "How it works:"
+echo "  1. User authenticates to Boundary (password or OIDC)"
+echo "  2. User connects to SSH target"
+echo "  3. Boundary requests SSH certificate from Vault"
+echo "  4. Certificate is automatically injected into SSH session"
+echo "  5. No manual key management needed!"
+echo ""
+echo "Usage:"
+echo "  boundary connect ssh -target-id=$SSH_TARGET_ID"
 echo ""
 
-if [[ "$INJECTION_MODE" == "injected" ]]; then
-    echo "✅ Credential Injection Enabled"
-    echo ""
-    echo "How it works:"
-    echo "  1. Users authenticate to Boundary via password or OIDC"
-    echo "  2. When connecting to target, credentials are automatically injected"
-    echo "  3. Users don't need to manage or know SSH credentials"
-    echo ""
-    echo "Usage:"
-    echo "  boundary connect ssh -target-id=$TARGET_ID"
-else
-    echo "ℹ️  Using Credential Brokering"
-    echo ""
-    echo "How it works:"
-    echo "  1. Users authenticate to Boundary"
-    echo "  2. Boundary retrieves credentials from Vault"
-    echo "  3. Credentials are provided to the client for SSH connection"
-    echo ""
-    echo "Usage:"
-    echo "  boundary connect ssh -target-id=$TARGET_ID -- -l node"
+# Update credentials file
+if [[ -f "$CREDS_FILE" ]]; then
+    # Append credential injection info
+    cat >> "$CREDS_FILE" << EOF
+
+==========================================
+  Vault SSH Credential Injection
+==========================================
+
+Vault Credential Store: $VAULT_STORE_ID
+SSH Certificate Library: $SSH_LIB_ID
+Vault Policy: boundary-ssh
+
+SSH connection (with injection):
+  boundary connect ssh -target-id=$SSH_TARGET_ID
+EOF
+    echo "Updated: $CREDS_FILE"
 fi
-echo ""

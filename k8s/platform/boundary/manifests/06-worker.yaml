@@ -39,7 +39,7 @@ spec:
                 - ALL
         # Generate config with KMS keys substituted
         - name: generate-config
-          image: bhgedigital/envsubst:1.0
+          image: bhgedigital/envsubst:latest
           command:
             - sh
             - -c
@@ -65,7 +65,7 @@ spec:
                 - ALL
       containers:
         - name: boundary-worker
-          image: hashicorp/boundary:0.20.1
+          image: hashicorp/boundary-enterprise:0.20.1-ent
           args:
             - server
             - -config=/boundary/config/worker.hcl

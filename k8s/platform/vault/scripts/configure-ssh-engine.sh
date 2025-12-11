@@ -69,6 +69,13 @@ kubectl create secret generic vault-ssh-ca \
     --dry-run=client -o yaml | kubectl apply -f -
 echo "✅ Secret 'vault-ssh-ca' created in devenv namespace"
 
+# Restart devenv pod to pick up the new SSH CA secret
+if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null 2>&1; then
+    echo "🔄 Restarting devenv sandbox to pick up SSH CA secret..."
+    kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
+    echo "   Pod will restart automatically. Wait for it to be Ready before connecting."
+fi
+
 echo ""
 echo "To use with devenv:"
 echo "  1. The SSH CA is automatically mounted to devenv pods"

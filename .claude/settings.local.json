@@ -76,7 +76,15 @@
       "Bash(kubectl describe:*)",
       "Bash(kubectl scale:*)",
       "WebFetch(domain:www.keycloak.org)",
-      "Bash(kubectl run:*)"
+      "Bash(kubectl run:*)",
+      "WebFetch(domain:developer.hashicorp.com)",
+      "Bash(grep:*)",
+      "Bash(export BOUNDARY_ADDR=https://boundary.local)",
+      "Bash(boundary scopes list:*)",
+      "Bash(boundary targets list:*)",
+      "Bash(export BOUNDARY_TLS_INSECURE=true)",
+      "Bash(boundary connect ssh -target-id=tssh_bu1SpYV1Zi:*)",
+      "Bash(kubectl patch:*)"
     ],
     "deny": [
       "Write(.gitignore)",

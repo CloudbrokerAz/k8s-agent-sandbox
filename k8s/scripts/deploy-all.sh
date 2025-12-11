@@ -605,6 +605,12 @@ EOF
                 --from-literal=vault-ssh-ca.pub="$SSH_CA_KEY" \
                 --dry-run=client -o yaml | kubectl apply -f -
             echo "✅ SSH CA configured and secret created"
+
+            # Restart devenv pod to pick up the new SSH CA secret
+            if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null 2>&1; then
+                echo "🔄 Restarting devenv sandbox to pick up SSH CA secret..."
+                kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
+            fi
         fi
 
         # Export Vault CA certificate for devenv pods
@@ -688,6 +694,12 @@ EOF
                     kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
                     kubectl create secret generic vault-ssh-ca --namespace=devenv --from-literal=vault-ssh-ca.pub="$SSH_CA_KEY" --dry-run=client -o yaml | kubectl apply -f -
                     echo "✅ SSH CA configured"
+
+                    # Restart devenv pod to pick up the new SSH CA secret
+                    if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null 2>&1; then
+                        echo "🔄 Restarting devenv sandbox to pick up SSH CA secret..."
+                        kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
+                    fi
                 fi
 
                 # Export Vault CA

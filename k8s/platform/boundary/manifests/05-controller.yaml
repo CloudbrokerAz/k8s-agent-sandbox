@@ -81,7 +81,7 @@ spec:
                 - ALL
       containers:
         - name: boundary-controller
-          image: hashicorp/boundary:0.20.1
+          image: hashicorp/boundary-enterprise:0.20.1-ent
           args:
             - server
             - -config=/boundary/config/controller.hcl
@@ -123,13 +123,12 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: BOUNDARY_POSTGRES_URL
               value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable"
-            # Enterprise license (optional - only if license secret exists)
+            # Enterprise license from secret
             - name: BOUNDARY_LICENSE
               valueFrom:
                 secretKeyRef:
                   name: boundary-license
                   key: license
-                  optional: true
           volumeMounts:
             - name: config
               mountPath: /boundary/config

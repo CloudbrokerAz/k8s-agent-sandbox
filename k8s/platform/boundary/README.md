@@ -1,15 +1,16 @@
 # HashiCorp Boundary on Kubernetes
 
-Deploy HashiCorp Boundary to provide secure access to your devenv pods.
+Deploy HashiCorp Boundary Enterprise to provide secure access to your devenv pods with credential injection.
 
-**Current Version:** 0.20.1
+**Current Version:** 0.20.1-ent (Enterprise)
 
 ## Overview
 
 Boundary provides identity-based access management for dynamic infrastructure. This deployment integrates with the devenv StatefulSet to provide:
 
 - **Secure SSH access** to devenv pods via Boundary proxy
-- **Session recording** and audit logs
+- **Credential injection** - Vault SSH certificates automatically injected (Enterprise)
+- **OIDC authentication** via Keycloak
 - **Identity-based access control**
 - **No VPN required** - just authenticate and connect
 
@@ -25,6 +26,7 @@ Boundary provides identity-based access management for dynamic infrastructure. T
 │  │                                                                     │   │
 │  │  boundary.local ────────► Controller API :9200 (TLS termination)   │   │
 │  │  boundary-worker.local ──► Worker Proxy :9202 (TLS termination)    │   │
+│  │  keycloak.local ─────────► Keycloak :8080 (OIDC Provider)          │   │
 │  └────────────────────────────────────────────────────────────────────┘   │
 │                                                                            │
 │  ┌────────────────────────────────────────────────────────────────────┐   │
@@ -35,24 +37,59 @@ Boundary provides identity-based access management for dynamic infrastructure. T
 │  │  │   :5432  │    │  :9200 (API)    │    │  :9202 (Proxy)  │       │   │
 │  │  └──────────┘    │  :9201 (Cluster)│    │  :9203 (Health) │       │   │
 │  │                  │  :9203 (Health) │    └────────┬────────┘       │   │
-│  │                  └─────────────────┘             │                 │   │
+│  │                  └────────┬────────┘             │                 │   │
+│  └───────────────────────────┼─────────────────────┼─────────────────┘   │
+│                              │                      │                     │
+│  ┌───────────────────────────┼─────────────────────┼─────────────────┐   │
+│  │                    vault namespace              │                  │   │
+│  │                           │                     │                  │   │
+│  │    ┌──────────────────────▼─────────────────┐   │                  │   │
+│  │    │  Vault (SSH CA)                        │   │                  │   │
+│  │    │  - SSH secrets engine                  │   │                  │   │
+│  │    │  - Certificate signing (devenv-access) │   │                  │   │
+│  │    └────────────────────────────────────────┘   │                  │   │
 │  └─────────────────────────────────────────────────┼─────────────────┘   │
 │                                                     │                     │
 │  ┌─────────────────────────────────────────────────┼─────────────────┐   │
 │  │                      devenv namespace           │                  │   │
 │  │                                                 ▼                  │   │
 │  │              ┌────────────────────────────────────┐               │   │
-│  │              │    devenv-0, devenv-1, ...         │               │   │
-│  │              │           SSH :22                  │               │   │
+│  │              │    claude-code-sandbox             │               │   │
+│  │              │    (SSH :22 - trusts Vault CA)     │               │   │
 │  │              └────────────────────────────────────┘               │   │
 │  └────────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────────────┘
          ▲
-         │ boundary connect ssh (via https://boundary.local)
+         │ boundary connect ssh -target-id=tssh_xxx
+         │ (certificate automatically injected)
          │
     ┌────┴────┐
     │  User   │
     └─────────┘
+```
+
+### Credential Injection Flow
+
+```
+┌──────────┐     1. Authenticate      ┌────────────────┐     2. OIDC      ┌──────────────┐
+│   User   │ ────────────────────────►│    Boundary    │ ◄───────────────►│   Keycloak   │
+│          │                          │   Controller   │                  │              │
+└──────────┘                          └────────────────┘                  └──────────────┘
+     │                                        │
+     │  3. Connect to SSH Target              │
+     │                                        │ 4. Request SSH Cert
+     ▼                                        ▼
+┌──────────┐                          ┌────────────────┐
+│ Boundary │                          │     Vault      │
+│  Worker  │ ◄────────────────────────│   (SSH CA)     │
+└──────────┘  5. Inject Certificate   └────────────────┘
+     │
+     │  6. SSH with Signed Certificate
+     ▼
+┌──────────────────┐
+│  DevEnv Pod      │
+│  (trusts CA)     │
+└──────────────────┘
 ```
 
 ## Ingress Access
@@ -155,8 +192,8 @@ boundary/
 │   ├── 02-secrets.yaml            # Secret templates (don't apply directly)
 │   ├── 03-configmap.yaml          # Boundary HCL configurations
 │   ├── 04-postgres.yaml           # PostgreSQL StatefulSet
-│   ├── 05-controller.yaml         # Boundary controller deployment
-│   ├── 06-worker.yaml             # Boundary worker deployment
+│   ├── 05-controller.yaml         # Boundary Enterprise controller deployment
+│   ├── 06-worker.yaml             # Boundary Enterprise worker deployment
 │   ├── 07-service.yaml            # Services (API, cluster, proxy)
 │   ├── 08-networkpolicy.yaml      # Network isolation
 │   ├── 09-tls-secret.yaml         # Controller TLS certificate
@@ -165,11 +202,19 @@ boundary/
 │   ├── 12-worker-ingress.yaml     # Worker ingress
 │   └── kustomization.yaml         # Kustomize config
 ├── scripts/
-│   ├── create-boundary-secrets.sh  # Generate and create secrets
-│   ├── deploy-boundary.sh          # Deploy all components
-│   ├── init-boundary.sh            # Setup guide
-│   ├── add-license.sh              # Add enterprise license
-│   └── teardown-boundary.sh        # Remove deployment
+│   ├── create-boundary-secrets.sh     # Generate and create secrets
+│   ├── deploy-boundary.sh             # Deploy all components
+│   ├── init-boundary.sh               # Setup guide
+│   ├── add-license.sh                 # Add enterprise license
+│   ├── configure-targets.sh           # Configure scopes, hosts, targets
+│   ├── configure-oidc-auth.sh         # Configure Keycloak OIDC
+│   ├── configure-credential-injection.sh  # Setup Vault SSH credential injection
+│   ├── teardown-boundary.sh           # Remove deployment
+│   └── tests/                         # Test scripts
+│       ├── test-deployment.sh         # Test pod health
+│       ├── test-authentication.sh     # Test auth methods
+│       ├── test-targets.sh            # Test target connectivity
+│       └── run-all-tests.sh           # Run all tests
 └── README.md
 ```
 
@@ -254,12 +299,74 @@ BOUNDARY_LICENSE="02MV4UU43BK5..." ./create-boundary-secrets.sh
 With Enterprise, Boundary injects Vault-signed SSH certificates directly into sessions:
 
 ```bash
-# User experience (Enterprise)
-boundary connect ssh -target-id=devenv-ssh
-# → Seamless passwordless connection
+# User experience (Enterprise with credential injection)
+boundary connect ssh -target-id=tssh_bu1SpYV1Zi
+# → Seamless passwordless connection - certificate automatically injected
 
-# User experience (Community)
-# → Credentials brokered, manual configuration required
+# User experience (Community with credential brokering)
+boundary connect ssh -target-id=ttcp_xxx -- -l node
+# → Credentials brokered, manual key configuration required
+```
+
+### Configuring Credential Injection
+
+After deploying Boundary Enterprise with a valid license:
+
+```bash
+# 1. Ensure Vault SSH CA is configured
+./platform/vault/scripts/configure-ssh-engine.sh
+
+# 2. Configure credential injection
+./scripts/configure-credential-injection.sh
+```
+
+This script:
+1. Creates a Vault policy (`boundary-ssh`) for SSH certificate signing
+2. Creates an orphan, periodic Vault token for Boundary
+3. Creates a Vault credential store in Boundary
+4. Creates an SSH certificate credential library
+5. Attaches the credential library to the SSH target
+
+#### Manual Configuration (Reference)
+
+```bash
+# Create Vault credential store (requires proper token)
+boundary credential-stores create vault \
+  -scope-id=<project-id> \
+  -vault-address="http://vault.vault.svc.cluster.local:8200" \
+  -vault-token="<orphan-periodic-token>" \
+  -name="Vault SSH Credential Store"
+
+# Create SSH certificate credential library
+boundary credential-libraries create vault-ssh-certificate \
+  -credential-store-id=<store-id> \
+  -vault-path="ssh/sign/devenv-access" \
+  -username="node" \
+  -name="SSH Certificate Library"
+
+# Attach to SSH target with injection
+boundary targets add-credential-sources \
+  -id=<target-id> \
+  -injected-application-credential-source=<library-id>
+```
+
+#### Vault Token Requirements
+
+The token for Boundary's Vault credential store must be:
+- **Orphan** - so it doesn't get revoked when parent tokens expire
+- **Periodic** - so it can be renewed indefinitely
+- **Has specific capabilities** - see `boundary-ssh` policy:
+
+```hcl
+path "ssh/sign/devenv-access" {
+  capabilities = ["create", "update"]
+}
+path "auth/token/lookup-self" { capabilities = ["read"] }
+path "auth/token/renew-self" { capabilities = ["update"] }
+path "auth/token/revoke-self" { capabilities = ["update"] }
+path "sys/leases/renew" { capabilities = ["update"] }
+path "sys/leases/revoke" { capabilities = ["update"] }
+path "sys/capabilities-self" { capabilities = ["update"] }
 ```
 
 ## Security
@@ -305,11 +412,14 @@ kubectl rollout restart deployment/boundary-worker -n boundary
 
 ## Upgrade History
 
-### 0.20.1 (2025-12-11)
-- Upgraded from 0.17.2 to 0.20.1
+### 0.20.1-ent (2025-12-11)
+- Upgraded from 0.17.2 to 0.20.1 Enterprise
+- Switched to Enterprise image: `hashicorp/boundary-enterprise:0.20.1-ent`
+- Added credential injection with Vault SSH CA integration
 - Migrated worker configuration from `controllers` to `initial_upstreams`
 - Enabled external OIDC URL support with `-disable-discovered-config-validation` flag
 - Database schema migrated to 0.20.1
+- Added `configure-credential-injection.sh` for automated Vault integration
 - See [UPGRADE-0.20.1.md](UPGRADE-0.20.1.md) for detailed upgrade documentation
 
 ## Additional Resources
