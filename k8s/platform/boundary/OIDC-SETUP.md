@@ -78,8 +78,9 @@ In Keycloak, create a new client with these settings:
 
 **Valid Redirect URIs:**
 ```
+https://boundary.local/v1/auth-methods/oidc:authenticate:callback
 http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback
-http://boundary-controller-api.boundary.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback
+http://localhost:9200/v1/auth-methods/oidc:authenticate:callback
 ```
 
 **Client Scopes:**

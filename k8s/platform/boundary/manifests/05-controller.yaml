@@ -75,7 +75,7 @@ spec:
                 - ALL
       containers:
         - name: boundary-controller
-          image: hashicorp/boundary:latest
+          image: hashicorp/boundary:0.20.1
           args:
             - server
             - -config=/boundary/config/controller.hcl

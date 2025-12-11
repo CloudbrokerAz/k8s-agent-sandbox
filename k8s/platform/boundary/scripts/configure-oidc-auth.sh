@@ -117,19 +117,23 @@ run_boundary() {
     fi
 }
 
-# Keycloak configuration
-KEYCLOAK_URL="http://keycloak.${KEYCLOAK_NAMESPACE}.svc.cluster.local:8080"
+# Keycloak configuration - use external URLs for user access
+KEYCLOAK_EXTERNAL_URL="https://keycloak.local"
 KEYCLOAK_REALM="agent-sandbox"
 KEYCLOAK_CLIENT_ID="boundary"
-OIDC_ISSUER="${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}"
+OIDC_ISSUER="${KEYCLOAK_EXTERNAL_URL}/realms/${KEYCLOAK_REALM}"
 OIDC_DISCOVERY_URL="${OIDC_ISSUER}/.well-known/openid-configuration"
+
+# Boundary external URL
+BOUNDARY_EXTERNAL_URL="https://boundary.local"
 
 echo ""
 echo "Keycloak Configuration:"
-echo "  URL: $KEYCLOAK_URL"
+echo "  External URL: $KEYCLOAK_EXTERNAL_URL"
 echo "  Realm: $KEYCLOAK_REALM"
 echo "  Client ID: $KEYCLOAK_CLIENT_ID"
 echo "  Issuer: $OIDC_ISSUER"
+echo "  Boundary URL: $BOUNDARY_EXTERNAL_URL"
 echo ""
 
 # Function to get or create Boundary client in Keycloak and return its secret
@@ -193,8 +197,9 @@ get_keycloak_client_secret() {
                 "directAccessGrantsEnabled": false,
                 "serviceAccountsEnabled": false,
                 "redirectUris": [
+                    "https://boundary.local/v1/auth-methods/oidc:authenticate:callback",
                     "http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback",
-                    "http://boundary-controller-api.'"${BOUNDARY_NAMESPACE}"'.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback"
+                    "http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
                 ],
                 "webOrigins": ["*"],
                 "defaultClientScopes": ["openid", "profile", "email", "groups"]
@@ -280,8 +285,9 @@ else
             echo "    - Client ID: $KEYCLOAK_CLIENT_ID"
             echo "    - Client Protocol: openid-connect"
             echo "    - Access Type: confidential"
-            echo "    - Valid Redirect URIs: http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
-            echo "                           http://boundary-controller-api.${BOUNDARY_NAMESPACE}.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback"
+            echo "    - Valid Redirect URIs: https://boundary.local/v1/auth-methods/oidc:authenticate:callback"
+            echo "                           http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
+            echo "                           http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
             echo ""
 
             # Check if we're in non-interactive mode
@@ -304,7 +310,9 @@ else
         exit 1
     fi
 
-    # Create OIDC auth method
+    # Create OIDC auth method with external URLs and disabled discovery validation
+    # Note: Discovery validation is disabled because the Boundary controller pod
+    # cannot resolve external DNS names (keycloak.local), but users' browsers can.
     AUTH_RESULT=$(run_boundary auth-methods create oidc \
         -name="keycloak" \
         -description="Keycloak OIDC Authentication" \
@@ -313,7 +321,8 @@ else
         -client-id="$KEYCLOAK_CLIENT_ID" \
         -client-secret="env://KEYCLOAK_CLIENT_SECRET" \
         -signing-algorithm=RS256 \
-        -api-url-prefix="http://127.0.0.1:9200" \
+        -api-url-prefix="$BOUNDARY_EXTERNAL_URL" \
+        -disable-discovered-config-validation \
         -format=json \
         \
         <<< "$KEYCLOAK_CLIENT_SECRET" 2>/dev/null || echo "{}")
