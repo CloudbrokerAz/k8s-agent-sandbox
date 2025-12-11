@@ -2,6 +2,8 @@
 
 Deploy HashiCorp Boundary to provide secure access to your devenv pods.
 
+**Current Version:** 0.20.1
+
 ## Overview
 
 Boundary provides identity-based access management for dynamic infrastructure. This deployment integrates with the devenv StatefulSet to provide:
@@ -119,17 +121,30 @@ listener "tcp" {
 
 ### Worker Configuration
 
-The Boundary worker uses `initial_upstreams` to connect to the controller:
+The Boundary worker uses `initial_upstreams` to connect to the controller (as of Boundary 0.15+):
 
 ```hcl
 worker {
   name = "kubernetes-worker"
   initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
-  public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
+  public_addr = "boundary-worker.local:443"
 }
 ```
 
-Note: Older Boundary versions used `controllers` instead of `initial_upstreams`.
+**Note:** Boundary versions prior to 0.15 used `controllers` instead of `initial_upstreams`. This deployment uses version 0.20.1.
+
+### OIDC Configuration
+
+This deployment supports external OIDC URLs using the `-disable-discovered-config-validation` flag (available in Boundary 0.20+):
+
+```bash
+# OIDC configured with external Keycloak URL
+boundary auth-methods create oidc \
+  -issuer='https://keycloak.local/realms/agent-sandbox' \
+  -disable-discovered-config-validation
+```
+
+This allows using publicly accessible OIDC issuer URLs while bypassing strict discovery validation requirements.
 
 ## Directory Structure
 
@@ -287,6 +302,15 @@ kubectl rollout restart deployment/boundary-worker -n boundary
 ```bash
 ./scripts/teardown-boundary.sh
 ```
+
+## Upgrade History
+
+### 0.20.1 (2025-12-11)
+- Upgraded from 0.17.2 to 0.20.1
+- Migrated worker configuration from `controllers` to `initial_upstreams`
+- Enabled external OIDC URL support with `-disable-discovered-config-validation` flag
+- Database schema migrated to 0.20.1
+- See [UPGRADE-0.20.1.md](UPGRADE-0.20.1.md) for detailed upgrade documentation
 
 ## Additional Resources
 

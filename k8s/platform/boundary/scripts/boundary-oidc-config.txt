@@ -1,36 +1,33 @@
 ==========================================
-  Boundary OIDC Configuration
+  Boundary OIDC Configuration (v0.20.1)
 ==========================================
 
-Auth Method ID:     amoidc_oBVz9Ylsx1
-Issuer:             http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox
+Auth Method ID:     amoidc_Us9rH7Nwaa
+Issuer:             https://keycloak.local/realms/agent-sandbox
 API URL Prefix:     https://boundary.local
 Callback URL:       https://boundary.local/v1/auth-methods/oidc:authenticate:callback
 Client ID:          boundary
 Client Secret:      xNyk1zav3KM9VUuwm5zBjtQgX1rnZO5h
-State:              active-public ✅
-Note:               Using internal Keycloak URL for OIDC discovery (Boundary 0.17.2)
+State:              active-public
+Validation:         disabled (using -disable-discovered-config-validation)
 
 ==========================================
   Managed Groups
 ==========================================
 
-Admins Group:         ✅ Created managed group: keycloak-admins (mgoidc_W8usdDvnDv)
-mgoidc_W8usdDvnDv
-Developers Group:     ✅ Created managed group: keycloak-developers (mgoidc_P4Rw7mFzOX)
-mgoidc_P4Rw7mFzOX
-Readonly Group:       ✅ Created managed group: keycloak-readonly (mgoidc_D3ecTlFbGN)
-mgoidc_D3ecTlFbGN
+Admins Group:       mgoidc_CKeJM9PJU0 (keycloak-admins)
+Developers Group:   mgoidc_uqK0kwRBHb (keycloak-developers)
+Readonly Group:     mgoidc_MNSxOIMc6N (keycloak-readonly)
 
 ==========================================
   Group Mappings
 ==========================================
 
-Keycloak Group      → Boundary Access
+Keycloak Group      -> Boundary Access
 -----------------------------------------
-admins              → Full access (all operations)
-developers          → Connect access (read + authorize-session on targets)
-readonly            → List access (read + list on all resources)
+admins              -> Full access (all operations)
+developers          -> Connect access (read + authorize-session on targets)
+readonly            -> List access (read + list on all resources)
 
 ==========================================
   Keycloak Configuration Required
@@ -42,8 +39,8 @@ readonly            → List access (read + list on all resources)
    - Client Protocol: openid-connect
    - Access Type: confidential
    - Valid Redirect URIs:
+     * https://boundary.local/v1/auth-methods/oidc:authenticate:callback
      * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback
-     * http://boundary-controller-api.boundary.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback
 
 2. Configure client scopes to include 'groups' claim
 
@@ -58,12 +55,12 @@ readonly            → List access (read + list on all resources)
   Usage
 ==========================================
 
-1. Port forward to Boundary API:
-   kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200
+1. Access Boundary via browser:
+   https://boundary.local
 
-2. Authenticate with OIDC:
-   export BOUNDARY_ADDR=http://127.0.0.1:9200
-   boundary authenticate oidc -auth-method-id=amoidc_38nRYdknEd
+2. Or authenticate via CLI:
+   export BOUNDARY_ADDR=https://boundary.local
+   boundary authenticate oidc -auth-method-id=amoidc_Us9rH7Nwaa
 
 3. Your browser will open for Keycloak login
    - Login with Keycloak credentials
@@ -72,9 +69,12 @@ readonly            → List access (read + list on all resources)
 4. Connect to targets based on your group membership
 
 ==========================================
-  Testing OIDC Auth
+  Upgrade Notes (0.17.2 -> 0.20.1)
 ==========================================
 
-Run the test script:
-  ./test-oidc-auth.sh
+- Now using external issuer URL (https://keycloak.local)
+- Discovery validation disabled to support external URLs
+- Worker config uses initial_upstreams (not controllers)
+- Database migrated to 0.20.1 schema
 
+Updated: 2025-12-11

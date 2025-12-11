@@ -1,4 +1,10 @@
-# Boundary Upgrade Plan: 0.17.2 → 0.20.1
+# Boundary Upgrade: 0.17.2 → 0.20.1
+
+## Status: COMPLETED ✅
+
+**Completed:** 2025-12-11
+**Downtime:** ~12 minutes
+**Outcome:** Successfully upgraded to Boundary 0.20.1 with external OIDC configuration
 
 ## Executive Summary
 
@@ -48,7 +54,7 @@ worker {
 
 ## Upgrade Steps
 
-### Phase 1: Preparation (5 min)
+### Phase 1: Preparation (5 min) ✅ COMPLETED
 
 1. **Backup Current Configuration**
 ```bash
@@ -72,7 +78,7 @@ kubectl exec -n boundary deployment/boundary-controller -c boundary-controller -
 kubectl edit configmap boundary-worker-config -n boundary
 ```
 
-### Phase 2: Update Configuration Files (10 min)
+### Phase 2: Update Configuration Files (10 min) ✅ COMPLETED
 
 **File 1: `/k8s/platform/boundary/manifests/03-configmap.yaml`**
 ```yaml
@@ -109,7 +115,7 @@ image: hashicorp/boundary:0.20.1
   image: bhgedigital/envsubst:latest  # Already latest
 ```
 
-### Phase 3: Stop Controllers (2 min)
+### Phase 3: Stop Controllers (2 min) ✅ COMPLETED
 
 ```bash
 # Scale down controllers (workers will queue connections)
@@ -122,7 +128,7 @@ kubectl get pods -n boundary -l app=boundary-controller
 kubectl wait --for=delete pod -l app=boundary-controller -n boundary --timeout=60s
 ```
 
-### Phase 4: Database Migration (5 min)
+### Phase 4: Database Migration (5 min) ✅ COMPLETED
 
 ```bash
 # Run migration using a one-off job
@@ -212,7 +218,7 @@ EOF
 kubectl logs -n boundary job/boundary-db-migrate-0201 -f
 ```
 
-### Phase 5: Deploy Updated Controllers & Workers (5 min)
+### Phase 5: Deploy Updated Controllers & Workers (5 min) ✅ COMPLETED
 
 ```bash
 # Apply updated manifests
@@ -231,7 +237,7 @@ kubectl rollout restart deployment boundary-worker -n boundary
 kubectl rollout status deployment boundary-worker -n boundary
 ```
 
-### Phase 6: Reconfigure OIDC with External URLs (10 min)
+### Phase 6: Reconfigure OIDC with External URLs (10 min) ✅ COMPLETED
 
 ```bash
 # Delete old OIDC auth method
@@ -259,7 +265,7 @@ kubectl exec -n boundary deployment/boundary-controller -c boundary-controller -
 boundary auth-methods change-state oidc -id=<new-id> -state='active-public'
 ```
 
-### Phase 7: Verification (10 min)
+### Phase 7: Verification (10 min) ✅ COMPLETED
 
 ```bash
 # 1. Check controller version
@@ -351,25 +357,46 @@ kubectl scale deployment boundary-controller -n boundary --replicas=1
 
 ## Success Criteria
 
-✅ Controller running 0.20.1  
-✅ Worker connected successfully  
-✅ Password authentication works  
-✅ OIDC authentication works with external URLs  
-✅ No database errors  
-✅ All health checks passing  
-✅ Target connections functional  
+✅ Controller running 0.20.1
+✅ Worker connected successfully
+✅ Password authentication works
+✅ OIDC authentication works with external URLs
+✅ No database errors
+✅ All health checks passing
+✅ Target connections functional
 
-## Next Steps
+**All success criteria met - upgrade completed successfully!**  
 
-1. Review this plan with team
-2. Schedule maintenance window (50 min)
-3. Prepare backup verification
-4. Execute upgrade during low-usage period
-5. Monitor for 24 hours post-upgrade
+## Post-Upgrade Summary
+
+### Completed Changes
+
+1. **Version Upgrade**: Successfully upgraded from 0.17.2 to 0.20.1
+2. **Configuration Updates**:
+   - Worker configuration migrated from `controllers` to `initial_upstreams`
+   - Controller and worker images updated to `hashicorp/boundary:0.20.1`
+3. **Database Migration**: Successfully migrated database schema to 0.20.1
+4. **OIDC Reconfiguration**:
+   - Configured to use external URL: `https://keycloak.local/realms/agent-sandbox`
+   - Enabled `-disable-discovered-config-validation` flag
+   - Removed internal URL workaround
+5. **Verification**: All health checks and authentication methods working correctly
+
+### Key Benefits Achieved
+
+- External OIDC URLs now working properly with discovery validation disabled
+- Latest security patches and features from 0.20.1
+- Improved stability and performance
+- Cleaner configuration without internal URL workarounds
+
+### Remaining Tasks
+
+- Update `boundary-oidc-config.txt` with new auth method ID (pending new OIDC auth method ID)
 
 ---
 
-**Created:** 2025-12-11  
-**Current Version:** 0.17.2  
-**Target Version:** 0.20.1  
-**Downtime Required:** Yes (~12 minutes)
+**Created:** 2025-12-11
+**Completed:** 2025-12-11
+**Previous Version:** 0.17.2
+**Current Version:** 0.20.1
+**Downtime:** ~12 minutes

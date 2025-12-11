@@ -75,7 +75,7 @@ echo "  → Initializing Boundary database..."
 # Run database init as a one-time job
 kubectl run boundary-db-init \
     --namespace="$NAMESPACE" \
-    --image=hashicorp/boundary:latest \
+    --image=hashicorp/boundary:0.20.1 \
     --restart=Never \
     --env="POSTGRES_USER=$(kubectl get secret boundary-db-secrets -n $NAMESPACE -o jsonpath='{.data.POSTGRES_USER}' | base64 -d)" \
     --env="POSTGRES_PASSWORD=$(kubectl get secret boundary-db-secrets -n $NAMESPACE -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)" \
