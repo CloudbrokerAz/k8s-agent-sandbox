@@ -64,21 +64,58 @@ data:
     echo "========================================="
 
     # -----------------------------------------------------------------------------
+    # Background SSH Configuration
+    # Waits for sudo to be ready, then configures SSH CA and starts sshd
+    # -----------------------------------------------------------------------------
+    (
+      # Wait for sudo to be configured (check every 5 seconds, max 2 minutes)
+      for i in {1..24}; do
+        if sudo -n true 2>/dev/null; then
+          break
+        fi
+        sleep 5
+      done
+
+      # If sudo is available, configure SSH
+      if sudo -n true 2>/dev/null; then
+        # Configure Vault SSH CA (if mounted)
+        if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
+          sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub 2>/dev/null || true
+          sudo chmod 644 /etc/ssh/vault-ssh-ca.pub 2>/dev/null || true
+
+          # Add to sshd_config if not present
+          if ! sudo grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
+            echo "" | sudo tee -a /etc/ssh/sshd_config > /dev/null 2>&1
+            echo "# Vault SSH CA Authentication" | sudo tee -a /etc/ssh/sshd_config > /dev/null 2>&1
+            echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" | sudo tee -a /etc/ssh/sshd_config > /dev/null 2>&1
+            echo "AuthorizedPrincipalsFile none" | sudo tee -a /etc/ssh/sshd_config > /dev/null 2>&1
+          fi
+        fi
+
+        # Start SSH server (if not already running)
+        if ! pgrep -x sshd > /dev/null 2>&1; then
+          sudo mkdir -p /run/sshd 2>/dev/null || true
+          sudo /usr/sbin/sshd 2>/dev/null || true
+        fi
+      fi
+    ) &
+
+    # -----------------------------------------------------------------------------
     # 1. Configure Vault TLS CA Trust (requires root/sudo)
     # -----------------------------------------------------------------------------
     if [ -f /vault-ca/vault-ca.crt ]; then
         echo "[1/5] Configuring Vault TLS CA trust..."
-        if cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/vault-ca.crt 2>/dev/null; then
-            update-ca-certificates 2>/dev/null || true
-            echo "  ✓ Vault TLS CA trusted"
+        if sudo cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/vault-ca.crt 2>/dev/null; then
+            sudo update-ca-certificates 2>/dev/null || true
+            echo "  ✓ Vault TLS CA trusted system-wide"
         else
-            echo "  - Vault TLS CA: insufficient permissions, skipping system trust"
+            echo "  - Vault TLS CA: sudo not available, using NODE_EXTRA_CA_CERTS"
             # Set NODE_EXTRA_CA_CERTS for Node.js applications
             export NODE_EXTRA_CA_CERTS=/vault-ca/vault-ca.crt
-            echo "  ✓ Set NODE_EXTRA_CA_CERTS for application-level trust"
+            echo "  ✓ Set NODE_EXTRA_CA_CERTS for Node.js trust"
         fi
     else
-        echo "[1/5] Vault TLS CA not mounted, skipping..."
+        echo "[1/5] Vault TLS CA not mounted at /vault-ca/vault-ca.crt, skipping..."
     fi
 
     # -----------------------------------------------------------------------------
@@ -86,21 +123,21 @@ data:
     # -----------------------------------------------------------------------------
     if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
         echo "[2/5] Configuring Vault SSH CA..."
-        if cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub 2>/dev/null; then
-            chmod 644 /etc/ssh/vault-ssh-ca.pub 2>/dev/null || true
+        if sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub 2>/dev/null; then
+            sudo chmod 644 /etc/ssh/vault-ssh-ca.pub
             # Add TrustedUserCAKeys to sshd_config if not present
-            if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
-                echo "" >> /etc/ssh/sshd_config 2>/dev/null || true
-                echo "# Vault SSH CA Authentication" >> /etc/ssh/sshd_config 2>/dev/null || true
-                echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" >> /etc/ssh/sshd_config 2>/dev/null || true
-                echo "AuthorizedPrincipalsFile none" >> /etc/ssh/sshd_config 2>/dev/null || true
+            if ! sudo grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
+                echo "" | sudo tee -a /etc/ssh/sshd_config > /dev/null
+                echo "# Vault SSH CA Authentication" | sudo tee -a /etc/ssh/sshd_config > /dev/null
+                echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" | sudo tee -a /etc/ssh/sshd_config > /dev/null
+                echo "AuthorizedPrincipalsFile none" | sudo tee -a /etc/ssh/sshd_config > /dev/null
             fi
             echo "  ✓ Vault SSH CA configured"
         else
-            echo "  - Vault SSH CA: insufficient permissions, skipping"
+            echo "  - Vault SSH CA: sudo not available, SSH cert auth disabled"
         fi
     else
-        echo "[2/5] Vault SSH CA not mounted, skipping..."
+        echo "[2/5] Vault SSH CA not mounted at /vault-ssh-ca/vault-ssh-ca.pub, skipping..."
     fi
 
     # -----------------------------------------------------------------------------
@@ -109,11 +146,15 @@ data:
     echo "[3/5] Checking SSH server..."
     if command -v sshd &> /dev/null; then
         if pgrep -x sshd > /dev/null; then
-            echo "  ✓ SSH server already running (started by sshd feature)"
+            echo "  ✓ SSH server already running (PID: $(pgrep -x sshd | head -1))"
         else
-            # Try to start sshd without sudo (may fail, that's ok)
-            mkdir -p /run/sshd 2>/dev/null || true
-            /usr/sbin/sshd 2>/dev/null && echo "  ✓ SSH server started" || echo "  - SSH server requires root, use 'sshd' feature port"
+            # Start sshd with sudo
+            sudo mkdir -p /run/sshd 2>/dev/null || true
+            if sudo /usr/sbin/sshd 2>/dev/null; then
+                echo "  ✓ SSH server started"
+            else
+                echo "  - SSH server failed to start, use 'sshd' feature port 2222"
+            fi
         fi
     else
         echo "  - SSHD not installed"

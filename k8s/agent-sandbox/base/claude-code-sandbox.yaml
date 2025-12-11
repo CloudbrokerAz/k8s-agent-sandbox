@@ -97,41 +97,6 @@ spec:
         - name: CLAUDE_GITHUB_MCP_ENABLED
           value: "true"
 
-        # Lifecycle hook to configure SSH CA after container is fully started
-        # This runs AFTER all features (including sudo) are configured
-        lifecycle:
-          postStart:
-            exec:
-              command:
-              - /bin/bash
-              - -c
-              - |
-                # Wait for envbuilder to complete
-                while ! pgrep -f "code-server" > /dev/null 2>&1; do
-                  sleep 2
-                done
-                sleep 5
-
-                # Configure Vault SSH CA (if mounted)
-                if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
-                  sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
-                  sudo chmod 644 /etc/ssh/vault-ssh-ca.pub
-
-                  # Add to sshd_config if not present
-                  if ! sudo grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
-                    echo "" | sudo tee -a /etc/ssh/sshd_config > /dev/null
-                    echo "# Vault SSH CA Authentication" | sudo tee -a /etc/ssh/sshd_config > /dev/null
-                    echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" | sudo tee -a /etc/ssh/sshd_config > /dev/null
-                    echo "AuthorizedPrincipalsFile none" | sudo tee -a /etc/ssh/sshd_config > /dev/null
-                  fi
-                fi
-
-                # Start SSH server (if not already running)
-                if ! pgrep -x sshd > /dev/null 2>&1; then
-                  sudo mkdir -p /run/sshd
-                  sudo /usr/sbin/sshd
-                fi
-
         volumeMounts:
         - mountPath: /workspaces
           name: workspaces-pvc
