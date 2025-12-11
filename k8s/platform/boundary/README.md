@@ -161,6 +161,46 @@ boundary authenticate password -auth-method-id=<id> -login-name=admin
 boundary connect ssh -target-id=<target-id> -- -l node
 ```
 
+## Enterprise License
+
+For credential injection (passwordless SSH via Vault certificates), Boundary Enterprise is required.
+
+### Providing a License
+
+Set the license when creating secrets:
+
+```bash
+# Option 1: License file
+BOUNDARY_LICENSE_FILE=/path/to/license.hclic ./create-boundary-secrets.sh
+
+# Option 2: License string (env var)
+BOUNDARY_LICENSE="02MV4UU43BK5..." ./create-boundary-secrets.sh
+```
+
+### Community vs Enterprise Features
+
+| Feature | Community | Enterprise |
+|---------|-----------|------------|
+| SSH Targets | ✅ | ✅ |
+| Vault Credential Store | ✅ | ✅ |
+| Credential Brokering | ✅ | ✅ |
+| **Credential Injection** | ❌ | ✅ |
+| Session Recording | ❌ | ✅ |
+| Multi-hop Workers | ❌ | ✅ |
+
+### Credential Injection
+
+With Enterprise, Boundary injects Vault-signed SSH certificates directly into sessions:
+
+```bash
+# User experience (Enterprise)
+boundary connect ssh -target-id=devenv-ssh
+# → Seamless passwordless connection
+
+# User experience (Community)
+# → Credentials brokered, manual configuration required
+```
+
 ## Security
 
 - **Non-root containers**: All pods run as non-root users

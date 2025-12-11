@@ -56,6 +56,13 @@ spec:
                 secretKeyRef:
                   name: boundary-kms-keys
                   key: BOUNDARY_WORKER_AUTH_KEY
+            # Enterprise license (optional - only if license secret exists)
+            - name: BOUNDARY_LICENSE
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-license
+                  key: license
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /boundary/config

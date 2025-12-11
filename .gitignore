@@ -46,3 +46,7 @@ configstore/
 sandbox.auto.tfvars
 sandbox.backend.tf
 
+
+# HashiCorp license files
+*.hclic
+k8s/scripts/license/

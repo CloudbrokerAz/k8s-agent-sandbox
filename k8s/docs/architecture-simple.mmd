@@ -24,9 +24,9 @@ flowchart TB
                 VaultEngines["Secrets Engines<br/>SSH CA │ KV │ TFE"]
             end
 
-            subgraph boundary["HashiCorp Boundary"]
+            subgraph boundary["HashiCorp Boundary (Enterprise)"]
                 BoundaryCtrl["Controller :9200"]
-                BoundaryWorker["Worker :9202"]
+                BoundaryWorker["Worker :9202<br/>Credential Injection"]
             end
 
             subgraph keycloak["Keycloak IDP"]

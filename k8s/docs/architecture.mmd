@@ -47,10 +47,10 @@ flowchart TB
             end
         end
 
-        subgraph boundary["boundary namespace"]
+        subgraph boundary["boundary namespace (Enterprise)"]
             Postgres["PostgreSQL<br/>StatefulSet"]
             Controller["Boundary Controller<br/>:9200 API<br/>:9201 Cluster"]
-            Worker["Boundary Worker<br/>:9202 Proxy"]
+            Worker["Boundary Worker<br/>:9202 Proxy<br/>(Credential Injection)"]
             subgraph BoundaryConfig["Configuration"]
                 Scopes["Scopes<br/>(DevOps/Agent-Sandbox)"]
                 Targets["SSH Target<br/>(devenv-ssh)"]

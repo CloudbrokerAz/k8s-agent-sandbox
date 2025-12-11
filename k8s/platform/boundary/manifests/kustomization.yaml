@@ -5,7 +5,10 @@ namespace: boundary
 
 resources:
   - 01-namespace.yaml
-  # Note: 02-secrets.yaml is a template - create secrets via script
+  # Note: Secrets are created via script (create-boundary-secrets.sh):
+  #   - boundary-db-secrets (database credentials)
+  #   - boundary-kms-keys (encryption keys)
+  #   - boundary-license (Enterprise license - optional)
   - 03-configmap.yaml
   - 04-postgres.yaml
   - 05-controller.yaml

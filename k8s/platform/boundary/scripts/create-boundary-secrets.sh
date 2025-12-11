@@ -95,6 +95,37 @@ kubectl create secret generic boundary-kms-keys \
 
 echo "✅ KMS keys created"
 
+# Create Enterprise license secret if license file is provided
+# Default location: k8s/scripts/license/boundary.hclic
+DEFAULT_LICENSE_FILE="$SCRIPT_DIR/../../scripts/license/boundary.hclic"
+BOUNDARY_LICENSE_FILE="${BOUNDARY_LICENSE_FILE:-$DEFAULT_LICENSE_FILE}"
+
+if [[ -f "$BOUNDARY_LICENSE_FILE" ]]; then
+    echo ""
+    echo "🔑 Enterprise License"
+    echo "------------------------"
+    echo "   Using: $BOUNDARY_LICENSE_FILE"
+    kubectl create secret generic boundary-license \
+        --namespace="$NAMESPACE" \
+        --from-file=license="$BOUNDARY_LICENSE_FILE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    echo "✅ Enterprise license secret created"
+elif [[ -n "${BOUNDARY_LICENSE:-}" ]]; then
+    echo ""
+    echo "🔑 Enterprise License"
+    echo "------------------------"
+    kubectl create secret generic boundary-license \
+        --namespace="$NAMESPACE" \
+        --from-literal=license="$BOUNDARY_LICENSE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    echo "✅ Enterprise license secret created"
+else
+    echo ""
+    echo "ℹ️  No Enterprise license found"
+    echo "   Place license at: k8s/scripts/license/boundary.hclic"
+    echo "   Or set BOUNDARY_LICENSE_FILE env var"
+fi
+
 echo ""
 echo "=========================================="
 echo "  ⚠️  IMPORTANT: Save Recovery Key!"
