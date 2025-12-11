@@ -74,7 +74,9 @@
       "Bash(jq:*)",
       "Bash(chmod:*)",
       "Bash(kubectl describe:*)",
-      "Bash(kubectl scale:*)"
+      "Bash(kubectl scale:*)",
+      "WebFetch(domain:www.keycloak.org)",
+      "Bash(kubectl run:*)"
     ],
     "deny": [
       "Write(.gitignore)",
