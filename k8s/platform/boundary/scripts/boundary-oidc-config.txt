@@ -2,9 +2,14 @@
   Boundary OIDC Configuration
 ==========================================
 
-Auth Method ID:     amoidc_38nRYdknEd
+Auth Method ID:     amoidc_oBVz9Ylsx1
 Issuer:             http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox
+API URL Prefix:     https://boundary.local
+Callback URL:       https://boundary.local/v1/auth-methods/oidc:authenticate:callback
 Client ID:          boundary
+Client Secret:      xNyk1zav3KM9VUuwm5zBjtQgX1rnZO5h
+State:              active-public ✅
+Note:               Using internal Keycloak URL for OIDC discovery (Boundary 0.17.2)
 
 ==========================================
   Managed Groups
