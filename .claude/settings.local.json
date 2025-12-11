@@ -72,7 +72,9 @@
       "Bash(/Users/simon.lynch/git/k8s-agent-sandbox/k8s/scripts/tests/healthcheck.sh:*)",
       "Bash(kubectl label:*)",
       "Bash(jq:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl scale:*)"
     ],
     "deny": [
       "Write(.gitignore)",
