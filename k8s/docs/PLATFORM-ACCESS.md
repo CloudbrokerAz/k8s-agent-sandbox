@@ -7,23 +7,26 @@ This guide explains how to access platform services (Vault, Boundary, etc.) from
 ```
 ┌─────────────────────────────────────────────────┐
 │  Mac (localhost)                                │
-│  - /etc/hosts: vault.local → 127.0.0.1          │
-│  - Browser/curl → http://vault.local            │
+│  - /etc/hosts: *.local → 127.0.0.1              │
+│  - Browser/curl → https://*.local:443           │
 └────────────────┬────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────┐
 │  KIND Cluster                                   │
 │  - Host ports: 80→80, 443→443                   │
-│  - NGINX Ingress Controller                     │
-│    └─ Routes vault.local → vault:8200           │
+│  - NGINX Ingress Controller (TLS termination)   │
+│    ├─ vault.local → vault:8200                  │
+│    ├─ boundary.local → boundary:9200            │
+│    └─ keycloak.local → keycloak:8080            │
 └─────────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────┐
 │  Services                                       │
 │  - vault:8200 (ClusterIP)                       │
-│  - boundary:9200 (ClusterIP)                    │
+│  - boundary-controller-api:9200 (ClusterIP)     │
+│  - keycloak:8080 (ClusterIP)                    │
 │  - code-server:13337 (ClusterIP)                │
 └─────────────────────────────────────────────────┘
 ```
@@ -77,11 +80,17 @@ This installs the NGINX Ingress Controller optimized for KIND clusters.
 ### 2. Apply Ingress Resources
 
 ```bash
-# Vault
+# Vault (includes TLS secret)
+kubectl apply -f k8s/platform/vault/manifests/08-tls-secret.yaml
 kubectl apply -f k8s/platform/vault/manifests/07-ingress.yaml
 
-# Boundary (if you create it)
-kubectl apply -f k8s/platform/boundary/manifests/08-ingress.yaml
+# Boundary (includes TLS secret)
+kubectl apply -f k8s/platform/boundary/manifests/09-tls-secret.yaml
+kubectl apply -f k8s/platform/boundary/manifests/10-ingress.yaml
+
+# Keycloak (includes TLS secret)
+kubectl apply -f k8s/platform/keycloak/manifests/07-tls-secret.yaml
+kubectl apply -f k8s/platform/keycloak/manifests/08-ingress.yaml
 ```
 
 ### 3. Update /etc/hosts
@@ -101,6 +110,7 @@ This adds entries like:
 ```
 127.0.0.1    vault.local
 127.0.0.1    boundary.local
+127.0.0.1    boundary-worker.local
 127.0.0.1    code-server.local
 127.0.0.1    keycloak.local
 ```
@@ -123,14 +133,14 @@ VERBOSE=true ./test-platform-access.sh
 ### Vault
 
 ```bash
-# UI
-open http://vault.local
+# UI (HTTPS with self-signed cert)
+open https://vault.local
 
-# API
-curl http://vault.local/v1/sys/health
+# API (use -k to skip cert verification for self-signed)
+curl -k https://vault.local/v1/sys/health
 
 # Seal status
-curl http://vault.local/v1/sys/seal-status | jq
+curl -k https://vault.local/v1/sys/seal-status | jq
 
 # Get token
 grep "Root Token" k8s/platform/vault/scripts/vault-keys.txt
@@ -139,11 +149,21 @@ grep "Root Token" k8s/platform/vault/scripts/vault-keys.txt
 ### Boundary
 
 ```bash
-# UI (once ingress is created)
-open http://boundary.local:9200
+# UI (HTTPS with self-signed cert)
+open https://boundary.local
 
 # CLI
+export BOUNDARY_ADDR=https://boundary.local
 boundary authenticate
+```
+
+### Keycloak
+
+```bash
+# Admin Console (HTTPS with self-signed cert)
+open https://keycloak.local
+
+# Default credentials: admin / admin123!@#
 ```
 
 ### Code Server
@@ -296,22 +316,51 @@ VERBOSE=true ./test-platform-access.sh
 
 1. **Local Development Only**: This setup is for local KIND clusters only
 2. **/etc/hosts requires sudo**: The update-hosts.sh script needs root access
-3. **Unencrypted HTTP**: Services use HTTP (not HTTPS) for simplicity
+3. **Self-Signed Certificates**: Services use HTTPS with self-signed certificates
+   - Your browser will show a security warning (expected for local development)
+   - Use `curl -k` or `--insecure` to skip certificate verification
 4. **Root tokens**: Keep vault-keys.txt secure (already in .gitignore)
 
 ## Adding New Services
 
 To expose a new service:
 
-1. Create ingress manifest (e.g., `platform/myservice/manifests/XX-ingress.yaml`):
+1. Generate self-signed TLS certificate:
+```bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout myservice.key -out myservice.crt -subj "/CN=myservice.local"
+```
+
+2. Create TLS secret manifest (e.g., `platform/myservice/manifests/XX-tls-secret.yaml`):
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: myservice-tls
+  namespace: myservice
+type: kubernetes.io/tls
+data:
+  tls.crt: <base64-encoded-cert>
+  tls.key: <base64-encoded-key>
+```
+
+3. Create ingress manifest (e.g., `platform/myservice/manifests/XX-ingress.yaml`):
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: myservice
   namespace: myservice
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - myservice.local
+      secretName: myservice-tls
   rules:
     - host: myservice.local
       http:
@@ -325,22 +374,24 @@ spec:
                   number: 8080
 ```
 
-2. Add hostname to `scripts/update-hosts.sh`:
+4. Add hostname to `scripts/update-hosts.sh`:
 ```bash
 SERVICES=(
     "vault.local"
     "boundary.local"
+    "boundary-worker.local"
     "code-server.local"
     "keycloak.local"
     "myservice.local"  # Add this
 )
 ```
 
-3. Apply and test:
+5. Apply and test:
 ```bash
+kubectl apply -f platform/myservice/manifests/XX-tls-secret.yaml
 kubectl apply -f platform/myservice/manifests/XX-ingress.yaml
 sudo ./scripts/update-hosts.sh add
-curl http://myservice.local
+curl -k https://myservice.local
 ```
 
 ## CI/CD Integration
