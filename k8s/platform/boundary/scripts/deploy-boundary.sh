@@ -39,7 +39,14 @@ if ! kubectl get secret boundary-kms-keys -n "$NAMESPACE" &> /dev/null; then
     exit 1
 fi
 
-echo "✅ Secrets verified"
+# Check for Enterprise license (optional)
+if kubectl get secret boundary-license -n "$NAMESPACE" &> /dev/null; then
+    echo "✅ Secrets verified (Enterprise license found)"
+    ENTERPRISE_MODE=true
+else
+    echo "✅ Secrets verified (Community Edition - no license)"
+    ENTERPRISE_MODE=false
+fi
 echo ""
 
 # Check manifests directory
@@ -157,7 +164,13 @@ kubectl rollout status deployment/boundary-worker -n "$NAMESPACE" --timeout=120s
 
 echo ""
 echo "=========================================="
-echo "  ✅ Boundary Deployed Successfully"
+if [[ "$ENTERPRISE_MODE" == "true" ]]; then
+    echo "  ✅ Boundary Enterprise Deployed Successfully"
+    echo "     (Credential Injection enabled)"
+else
+    echo "  ✅ Boundary Community Deployed Successfully"
+    echo "     (Credential Brokering only - no injection)"
+fi
 echo "=========================================="
 echo ""
 echo "Components:"

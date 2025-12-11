@@ -37,9 +37,35 @@ spec:
             capabilities:
               drop:
                 - ALL
+        # Generate config with KMS keys substituted
+        - name: generate-config
+          image: bhgedigital/envsubst:latest
+          command:
+            - sh
+            - -c
+            - |
+              envsubst < /boundary/config-template/worker.hcl > /boundary/config/worker.hcl
+              echo "Config generated successfully"
+          env:
+            - name: BOUNDARY_WORKER_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-kms-keys
+                  key: BOUNDARY_WORKER_AUTH_KEY
+          volumeMounts:
+            - name: config-template
+              mountPath: /boundary/config-template
+              readOnly: true
+            - name: config
+              mountPath: /boundary/config
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: boundary-worker
-          image: hashicorp/boundary:latest
+          image: hashicorp/boundary:0.17
           args:
             - server
             - -config=/boundary/config/worker.hcl
@@ -51,11 +77,6 @@ spec:
           env:
             - name: SKIP_SETCAP
               value: "true"
-            - name: BOUNDARY_WORKER_AUTH_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: boundary-kms-keys
-                  key: BOUNDARY_WORKER_AUTH_KEY
             # Enterprise license (optional - only if license secret exists)
             - name: BOUNDARY_LICENSE
               valueFrom:
@@ -66,7 +87,6 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /boundary/config
-              readOnly: true
           resources:
             requests:
               memory: "256Mi"
@@ -92,6 +112,8 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
       volumes:
-        - name: config
+        - name: config-template
           configMap:
             name: boundary-worker-config
+        - name: config
+          emptyDir: {}

@@ -58,7 +58,16 @@
       "Bash(.specify/scripts/bash/validate-env.sh:*)",
       "WebFetch(domain:github.com)",
       "Bash(npx ccstatusline@latest:*)",
-      "Bash(npm run health:*)"
+      "Bash(npm run health:*)",
+      "Bash(./create-boundary-secrets.sh)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(kubectl rollout:*)",
+      "Bash(kubectl delete:*)",
+      "Bash(./deploy-boundary.sh:*)",
+      "Bash(printf:*)",
+      "Bash(kubectl apply:*)",
+      "Bash(kubectl exec:*)"
     ],
     "deny": [
       "Write(.gitignore)",

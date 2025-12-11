@@ -3,9 +3,15 @@ set -euo pipefail
 
 # Create Boundary secrets for Kubernetes deployment
 # Following pattern from scripts/create-secrets.sh in the k8s root
+#
+# Usage:
+#   ./create-boundary-secrets.sh [namespace]
+#   INTERACTIVE=true ./create-boundary-secrets.sh  # Prompt for values
+#   BOUNDARY_LICENSE_FILE=/path/to/license.hclic ./create-boundary-secrets.sh
 
 NAMESPACE="${1:-boundary}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INTERACTIVE="${INTERACTIVE:-false}"
 
 echo "=========================================="
 echo "  Boundary Secrets Creation"
@@ -37,26 +43,30 @@ generate_key() {
     openssl rand -base64 32 | tr -d '\n'
 }
 
-# Function to read secret with prompt
+# Function to read secret with prompt (or use default in non-interactive mode)
 read_secret() {
     local prompt="$1"
     local var_name="$2"
     local default="$3"
 
-    if [[ -n "$default" ]]; then
+    if [[ "$INTERACTIVE" != "true" ]]; then
+        # Non-interactive (default): use default value
+        eval "$var_name='$default'"
+        echo "$prompt: (using default)"
+    elif [[ -n "$default" ]]; then
         echo -n "$prompt [auto-generated]: "
         read -r value
         if [[ -z "$value" ]]; then
             value="$default"
             echo "  → Using generated value"
         fi
+        eval "$var_name='$value'"
     else
         echo -n "$prompt: "
         read -rs value
         echo ""
+        eval "$var_name='$value'"
     fi
-
-    eval "$var_name='$value'"
 }
 
 echo "📦 Database Credentials"
@@ -65,39 +75,44 @@ read_secret "PostgreSQL username" POSTGRES_USER "boundary"
 read_secret "PostgreSQL password (leave blank to generate)" POSTGRES_PASSWORD "$(generate_key)"
 
 echo ""
-echo "🔐 KMS Keys (AEAD)"
-echo "------------------------"
-echo "Generating cryptographic keys for Boundary..."
-BOUNDARY_ROOT_KEY=$(generate_key)
-BOUNDARY_WORKER_AUTH_KEY=$(generate_key)
-BOUNDARY_RECOVERY_KEY=$(generate_key)
-echo "✅ Keys generated"
-
-echo ""
 echo "Creating Kubernetes secrets..."
 
-# Create database secrets
-kubectl create secret generic boundary-db-secrets \
-    --namespace="$NAMESPACE" \
-    --from-literal=POSTGRES_USER="$POSTGRES_USER" \
-    --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-    --dry-run=client -o yaml | kubectl apply -f -
+# Check if secrets already exist (don't overwrite - database depends on original keys)
+if kubectl get secret boundary-db-secrets -n "$NAMESPACE" &>/dev/null; then
+    echo "✅ Database secrets already exist (skipping)"
+else
+    kubectl create secret generic boundary-db-secrets \
+        --namespace="$NAMESPACE" \
+        --from-literal=POSTGRES_USER="$POSTGRES_USER" \
+        --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+    echo "✅ Database secrets created"
+fi
 
-echo "✅ Database secrets created"
+if kubectl get secret boundary-kms-keys -n "$NAMESPACE" &>/dev/null; then
+    echo "✅ KMS keys already exist (skipping - database initialized with these keys)"
+else
+    echo ""
+    echo "🔐 KMS Keys (AEAD)"
+    echo "------------------------"
+    echo "Generating cryptographic keys for Boundary..."
+    BOUNDARY_ROOT_KEY=$(generate_key)
+    BOUNDARY_WORKER_AUTH_KEY=$(generate_key)
+    BOUNDARY_RECOVERY_KEY=$(generate_key)
 
-# Create KMS keys secrets
-kubectl create secret generic boundary-kms-keys \
-    --namespace="$NAMESPACE" \
-    --from-literal=BOUNDARY_ROOT_KEY="$BOUNDARY_ROOT_KEY" \
-    --from-literal=BOUNDARY_WORKER_AUTH_KEY="$BOUNDARY_WORKER_AUTH_KEY" \
-    --from-literal=BOUNDARY_RECOVERY_KEY="$BOUNDARY_RECOVERY_KEY" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret generic boundary-kms-keys \
+        --namespace="$NAMESPACE" \
+        --from-literal=BOUNDARY_ROOT_KEY="$BOUNDARY_ROOT_KEY" \
+        --from-literal=BOUNDARY_WORKER_AUTH_KEY="$BOUNDARY_WORKER_AUTH_KEY" \
+        --from-literal=BOUNDARY_RECOVERY_KEY="$BOUNDARY_RECOVERY_KEY"
+    echo "✅ KMS keys created"
 
-echo "✅ KMS keys created"
+    # Only show recovery key for new installations
+    SHOW_RECOVERY_KEY=true
+fi
 
 # Create Enterprise license secret if license file is provided
 # Default location: k8s/scripts/license/boundary.hclic
-DEFAULT_LICENSE_FILE="$SCRIPT_DIR/../../scripts/license/boundary.hclic"
+DEFAULT_LICENSE_FILE="$SCRIPT_DIR/../../../scripts/license/boundary.hclic"
 BOUNDARY_LICENSE_FILE="${BOUNDARY_LICENSE_FILE:-$DEFAULT_LICENSE_FILE}"
 
 if [[ -f "$BOUNDARY_LICENSE_FILE" ]]; then
@@ -126,16 +141,18 @@ else
     echo "   Or set BOUNDARY_LICENSE_FILE env var"
 fi
 
-echo ""
-echo "=========================================="
-echo "  ⚠️  IMPORTANT: Save Recovery Key!"
-echo "=========================================="
-echo ""
-echo "Recovery Key (save this securely):"
-echo "$BOUNDARY_RECOVERY_KEY"
-echo ""
-echo "This key is required for emergency recovery access."
-echo "Store it in a secure location (password manager, vault, etc.)"
+if [[ "${SHOW_RECOVERY_KEY:-false}" == "true" ]]; then
+    echo ""
+    echo "=========================================="
+    echo "  ⚠️  IMPORTANT: Save Recovery Key!"
+    echo "=========================================="
+    echo ""
+    echo "Recovery Key (save this securely):"
+    echo "$BOUNDARY_RECOVERY_KEY"
+    echo ""
+    echo "This key is required for emergency recovery access."
+    echo "Store it in a secure location (password manager, vault, etc.)"
+fi
 echo ""
 echo "=========================================="
 echo "  ✅ Secrets Created Successfully"
