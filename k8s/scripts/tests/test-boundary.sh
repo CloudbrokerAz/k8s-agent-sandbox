@@ -114,6 +114,66 @@ else
     test_fail "Worker service missing"
 fi
 
+# Check TLS secret
+if kubectl get secret boundary-tls -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
+    test_pass "TLS certificate secret exists"
+else
+    test_fail "TLS certificate secret missing"
+fi
+
+# Check Ingress
+if kubectl get ingress boundary -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
+    test_pass "Boundary Ingress exists"
+
+    # Check Ingress host
+    INGRESS_HOST=$(kubectl get ingress boundary -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
+    if [[ "$INGRESS_HOST" == "boundary.local" ]]; then
+        test_pass "Ingress host configured (boundary.local)"
+    else
+        test_warn "Ingress host: $INGRESS_HOST (expected: boundary.local)"
+    fi
+
+    # Check Ingress TLS
+    TLS_SECRET=$(kubectl get ingress boundary -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || echo "")
+    if [[ "$TLS_SECRET" == "boundary-tls" ]]; then
+        test_pass "Ingress TLS configured"
+    else
+        test_warn "Ingress TLS secret: $TLS_SECRET"
+    fi
+else
+    test_fail "Boundary Ingress missing"
+fi
+
+# Check Worker TLS secret
+if kubectl get secret boundary-worker-tls -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
+    test_pass "Worker TLS certificate secret exists"
+else
+    test_fail "Worker TLS certificate secret missing"
+fi
+
+# Check Worker Ingress
+if kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
+    test_pass "Boundary Worker Ingress exists"
+
+    # Check Worker Ingress host
+    WORKER_INGRESS_HOST=$(kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
+    if [[ "$WORKER_INGRESS_HOST" == "boundary-worker.local" ]]; then
+        test_pass "Worker Ingress host configured (boundary-worker.local)"
+    else
+        test_warn "Worker Ingress host: $WORKER_INGRESS_HOST (expected: boundary-worker.local)"
+    fi
+
+    # Check Worker Ingress TLS
+    WORKER_TLS_SECRET=$(kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || echo "")
+    if [[ "$WORKER_TLS_SECRET" == "boundary-worker-tls" ]]; then
+        test_pass "Worker Ingress TLS configured"
+    else
+        test_warn "Worker Ingress TLS secret: $WORKER_TLS_SECRET"
+    fi
+else
+    test_fail "Boundary Worker Ingress missing"
+fi
+
 echo ""
 
 # ==========================================

@@ -11,6 +11,8 @@ resources:
   - 04-deployment.yaml
   - 05-service.yaml
   - 06-realm-init.yaml
+  - 07-tls-secret.yaml
+  - 08-ingress.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: agent-sandbox-platform

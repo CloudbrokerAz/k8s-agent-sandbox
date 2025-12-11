@@ -12,6 +12,10 @@ resources:
   - 06-worker.yaml
   - 07-service.yaml
   - 08-networkpolicy.yaml
+  - 09-tls-secret.yaml
+  - 10-ingress.yaml
+  - 11-worker-tls-secret.yaml
+  - 12-worker-ingress.yaml
 
 commonLabels:
   app.kubernetes.io/name: boundary

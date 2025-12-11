@@ -1,0 +1,30 @@
+# Ingress resource for Boundary Controller API
+# Exposes the Boundary API via HTTPS at boundary.local
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: boundary
+  namespace: boundary
+  labels:
+    app: boundary
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - boundary.local
+      secretName: boundary-tls
+  rules:
+    - host: boundary.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: boundary-controller-api
+                port:
+                  number: 9200

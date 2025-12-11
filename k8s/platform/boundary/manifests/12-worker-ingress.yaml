@@ -1,0 +1,34 @@
+# Ingress for Boundary Worker to enable external SSH proxy access
+# This allows Boundary CLI to connect directly to the worker for SSH sessions
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: boundary-worker
+  namespace: boundary
+  labels:
+    app: boundary
+    component: worker
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Worker uses WebSocket for proxy connections
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - boundary-worker.local
+      secretName: boundary-worker-tls
+  rules:
+    - host: boundary-worker.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: boundary-worker
+                port:
+                  number: 9202

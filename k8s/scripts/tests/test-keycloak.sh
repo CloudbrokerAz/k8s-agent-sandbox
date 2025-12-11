@@ -96,6 +96,36 @@ else
     test_fail "Keycloak service missing"
 fi
 
+# Check TLS secret
+if kubectl get secret keycloak-tls -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
+    test_pass "TLS certificate secret exists"
+else
+    test_fail "TLS certificate secret missing"
+fi
+
+# Check Ingress
+if kubectl get ingress keycloak -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
+    test_pass "Keycloak Ingress exists"
+
+    # Check Ingress host
+    INGRESS_HOST=$(kubectl get ingress keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
+    if [[ "$INGRESS_HOST" == "keycloak.local" ]]; then
+        test_pass "Ingress host configured (keycloak.local)"
+    else
+        test_warn "Ingress host: $INGRESS_HOST (expected: keycloak.local)"
+    fi
+
+    # Check Ingress TLS
+    TLS_SECRET=$(kubectl get ingress keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || echo "")
+    if [[ "$TLS_SECRET" == "keycloak-tls" ]]; then
+        test_pass "Ingress TLS configured"
+    else
+        test_warn "Ingress TLS secret: $TLS_SECRET"
+    fi
+else
+    test_fail "Keycloak Ingress missing"
+fi
+
 echo ""
 
 # ==========================================

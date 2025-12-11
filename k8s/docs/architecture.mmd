@@ -5,6 +5,17 @@ flowchart TB
         VSCode["VS Code<br/>Remote SSH"]
         BoundaryCLI["Boundary CLI"]
         VaultCLI["Vault CLI"]
+        Browser["Web Browser"]
+    end
+
+    subgraph ingress["ingress-nginx namespace"]
+        IngressController["NGINX Ingress Controller"]
+        subgraph IngressRoutes["Ingress Routes (TLS)"]
+            VaultIngress["vault.local:443"]
+            BoundaryIngress["boundary.local:443"]
+            BoundaryWorkerIngress["boundary-worker.local:443"]
+            KeycloakIngress["keycloak.local:443"]
+        end
     end
 
     subgraph K8s["Kubernetes Cluster"]
@@ -73,22 +84,34 @@ flowchart TB
     User --> BoundaryCLI
     User --> VaultCLI
     User --> VSCode
+    User --> Browser
 
-    %% Boundary Authentication Flow
-    BoundaryCLI -->|"1. Authenticate OIDC"| Controller
-    Controller -->|"2. OIDC Redirect"| KeycloakSVC
-    KeycloakSVC -->|"3. Validate & Return Token"| Controller
-    Controller -->|"4. Session Token"| BoundaryCLI
+    %% Ingress Flows
+    Browser -->|"HTTPS"| IngressController
+    VaultCLI -->|"HTTPS"| IngressController
+    IngressController --> VaultIngress
+    IngressController --> BoundaryIngress
+    IngressController --> BoundaryWorkerIngress
+    IngressController --> KeycloakIngress
+    VaultIngress -->|"HTTP"| VaultSVC
+    BoundaryIngress -->|"HTTP"| Controller
+    BoundaryWorkerIngress -->|"HTTP"| Worker
+    KeycloakIngress -->|"HTTP"| KeycloakSVC
 
-    %% Boundary SSH Access Flow (via Worker)
-    BoundaryCLI -->|"5. Connect SSH"| Controller
-    Controller -->|"6. Authorize Session"| Worker
-    Worker -->|"7. SSH Proxy"| SandboxSVC
+    %% Boundary CLI connects via Ingress
+    BoundaryCLI -->|"HTTPS"| IngressController
+
+    %% Boundary Authentication Flow (internal after ingress)
+    Controller -->|"OIDC Redirect"| KeycloakSVC
+    KeycloakSVC -->|"Validate & Return Token"| Controller
+
+    %% Boundary SSH Access Flow (internal)
+    Controller -->|"Authorize Session"| Worker
+    Worker -->|"SSH Proxy"| SandboxSVC
     SandboxSVC --> DevContainer
 
-    %% VS Code SSH via Boundary (through local proxy)
+    %% VS Code SSH via Boundary (through local proxy then ingress)
     VSCode -->|"SSH to localhost:2222"| BoundaryCLI
-    BoundaryCLI -->|"Tunnel via Worker"| Worker
 
     %% Credential Brokering Flow
     CredStore -->|"Token"| VaultSVC
@@ -151,8 +174,9 @@ flowchart TB
     classDef secret fill:#E8F5E9,stroke:#4CAF50,color:#000
     classDef storage fill:#607D8B,stroke:#455A64,color:#fff
     classDef config fill:#8BC34A,stroke:#558B2F,color:#fff
+    classDef ingress fill:#4DB6AC,stroke:#00897B,color:#fff
 
-    class User,VSCode,BoundaryCLI,VaultCLI external
+    class User,VSCode,BoundaryCLI,VaultCLI,Browser external
     class VaultPod,VaultSVC,KV,SSH,TFE vault
     class Controller,Worker,Postgres,Scopes,Targets,CredStore,CredLib boundary
     class KeycloakPod,KeycloakDB,KeycloakSVC,Realm,Client,Users,Groups keycloak
@@ -161,3 +185,4 @@ flowchart TB
     class DevEnvSecrets,TFEToken,SSHCA,VaultTLSCA secret
     class WorkspacePVC,ConfigPVC,HistoryPVC storage
     class DevContainerCM config
+    class IngressController,VaultIngress,BoundaryIngress,BoundaryWorkerIngress,KeycloakIngress ingress

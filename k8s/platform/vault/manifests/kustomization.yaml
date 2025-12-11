@@ -9,6 +9,8 @@ resources:
   - 04-rbac.yaml
   - 05-statefulset.yaml
   - 06-service.yaml
+  - 07-ingress.yaml
+  - 08-tls-secret.yaml
 
 labels:
   - pairs:

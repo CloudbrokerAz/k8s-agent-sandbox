@@ -136,6 +136,18 @@ else
     echo "  ⚠️  NetworkPolicy skipped (CNI may not support it)"
 fi
 
+echo "  → Applying TLS Certificate..."
+kubectl apply -f "$MANIFESTS_DIR/09-tls-secret.yaml"
+
+echo "  → Applying Ingress Resource..."
+kubectl apply -f "$MANIFESTS_DIR/10-ingress.yaml"
+
+echo "  → Applying Worker TLS Certificate..."
+kubectl apply -f "$MANIFESTS_DIR/11-worker-tls-secret.yaml"
+
+echo "  → Applying Worker Ingress Resource..."
+kubectl apply -f "$MANIFESTS_DIR/12-worker-ingress.yaml"
+
 echo ""
 echo "  → Waiting for Controller to be ready..."
 kubectl rollout status deployment/boundary-controller -n "$NAMESPACE" --timeout=180s
@@ -154,11 +166,16 @@ echo ""
 echo "Services:"
 kubectl get svc -n "$NAMESPACE"
 echo ""
+echo "Ingress:"
+kubectl get ingress -n "$NAMESPACE"
+echo ""
 echo "Next steps:"
-echo "  1. Port-forward to access Boundary API:"
+echo "  1. Access Boundary via Ingress at: https://boundary.local"
+echo "     Worker available at: https://boundary-worker.local"
+echo "     (Add '127.0.0.1 boundary.local boundary-worker.local' to /etc/hosts if needed)"
+echo ""
+echo "  2. Or port-forward to access Boundary API:"
 echo "     kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200"
 echo ""
-echo "  2. Initialize Boundary configuration:"
+echo "  3. Initialize Boundary configuration:"
 echo "     ./init-boundary.sh"
-echo ""
-echo "  3. Access the UI at: http://localhost:9200"

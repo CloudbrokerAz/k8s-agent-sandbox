@@ -21,6 +21,11 @@ spec:
         - namespaceSelector:
             matchLabels:
               name: devenv
+    # Allow traffic from ingress-nginx namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
   egress:
     # Allow DNS
     - to:

@@ -1,1 +1,98 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#326CE5', 'primaryTextColor': '#fff', 'primaryBorderColor': '#326CE5', 'lineColor': '#5C6BC0', 'secondaryColor': '#E3F2FD', 'tertiaryColor': '#fff', 'fontFamily': 'Inter, system-ui, sans-serif'}}}%%
+flowchart TB
+    subgraph External["👤 External Access"]
+        direction TB
+        User["Developer"]
+        Browser["Browser"]
+        CLI["CLI Tools"]
+        VSCode["VS Code"]
+        BoundaryCLI["Boundary CLI<br/>Local Proxy :2222"]
+    end
 
+    subgraph K8s["☸️ Kubernetes Cluster"]
+        subgraph ingress["🌐 Ingress Layer"]
+            IngressController["NGINX Ingress<br/>TLS Termination"]
+            VaultRoute["vault.local"]
+            BoundaryRoute["boundary.local"]
+            BoundaryWorkerRoute["boundary-worker.local"]
+            KeycloakRoute["keycloak.local"]
+        end
+
+        subgraph platform["🔧 Platform Services"]
+            subgraph vault["HashiCorp Vault"]
+                VaultAPI["API :8200"]
+                VaultEngines["Secrets Engines<br/>SSH CA │ KV │ TFE"]
+            end
+
+            subgraph boundary["HashiCorp Boundary"]
+                BoundaryCtrl["Controller :9200"]
+                BoundaryWorker["Worker :9202"]
+            end
+
+            subgraph keycloak["Keycloak IDP"]
+                KeycloakAPI["API :8080"]
+                OIDC["OIDC Provider"]
+            end
+        end
+
+        subgraph operators["⚙️ Operators"]
+            VSOController["Vault Secrets Operator"]
+            SandboxCRD["Sandbox Controller<br/>agent-sandbox-system"]
+        end
+
+        subgraph devenv["🤖 Agent Environment"]
+            DevContainer["DevContainer<br/>code-server + Claude Code<br/>SSH :22"]
+            Secrets["Synced Secrets<br/>GITHUB_TOKEN │ TFE_TOKEN"]
+        end
+    end
+
+    %% External user flows
+    User --> Browser & CLI & VSCode
+
+    %% Ingress routing (HTTPS)
+    Browser -->|"HTTPS"| IngressController
+    CLI -->|"HTTPS"| IngressController
+    IngressController --> VaultRoute & BoundaryRoute & BoundaryWorkerRoute & KeycloakRoute
+    VaultRoute --> VaultAPI
+    BoundaryRoute --> BoundaryCtrl
+    BoundaryWorkerRoute --> BoundaryWorker
+    KeycloakRoute --> KeycloakAPI
+
+    %% Platform internal connections
+    VaultAPI --> VaultEngines
+    KeycloakAPI --> OIDC
+    BoundaryCtrl --> BoundaryWorker
+    BoundaryCtrl -.->|"OIDC Auth"| KeycloakAPI
+    BoundaryWorker -.->|"SSH Certificates"| VaultAPI
+
+    %% Operator flows
+    VSOController -->|"Fetch"| VaultAPI
+    VSOController -->|"Sync"| Secrets
+    SandboxCRD -->|"Manage"| DevContainer
+
+    %% DevEnv connections
+    DevContainer -.->|"Mount"| Secrets
+    BoundaryWorker -->|"SSH Proxy"| DevContainer
+
+    %% VS Code SSH via Boundary (external flow through Ingress)
+    VSCode -->|"SSH :2222"| BoundaryCLI
+    BoundaryCLI -->|"HTTPS"| IngressController
+
+    %% Styles
+    classDef external fill:#1976D2,stroke:#0D47A1,color:#fff,stroke-width:2px
+    classDef ingress fill:#00897B,stroke:#004D40,color:#fff,stroke-width:2px
+    classDef vault fill:#FFCA28,stroke:#FF8F00,color:#000,stroke-width:2px
+    classDef boundary fill:#EC407A,stroke:#AD1457,color:#fff,stroke-width:2px
+    classDef keycloak fill:#26C6DA,stroke:#00838F,color:#000,stroke-width:2px
+    classDef sandbox fill:#7E57C2,stroke:#4527A0,color:#fff,stroke-width:2px
+    classDef operator fill:#FF7043,stroke:#BF360C,color:#fff,stroke-width:2px
+    classDef secret fill:#A5D6A7,stroke:#2E7D32,color:#000,stroke-width:2px
+
+    class User,Browser,CLI,VSCode,BoundaryCLI external
+    class IngressController,VaultRoute,BoundaryRoute,BoundaryWorkerRoute,KeycloakRoute ingress
+    class VaultAPI,VaultEngines vault
+    class BoundaryCtrl,BoundaryWorker boundary
+    class KeycloakAPI,OIDC keycloak
+    class DevContainer sandbox
+    class VSOController,SandboxCRD operator
+    class Secrets secret

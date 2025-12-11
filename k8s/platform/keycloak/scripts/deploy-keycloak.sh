@@ -50,7 +50,12 @@ echo "6. Creating services..."
 kubectl apply -f "${MANIFESTS_DIR}/05-service.yaml"
 
 echo ""
-echo "7. Waiting for Keycloak to be ready..."
+echo "7. Creating TLS certificate and Ingress..."
+kubectl apply -f "${MANIFESTS_DIR}/07-tls-secret.yaml"
+kubectl apply -f "${MANIFESTS_DIR}/08-ingress.yaml"
+
+echo ""
+echo "8. Waiting for Keycloak to be ready..."
 kubectl wait --for=condition=ready pod \
     -l app=keycloak \
     -n keycloak \
@@ -67,21 +72,26 @@ echo "========================================="
 kubectl get pods -n keycloak
 echo ""
 kubectl get svc -n keycloak
+echo ""
+kubectl get ingress -n keycloak
 
 echo ""
 echo "========================================="
 echo "Access Information"
 echo "========================================="
 echo "Keycloak Admin Console:"
-echo "  URL: http://localhost:8080"
+echo "  URL: https://keycloak.local"
 echo "  Username: admin"
 echo "  Password: admin123!@#"
 echo ""
-echo "To access Keycloak, run:"
+echo "To access Keycloak via Ingress:"
+echo "  Add '127.0.0.1 keycloak.local' to /etc/hosts if needed"
+echo ""
+echo "Or port-forward to access Keycloak:"
 echo "  kubectl port-forward -n keycloak svc/keycloak 8080:8080"
 echo ""
 echo "Next steps:"
-echo "  1. Port-forward to access Keycloak"
+echo "  1. Access Keycloak via Ingress or port-forward"
 echo "  2. Run configure-realm.sh to set up the agent-sandbox realm"
 echo "  3. Configure Boundary OIDC auth method"
 echo ""
