@@ -338,79 +338,30 @@ run_boundary targets add-host-sources \
     2>/dev/null || true
 
 echo ""
-echo "Step 9: Configure Vault SSH Credential Brokering"
-echo "------------------------------------------------"
+echo "Step 8: TCP Target Configuration Complete"
+echo "-----------------------------------------"
+echo ""
+echo "ℹ️  TCP target configured without credential injection"
+echo "   This allows VSCode Remote SSH and other SSH clients to work properly."
+echo ""
+echo "   To use with VSCode Remote SSH:"
+echo "   1. Create a local TCP tunnel:"
+echo "      boundary connect -target-id=$TARGET_ID -listen-port=2222"
+echo ""
+echo "   2. Configure VSCode Remote SSH with:"
+echo "      Host: localhost"
+echo "      Port: 2222"
+echo "      User: node"
+echo "      IdentityFile: ~/.ssh/id_rsa (your SSH key)"
+echo ""
+echo "   Note: Credential injection has been disabled to support VSCode Remote SSH."
+echo "   You must use your own SSH keys configured on the target host."
+echo ""
 
-# Check if Vault is available and SSH engine is configured
-VAULT_NAMESPACE="${VAULT_NAMESPACE:-vault}"
-VAULT_TOKEN=$(grep "Root Token:" "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null | awk '{print $3}' || echo "")
-
-if [[ -n "$VAULT_TOKEN" ]]; then
-    # Check if Vault SSH engine is enabled
-    SSH_ENGINE=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_TOKEN' vault secrets list -format=json" 2>/dev/null | jq -r '."ssh/"' || echo "")
-
-    if [[ -n "$SSH_ENGINE" ]] && [[ "$SSH_ENGINE" != "null" ]]; then
-        echo "✅ Vault SSH secrets engine detected"
-
-        # Get Vault address for Boundary to reach
-        VAULT_SVC="http://vault.vault.svc.cluster.local:8200"
-
-        # Create Vault credential store
-        CRED_STORE_RESULT=$(run_boundary credential-stores create vault \
-            -name="vault-creds" \
-            -description="Vault credential store for SSH certificates" \
-            -scope-id="$PROJECT_ID" \
-            -vault-address="$VAULT_SVC" \
-            -vault-token="$VAULT_TOKEN" \
-            -format=json \
-            2>/dev/null || echo "{}")
-
-        CRED_STORE_ID=$(echo "$CRED_STORE_RESULT" | jq -r '.item.id // empty')
-        if [[ -n "$CRED_STORE_ID" ]]; then
-            echo "✅ Created Vault credential store ($CRED_STORE_ID)"
-
-            # Create SSH certificate credential library
-            CRED_LIB_RESULT=$(run_boundary credential-libraries create vault-ssh-certificate \
-                -name="ssh-certs" \
-                -description="Vault SSH certificate signing" \
-                -credential-store-id="$CRED_STORE_ID" \
-                -vault-path="ssh/sign/devenv-access" \
-                -username="node" \
-                -key-type="ed25519" \
-                -format=json \
-                2>/dev/null || echo "{}")
-
-            CRED_LIB_ID=$(echo "$CRED_LIB_RESULT" | jq -r '.item.id // empty')
-            if [[ -n "$CRED_LIB_ID" ]]; then
-                echo "✅ Created SSH certificate credential library ($CRED_LIB_ID)"
-
-                # Add credential brokering to SSH target
-                run_boundary targets add-credential-sources \
-                    -id="$TARGET_ID" \
-                    -brokered-credential-source="$CRED_LIB_ID" \
-                    2>/dev/null || true
-                echo "✅ Attached SSH credentials to target (brokered)"
-
-                VAULT_SSH_CONFIGURED="true"
-            else
-                echo "⚠️  Failed to create SSH credential library"
-                VAULT_SSH_CONFIGURED="false"
-            fi
-        else
-            echo "⚠️  Failed to create Vault credential store"
-            echo "   (This may be due to network policy or Vault token issues)"
-            VAULT_SSH_CONFIGURED="false"
-        fi
-    else
-        echo "ℹ️  Vault SSH secrets engine not enabled"
-        echo "   Run: ./platform/vault/scripts/configure-ssh-engine.sh"
-        VAULT_SSH_CONFIGURED="false"
-    fi
-else
-    echo "ℹ️  Vault token not found - skipping credential brokering"
-    echo "   (SSH access will work with manual authentication)"
-    VAULT_SSH_CONFIGURED="false"
-fi
+# Note: Credential injection/brokering is disabled for VSCode Remote SSH compatibility
+# VSCode Remote SSH manages its own SSH connection and doesn't work with Boundary's
+# credential injection. Users should configure their SSH keys on the target host.
+VAULT_SSH_CONFIGURED="disabled_for_vscode"
 
 echo ""
 echo "Step 9: Create Role for Admin"
@@ -470,25 +421,38 @@ Credential Library: ${CRED_LIB_ID:-not configured}
 Vault SSH:          ${VAULT_SSH_CONFIGURED:-false}
 
 ==========================================
-  Usage
+  Usage (VSCode Remote SSH Compatible)
 ==========================================
 
-1. Port forward to Boundary API:
-   kubectl port-forward -n $BOUNDARY_NAMESPACE svc/boundary-controller-api 9200:9200
-
-2. Authenticate:
-   export BOUNDARY_ADDR=http://127.0.0.1:9200
+1. Authenticate with Boundary:
+   export BOUNDARY_ADDR=https://boundary.local
+   export BOUNDARY_TLS_INSECURE=true
    boundary authenticate password \\
      -auth-method-id=$AUTH_METHOD_ID \\
      -login-name=admin \\
      -password='$ADMIN_PASSWORD'
 
-3. Connect to DevEnv via SSH:
-   boundary connect ssh -target-id=$TARGET_ID -- -l node
-
-4. Or establish a proxy:
+2. Create a TCP tunnel (keep this running):
    boundary connect -target-id=$TARGET_ID -listen-port=2222
-   ssh -p 2222 node@127.0.0.1
+
+3. VSCode Remote SSH Configuration:
+   Add to ~/.ssh/config:
+
+   Host devenv-boundary
+     HostName localhost
+     Port 2222
+     User node
+     IdentityFile ~/.ssh/id_rsa
+     StrictHostKeyChecking no
+     UserKnownHostsFile /dev/null
+
+4. Connect via VSCode:
+   - Open VSCode
+   - Use Remote-SSH: Connect to Host
+   - Select "devenv-boundary"
+
+Note: Your SSH key must be authorized on the target host.
+      Credential injection is disabled for VSCode compatibility.
 
 EOF
 chmod 600 "$CREDS_FILE"
@@ -518,9 +482,12 @@ echo "=========================================="
 echo ""
 echo "Credentials saved to: $CREDS_FILE"
 echo ""
-echo "Quick start:"
-echo "  1. kubectl port-forward -n $BOUNDARY_NAMESPACE svc/boundary-controller-api 9200:9200"
-echo "  2. export BOUNDARY_ADDR=http://127.0.0.1:9200"
+echo "Quick start (VSCode Remote SSH):"
+echo "  1. export BOUNDARY_ADDR=https://boundary.local"
+echo "  2. export BOUNDARY_TLS_INSECURE=true"
 echo "  3. boundary authenticate password -auth-method-id=$AUTH_METHOD_ID -login-name=admin -password='$ADMIN_PASSWORD'"
-echo "  4. boundary connect ssh -target-id=$TARGET_ID -- -l node"
+echo "  4. boundary connect -target-id=$TARGET_ID -listen-port=2222"
+echo "  5. Configure VSCode Remote SSH to connect to localhost:2222 with user 'node'"
+echo ""
+echo "See $CREDS_FILE for detailed VSCode setup instructions."
 echo ""
