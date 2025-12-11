@@ -157,7 +157,11 @@ fi
 
 # Test 2.3: Vault SSH engine is enabled
 echo -n "  Vault SSH engine enabled... "
-if kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN=\$(cat /vault/data/keys | grep 'Root Token:' | awk '{print \$3}'); vault secrets list -format=json" 2>/dev/null | jq -e '.["ssh/"]' &>/dev/null; then
+VAULT_ROOT_TOKEN=""
+if [[ -f "$VAULT_SCRIPTS_DIR/vault-keys.txt" ]]; then
+    VAULT_ROOT_TOKEN=$(grep "Root Token:" "$VAULT_SCRIPTS_DIR/vault-keys.txt" | awk '{print $3}')
+fi
+if [[ -n "$VAULT_ROOT_TOKEN" ]] && kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN=$VAULT_ROOT_TOKEN vault secrets list -format=json" 2>/dev/null | jq -e '.["ssh/"]' &>/dev/null; then
     echo -e "${GREEN}✓${NC}"
     ((TESTS_PASSED++))
 else
@@ -170,7 +174,7 @@ fi
 
 # Test 2.4: Vault SSH role exists
 echo -n "  Vault SSH role '$VAULT_ROLE' exists... "
-if kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN=\$(cat /vault/data/keys | grep 'Root Token:' | awk '{print \$3}'); vault read ssh/roles/$VAULT_ROLE" &>/dev/null; then
+if [[ -n "$VAULT_ROOT_TOKEN" ]] && kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN=$VAULT_ROOT_TOKEN vault read ssh/roles/$VAULT_ROLE" &>/dev/null; then
     echo -e "${GREEN}✓${NC}"
     ((TESTS_PASSED++))
 else
