@@ -48,6 +48,24 @@ spec:
       ports:
         - protocol: TCP
           port: 22
+    # Allow traffic to keycloak namespace (for OIDC)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8443
+    # Allow traffic to vault namespace (for secrets)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
     # Allow external internet access (for image pulls, etc.)
     - to:
         - ipBlock:

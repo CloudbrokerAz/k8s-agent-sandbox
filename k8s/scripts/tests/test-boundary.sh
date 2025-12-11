@@ -181,10 +181,15 @@ echo ""
 # ==========================================
 echo "--- Configuration Tests ---"
 
-# Get admin credentials from boundary init job logs
-ADMIN_PASSWORD=$(kubectl logs -n "$BOUNDARY_NAMESPACE" job/boundary-db-init 2>/dev/null | grep "Password:" | head -1 | awk '{print $2}' || echo "")
-if [[ -z "$ADMIN_PASSWORD" ]]; then
-    test_warn "Cannot find admin password from init job"
+# Get admin credentials from credentials file
+CREDS_FILE="$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt"
+if [[ -f "$CREDS_FILE" ]]; then
+    ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+    AUTH_METHOD_ID=$(grep "Auth Method ID:" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+fi
+
+if [[ -z "$ADMIN_PASSWORD" ]] || [[ -z "$AUTH_METHOD_ID" ]]; then
+    test_warn "Cannot find admin credentials from credentials file"
     echo "Cannot proceed with configuration tests without credentials"
 else
     test_pass "Admin credentials available"

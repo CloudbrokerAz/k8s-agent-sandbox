@@ -94,17 +94,25 @@ run_boundary() {
 echo ""
 echo "--- Organization and Project ---"
 
-# Get admin credentials from boundary init job logs
-ADMIN_PASSWORD=$(kubectl logs -n "$BOUNDARY_NAMESPACE" job/boundary-db-init 2>/dev/null | grep "Password:" | head -1 | awk '{print $2}' || echo "")
+# Get admin credentials from credentials file
+CREDS_FILE="$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt"
+if [[ -f "$CREDS_FILE" ]]; then
+    ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+    AUTH_METHOD_ID=$(grep "Auth Method ID:" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+fi
 
 # Authenticate with admin to get token
-if [[ -n "$ADMIN_PASSWORD" ]]; then
+if [[ -n "$ADMIN_PASSWORD" ]] && [[ -n "$AUTH_METHOD_ID" ]]; then
+    echo "$ADMIN_PASSWORD" > /tmp/boundary-pass.txt
     TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- sh -c "
         BOUNDARY_ADDR=http://127.0.0.1:9200 boundary authenticate password \
+            -auth-method-id='$AUTH_METHOD_ID' \
             -login-name=admin \
-            -password='$ADMIN_PASSWORD' \
+            -password=file:///tmp/boundary-pass.txt \
+            -keyring-type=none \
             -format=json 2>/dev/null
-    " | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
+    " 2>/dev/null | sed -n 's/.*\"token\":\"\([^\"]*\)\".*/\1/p' || echo "")
+    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- rm -f /tmp/boundary-pass.txt 2>/dev/null || true
 fi
 
 # List scopes using token if available, otherwise check init job for org ID

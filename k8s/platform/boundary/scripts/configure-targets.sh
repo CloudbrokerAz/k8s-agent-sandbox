@@ -43,13 +43,22 @@ if [[ "$CONTROLLER_STATUS" != "Running" ]]; then
 fi
 echo "✅ Boundary controller running"
 
-# Get admin credentials from boundary init job logs
-ADMIN_PASSWORD=$(kubectl logs -n "$BOUNDARY_NAMESPACE" job/boundary-db-init 2>/dev/null | grep "Password:" | head -1 | awk '{print $2}' || echo "")
-if [[ -z "$ADMIN_PASSWORD" ]]; then
-    echo "❌ Cannot find Boundary admin password from init job"
+# Get admin credentials from credentials file
+CREDS_FILE="$SCRIPT_DIR/boundary-credentials.txt"
+ADMIN_PASSWORD=""
+AUTH_METHOD_ID=""
+
+if [[ -f "$CREDS_FILE" ]]; then
+    ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
+    AUTH_METHOD_ID=$(grep "Auth Method ID:" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+fi
+
+if [[ -z "$ADMIN_PASSWORD" ]] || [[ -z "$AUTH_METHOD_ID" ]]; then
+    echo "❌ Cannot find Boundary admin credentials in $CREDS_FILE"
+    echo "   Please ensure boundary-credentials.txt exists and contains valid credentials"
     exit 1
 fi
-echo "✅ Found admin credentials"
+echo "✅ Found admin credentials (Auth Method: $AUTH_METHOD_ID)"
 
 # Get devenv service info - try known service names
 DEVENV_SVC_NAME=""
@@ -93,9 +102,15 @@ CONTROLLER_POD=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESP
 echo "Authenticating with Boundary..."
 AUTH_TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash -c "
     export BOUNDARY_ADDR=http://127.0.0.1:9200
-    export BOUNDARY_PASSWORD='$ADMIN_PASSWORD'
-    boundary authenticate password -login-name=admin -password=env://BOUNDARY_PASSWORD -format=json
-" 2>/dev/null | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
+    echo '$ADMIN_PASSWORD' > /tmp/boundary-pass.txt
+    boundary authenticate password \
+        -auth-method-id='$AUTH_METHOD_ID' \
+        -login-name=admin \
+        -password=file:///tmp/boundary-pass.txt \
+        -keyring-type=none \
+        -format=json
+    rm -f /tmp/boundary-pass.txt
+" 2>/dev/null | sed -n 's/.*\"token\":\"\([^\"]*\)\".*/\1/p' || echo "")
 
 if [[ -z "$AUTH_TOKEN" ]]; then
     echo "❌ Failed to authenticate with Boundary"
