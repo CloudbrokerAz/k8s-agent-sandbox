@@ -131,6 +131,20 @@ kubectl get storageclass
 echo ""
 echo "Context set to: kind-${CLUSTER_NAME}"
 echo ""
+
+# Deploy nginx ingress controller for Kind
+echo "🌐 Deploying nginx ingress controller..."
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+echo "⏳ Waiting for nginx ingress controller to be ready..."
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=120s
+
+echo "✅ Nginx ingress controller deployed"
+echo ""
+
 echo "Next steps:"
 echo "  1. Deploy devenv:   ./deploy.sh"
 echo "  2. Deploy Boundary: ../boundary/scripts/deploy-boundary.sh"
