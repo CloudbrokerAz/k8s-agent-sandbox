@@ -15,7 +15,9 @@ data:
     REALM_NAME="agent-sandbox"
     CLIENT_ID="boundary"
     CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-boundary-client-secret-change-me}"
-    BOUNDARY_URL="${BOUNDARY_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
+    BOUNDARY_URL="${BOUNDARY_URL:-https://boundary.local}"
+    # External URL for OIDC issuer - MUST be resolvable by external users
+    KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://keycloak.local}"
 
     echo "========================================="
     echo "  Keycloak Realm Initialization"
@@ -69,6 +71,22 @@ data:
             }"
         echo "  Realm created!"
     fi
+
+    # CRITICAL: Set frontendUrl for external OIDC clients
+    # This ensures the issuer URL in OIDC discovery matches the external URL
+    echo ""
+    echo "2b. Setting realm frontendUrl to external URL..."
+    curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"realm\": \"$REALM_NAME\",
+            \"enabled\": true,
+            \"attributes\": {
+                \"frontendUrl\": \"$KEYCLOAK_EXTERNAL_URL\"
+            }
+        }"
+    echo "  frontendUrl set to $KEYCLOAK_EXTERNAL_URL"
 
     # Check if client exists
     echo ""
@@ -183,7 +201,7 @@ data:
     echo ""
     echo "Realm: $REALM_NAME"
     echo "Client ID: $CLIENT_ID"
-    echo "Issuer: $KEYCLOAK_URL/realms/$REALM_NAME"
+    echo "Issuer (external): $KEYCLOAK_EXTERNAL_URL/realms/$REALM_NAME"
     echo ""
     echo "Demo Users:"
     echo "  admin@example.com / Admin123!@# (admins)"
@@ -217,7 +235,9 @@ spec:
                   name: keycloak-admin
                   key: KEYCLOAK_ADMIN_PASSWORD
             - name: BOUNDARY_URL
-              value: "http://boundary-controller-api.boundary.svc.cluster.local:9200"
+              value: "https://boundary.local"
+            - name: KEYCLOAK_EXTERNAL_URL
+              value: "https://keycloak.local"
           volumeMounts:
             - name: scripts
               mountPath: /scripts

@@ -58,14 +58,18 @@ spec:
           value: "true"
         - name: KC_METRICS_ENABLED
           value: "true"
+        - name: KC_HOSTNAME
+          value: "https://keycloak.local"
+        - name: KC_HOSTNAME_ADMIN
+          value: "https://keycloak.local"
         - name: KC_HOSTNAME_STRICT
-          value: "false"
-        - name: KC_HOSTNAME_STRICT_HTTPS
+          value: "true"
+        - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
           value: "false"
         - name: KC_HTTP_ENABLED
           value: "true"
-        - name: KC_PROXY
-          value: edge
+        - name: KC_PROXY_HEADERS
+          value: "xforwarded"
         - name: PROXY_ADDRESS_FORWARDING
           value: "true"
         ports:

@@ -77,4 +77,36 @@ readonly            -> List access (read + list on all resources)
 - Worker config uses initial_upstreams (not controllers)
 - Database migrated to 0.20.1 schema
 
+==========================================
+  Critical: Keycloak frontendUrl Setting
+==========================================
+
+For OIDC to work with external users, the Keycloak realm's
+frontendUrl attribute MUST be set to the external URL.
+
+Without this, Keycloak returns internal URLs in the OIDC
+discovery endpoint, causing issuer mismatch errors.
+
+The realm init job (06-realm-init.yaml) now automatically
+sets frontendUrl to $KEYCLOAK_EXTERNAL_URL after creating
+the realm.
+
+==========================================
+  Boundary Controller hostAliases
+==========================================
+
+The Boundary controller pod requires hostAliases to resolve
+keycloak.local to the ingress-nginx ClusterIP. This is needed
+because CoreDNS forwards .local domains to the host resolver.
+
+In 05-controller.yaml:
+  hostAliases:
+    - ip: "10.96.197.168"  # ingress-nginx-controller ClusterIP
+      hostnames:
+        - "keycloak.local"
+        - "boundary.local"
+
+If the cluster is recreated, update this IP to match the new
+ingress-nginx-controller ClusterIP.
+
 Updated: 2025-12-11
