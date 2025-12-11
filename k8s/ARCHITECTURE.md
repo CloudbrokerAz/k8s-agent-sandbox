@@ -275,7 +275,13 @@ devenv-0.devenv.devenv.svc.cluster.local
 ```
 User → kubectl exec → API Server → kubelet → Pod Shell
 User → Port Forward → API Server → Pod Port
-User → Ingress → Load Balancer → Service → Pod
+User → Ingress → Nginx Ingress Controller → Service → Pod
+
+Ingress URLs (with /etc/hosts entries):
+  - https://vault.local → Vault API (:8200)
+  - https://boundary.local → Boundary Controller API (:9200)
+  - https://boundary-worker.local → Boundary Worker Proxy (:9202)
+  - https://keycloak.local → Keycloak (:8080)
 ```
 
 ### Security Layers
