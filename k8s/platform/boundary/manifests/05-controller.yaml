@@ -145,18 +145,6 @@ spec:
             capabilities:
               add:
                 - IPC_LOCK
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 9203
-            initialDelaySeconds: 30
-            periodSeconds: 15
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 9203
-            initialDelaySeconds: 10
-            periodSeconds: 5
       volumes:
         - name: config-template
           configMap:
