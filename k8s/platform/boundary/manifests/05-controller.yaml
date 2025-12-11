@@ -15,6 +15,12 @@ spec:
       labels:
         app: boundary-controller
     spec:
+      # DNS resolution for external hostnames via ingress
+      hostAliases:
+        - ip: "10.96.197.168"  # ingress-nginx-controller ClusterIP
+          hostnames:
+            - "keycloak.local"
+            - "boundary.local"
       securityContext:
         runAsNonRoot: false
         runAsUser: 0
@@ -39,7 +45,7 @@ spec:
                 - ALL
         # Generate config with KMS keys substituted
         - name: generate-config
-          image: bhgedigital/envsubst:1.0
+          image: bhgedigital/envsubst:latest
           command:
             - sh
             - -c
