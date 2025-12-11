@@ -142,6 +142,9 @@ kubectl wait --namespace ingress-nginx \
   --selector=app.kubernetes.io/component=controller \
   --timeout=120s
 
+# Add namespace label for NetworkPolicy compatibility
+kubectl label namespace ingress-nginx name=ingress-nginx --overwrite
+
 echo "✅ Nginx ingress controller deployed"
 echo ""
 

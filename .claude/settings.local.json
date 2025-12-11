@@ -68,7 +68,9 @@
       "Bash(printf:*)",
       "Bash(kubectl apply:*)",
       "Bash(kubectl exec:*)",
-      "Bash(kubectl wait:*)"
+      "Bash(kubectl wait:*)",
+      "Bash(/Users/simon.lynch/git/k8s-agent-sandbox/k8s/scripts/tests/healthcheck.sh:*)",
+      "Bash(kubectl label:*)"
     ],
     "deny": [
       "Write(.gitignore)",
