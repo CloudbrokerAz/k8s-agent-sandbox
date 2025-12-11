@@ -136,19 +136,24 @@ Note: Older Boundary versions used `controllers` instead of `initial_upstreams`.
 ```
 boundary/
 ├── manifests/
-│   ├── 01-namespace.yaml       # Boundary namespace
-│   ├── 02-secrets.yaml         # Secret templates (don't apply directly)
-│   ├── 03-configmap.yaml       # Boundary HCL configurations
-│   ├── 04-postgres.yaml        # PostgreSQL StatefulSet
-│   ├── 05-controller.yaml      # Boundary controller deployment
-│   ├── 06-worker.yaml          # Boundary worker deployment
-│   ├── 07-service.yaml         # Services (API, cluster, proxy)
-│   ├── 08-networkpolicy.yaml   # Network isolation
-│   └── kustomization.yaml      # Kustomize config
+│   ├── 01-namespace.yaml          # Boundary namespace
+│   ├── 02-secrets.yaml            # Secret templates (don't apply directly)
+│   ├── 03-configmap.yaml          # Boundary HCL configurations
+│   ├── 04-postgres.yaml           # PostgreSQL StatefulSet
+│   ├── 05-controller.yaml         # Boundary controller deployment
+│   ├── 06-worker.yaml             # Boundary worker deployment
+│   ├── 07-service.yaml            # Services (API, cluster, proxy)
+│   ├── 08-networkpolicy.yaml      # Network isolation
+│   ├── 09-tls-secret.yaml         # Controller TLS certificate
+│   ├── 10-ingress.yaml            # Controller ingress
+│   ├── 11-worker-tls-secret.yaml  # Worker TLS certificate
+│   ├── 12-worker-ingress.yaml     # Worker ingress
+│   └── kustomization.yaml         # Kustomize config
 ├── scripts/
 │   ├── create-boundary-secrets.sh  # Generate and create secrets
 │   ├── deploy-boundary.sh          # Deploy all components
 │   ├── init-boundary.sh            # Setup guide
+│   ├── add-license.sh              # Add enterprise license
 │   └── teardown-boundary.sh        # Remove deployment
 └── README.md
 ```
@@ -173,9 +178,27 @@ boundary/
 
 After setup, connect to devenv pods via Boundary:
 
+### Via Ingress (Recommended)
+
 ```bash
-# Set Boundary address
+# Set Boundary address (via ingress)
+export BOUNDARY_ADDR=https://boundary.local
+
+# Authenticate
+boundary authenticate password -auth-method-id=<id> -login-name=admin
+
+# Connect via SSH
+boundary connect ssh -target-id=<target-id> -- -l node
+```
+
+### Via Port Forward
+
+```bash
+# Set Boundary address (via port-forward)
 export BOUNDARY_ADDR=http://127.0.0.1:9200
+
+# Port forward to controller
+kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200
 
 # Authenticate
 boundary authenticate password -auth-method-id=<id> -login-name=admin
