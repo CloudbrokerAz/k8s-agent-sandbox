@@ -33,6 +33,5 @@
         "rm": true,
         "export": true
     },
-    "remote.SSH.enableDynamicForwarding": true,
     "remote.SSH.connectTimeout": 30
 }
