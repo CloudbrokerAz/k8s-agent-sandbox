@@ -25,6 +25,7 @@ echo "  2. Vault Secrets Operator"
 echo "  3. Boundary (controller, worker, postgres)"
 echo "  4. Vault"
 echo "  5. Agent Sandbox (devenv)"
+echo "  6. Nginx Ingress Controller"
 echo ""
 echo "WARNING: This will delete all data!"
 echo ""
@@ -122,8 +123,22 @@ kubectl delete pvc -l app=devenv -n devenv 2>/dev/null || true
 kubectl delete namespace devenv --timeout=60s 2>/dev/null || true
 echo "Agent Sandbox removed"
 
-# Remove Boundary credentials file
+# Remove Boundary credentials files
 rm -f "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" 2>/dev/null || true
+rm -f "$K8S_DIR/platform/boundary/scripts/boundary-oidc-config.txt" 2>/dev/null || true
+
+echo ""
+echo "=========================================="
+echo "  Step 5: Remove Nginx Ingress Controller"
+echo "=========================================="
+echo ""
+
+if kubectl get namespace ingress-nginx &>/dev/null; then
+    kubectl delete namespace ingress-nginx --timeout=60s 2>/dev/null || true
+    echo "Nginx Ingress Controller removed"
+else
+    echo "Nginx Ingress Controller not installed"
+fi
 
 echo ""
 echo "=========================================="
@@ -132,7 +147,7 @@ echo "=========================================="
 echo ""
 
 # Show remaining resources
-REMAINING=$(kubectl get ns 2>/dev/null | grep -E "(devenv|boundary|vault|keycloak)" || true)
+REMAINING=$(kubectl get ns 2>/dev/null | grep -E "(devenv|boundary|vault|keycloak|ingress-nginx)" || true)
 if [[ -n "$REMAINING" ]]; then
     echo "Remaining namespaces (may still be terminating):"
     echo "$REMAINING"
@@ -146,6 +161,7 @@ echo "  - platform/vault/scripts/vault-keys.txt"
 echo "  - platform/vault/scripts/vault-ssh-ca.pub"
 echo "  - platform/vault/scripts/vault-ca.crt"
 echo "  - platform/boundary/scripts/boundary-credentials.txt"
+echo "  - platform/boundary/scripts/boundary-oidc-config.txt"
 echo ""
 echo "To also remove the Kind cluster:"
 echo "  kind delete cluster --name sandbox"

@@ -70,7 +70,9 @@
       "Bash(kubectl exec:*)",
       "Bash(kubectl wait:*)",
       "Bash(/Users/simon.lynch/git/k8s-agent-sandbox/k8s/scripts/tests/healthcheck.sh:*)",
-      "Bash(kubectl label:*)"
+      "Bash(kubectl label:*)",
+      "Bash(jq:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [
       "Write(.gitignore)",

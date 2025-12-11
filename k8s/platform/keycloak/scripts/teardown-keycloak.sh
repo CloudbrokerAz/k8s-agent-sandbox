@@ -31,23 +31,28 @@ echo "Proceeding with teardown..."
 echo ""
 
 # Delete resources in reverse order
-echo "1. Deleting Keycloak services..."
+echo "1. Deleting ingress resources..."
+kubectl delete ingress keycloak -n keycloak --ignore-not-found=true 2>/dev/null || true
+kubectl delete secret keycloak-tls -n keycloak --ignore-not-found=true 2>/dev/null || true
+
+echo ""
+echo "2. Deleting Keycloak services..."
 kubectl delete -f "${MANIFESTS_DIR}/05-service.yaml" --ignore-not-found=true
 
 echo ""
-echo "2. Deleting Keycloak deployment..."
+echo "3. Deleting Keycloak deployment..."
 kubectl delete -f "${MANIFESTS_DIR}/04-deployment.yaml" --ignore-not-found=true
 
 echo ""
-echo "3. Deleting PostgreSQL..."
+echo "4. Deleting PostgreSQL..."
 kubectl delete -f "${MANIFESTS_DIR}/03-postgres.yaml" --ignore-not-found=true
 
 echo ""
-echo "4. Deleting secrets..."
+echo "5. Deleting secrets..."
 kubectl delete -f "${MANIFESTS_DIR}/02-secrets.yaml" --ignore-not-found=true
 
 echo ""
-echo "5. Waiting for pods to terminate..."
+echo "6. Waiting for pods to terminate..."
 kubectl wait --for=delete pod -l app.kubernetes.io/name=keycloak -n keycloak --timeout=60s || true
 
 echo ""
@@ -55,7 +60,7 @@ read -p "Do you want to delete the namespace and all remaining resources? (yes/n
 echo ""
 
 if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-    echo "6. Deleting namespace..."
+    echo "7. Deleting namespace..."
     kubectl delete -f "${MANIFESTS_DIR}/01-namespace.yaml" --ignore-not-found=true
 
     echo ""
@@ -65,7 +70,7 @@ if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
         echo "You can check status with: kubectl get namespace keycloak"
     }
 else
-    echo "6. Keeping namespace (manual cleanup required)"
+    echo "7. Keeping namespace (manual cleanup required)"
 fi
 
 echo ""

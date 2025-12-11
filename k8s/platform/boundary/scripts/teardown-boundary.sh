@@ -23,8 +23,34 @@ if [[ "$confirm" != "yes" ]]; then
 fi
 
 echo ""
-echo "🗑️  Deleting Boundary namespace and all resources..."
-kubectl delete namespace "$NAMESPACE" --ignore-not-found=true
+echo "🗑️  Deleting Boundary resources..."
+
+# Delete ingress resources first
+echo "  → Deleting ingress resources..."
+kubectl delete ingress boundary boundary-worker -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+
+# Delete deployments and jobs
+echo "  → Deleting deployments..."
+kubectl delete deployment boundary-controller boundary-worker -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+kubectl delete job boundary-db-init -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+kubectl delete pod boundary-db-init -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+
+# Delete statefulset
+echo "  → Deleting PostgreSQL..."
+kubectl delete statefulset boundary-postgres -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+
+# Delete PVCs
+echo "  → Deleting PVCs..."
+kubectl delete pvc -l app=boundary-postgres -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+
+# Delete namespace
+echo "  → Deleting namespace..."
+kubectl delete namespace "$NAMESPACE" --ignore-not-found=true --timeout=60s
+
+# Clean up credential files
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+rm -f "$SCRIPT_DIR/boundary-credentials.txt" 2>/dev/null || true
+rm -f "$SCRIPT_DIR/boundary-oidc-config.txt" 2>/dev/null || true
 
 echo ""
 echo "=========================================="

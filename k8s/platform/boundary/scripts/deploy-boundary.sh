@@ -118,10 +118,32 @@ echo "  → Waiting for database initialization..."
 kubectl wait --for=condition=Ready pod/boundary-db-init -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
 sleep 5
 
-# Get init output
+# Get init output and save credentials
 echo ""
-echo "  Database init output:"
-kubectl logs boundary-db-init -n "$NAMESPACE" 2>/dev/null | tail -20 || true
+echo "  → Capturing admin credentials..."
+INIT_OUTPUT=$(kubectl logs boundary-db-init -n "$NAMESPACE" 2>/dev/null || echo "")
+echo "$INIT_OUTPUT" | tail -20
+
+# Extract and save credentials
+AUTH_METHOD_ID=$(echo "$INIT_OUTPUT" | grep -E "Auth Method ID:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
+LOGIN_NAME=$(echo "$INIT_OUTPUT" | grep -E "Login Name:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
+PASSWORD=$(echo "$INIT_OUTPUT" | grep -E "Password:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
+
+if [[ -n "$AUTH_METHOD_ID" ]] && [[ -n "$PASSWORD" ]]; then
+    cat > "$SCRIPT_DIR/boundary-credentials.txt" << EOF
+==========================================
+  Boundary Admin Credentials
+==========================================
+
+Auth Method ID: $AUTH_METHOD_ID
+Login Name:     ${LOGIN_NAME:-admin}
+Password:       $PASSWORD
+
+==========================================
+EOF
+    chmod 600 "$SCRIPT_DIR/boundary-credentials.txt"
+    echo "  ✅ Credentials saved to boundary-credentials.txt"
+fi
 
 # Cleanup init pod
 kubectl delete pod boundary-db-init -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
@@ -181,14 +203,108 @@ kubectl get svc -n "$NAMESPACE"
 echo ""
 echo "Ingress:"
 kubectl get ingress -n "$NAMESPACE"
+# ==========================================
+# Configure Boundary Resources
+# ==========================================
+
 echo ""
-echo "Next steps:"
-echo "  1. Access Boundary via Ingress at: https://boundary.local"
-echo "     Worker available at: https://boundary-worker.local"
-echo "     (Add '127.0.0.1 boundary.local boundary-worker.local' to /etc/hosts if needed)"
+echo "==========================================="
+echo "  Configuring Boundary Resources"
+echo "==========================================="
 echo ""
-echo "  2. Or port-forward to access Boundary API:"
-echo "     kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200"
+
+# Wait for controller to be fully ready
+echo "Waiting for controller to be fully ready..."
+sleep 5
+
+# Configure targets (scopes, hosts, targets)
+if [[ -x "$SCRIPT_DIR/configure-targets.sh" ]]; then
+    echo "Running target configuration..."
+    if "$SCRIPT_DIR/configure-targets.sh" "$NAMESPACE"; then
+        echo "✅ Targets configured successfully"
+    else
+        echo "⚠️  Target configuration had issues (may already be configured)"
+    fi
+else
+    echo "⚠️  configure-targets.sh not found, skipping target configuration"
+fi
+
+# Configure OIDC with Keycloak if available
+KEYCLOAK_STATUS=$(kubectl get pod -l app=keycloak -n keycloak -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
+    echo ""
+    echo "Keycloak detected - configuring OIDC authentication..."
+    if [[ -x "$SCRIPT_DIR/configure-oidc-auth.sh" ]]; then
+        if "$SCRIPT_DIR/configure-oidc-auth.sh" "$NAMESPACE" keycloak; then
+            echo "✅ OIDC configured with Keycloak"
+        else
+            echo "⚠️  OIDC configuration had issues (may already be configured)"
+        fi
+    fi
+else
+    echo ""
+    echo "ℹ️  Keycloak not detected - skipping OIDC configuration"
+    echo "   (Password authentication is available)"
+fi
+
+# Configure Credential Injection (Enterprise only)
+if [[ "$ENTERPRISE_MODE" == "true" ]]; then
+    echo ""
+    echo "Configuring credential injection (Enterprise)..."
+    if [[ -x "$SCRIPT_DIR/configure-credential-injection.sh" ]]; then
+        if "$SCRIPT_DIR/configure-credential-injection.sh" "$NAMESPACE" devenv; then
+            echo "✅ Credential injection configured"
+        else
+            echo "⚠️  Credential injection configuration had issues"
+        fi
+    fi
+else
+    echo ""
+    echo "ℹ️  Credential injection skipped (Community Edition)"
+    echo "   (Credential brokering with Vault available if configured)"
+fi
+
+# ==========================================
+# Run Tests
+# ==========================================
+
 echo ""
-echo "  3. Initialize Boundary configuration:"
-echo "     ./init-boundary.sh"
+echo "==========================================="
+echo "  Running Deployment Tests"
+echo "==========================================="
+echo ""
+
+if [[ -x "$SCRIPT_DIR/tests/run-all-tests.sh" ]]; then
+    if "$SCRIPT_DIR/tests/run-all-tests.sh" "$NAMESPACE" devenv; then
+        echo ""
+        echo "✅ All tests passed"
+    else
+        echo ""
+        echo "⚠️  Some tests failed - check output above"
+    fi
+else
+    echo "⚠️  Test suite not found, skipping tests"
+fi
+
+echo ""
+echo "==========================================="
+if [[ "$ENTERPRISE_MODE" == "true" ]]; then
+    echo "  ✅ Boundary Enterprise Ready"
+    echo "     (Credential Injection enabled)"
+else
+    echo "  ✅ Boundary Community Ready"
+    echo "     (Credential Brokering only)"
+fi
+echo "==========================================="
+echo ""
+echo "Access:"
+echo "  • Ingress: https://boundary.local"
+echo "  • Worker:  https://boundary-worker.local"
+echo "  • API:     kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200"
+echo ""
+echo "Credentials saved to: $SCRIPT_DIR/boundary-credentials.txt"
+echo ""
+if [[ -f "$SCRIPT_DIR/boundary-oidc-config.txt" ]]; then
+    echo "OIDC config saved to: $SCRIPT_DIR/boundary-oidc-config.txt"
+    echo ""
+fi
