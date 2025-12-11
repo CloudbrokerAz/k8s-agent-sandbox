@@ -67,7 +67,8 @@
       "Bash(./deploy-boundary.sh:*)",
       "Bash(printf:*)",
       "Bash(kubectl apply:*)",
-      "Bash(kubectl exec:*)"
+      "Bash(kubectl exec:*)",
+      "Bash(kubectl wait:*)"
     ],
     "deny": [
       "Write(.gitignore)",

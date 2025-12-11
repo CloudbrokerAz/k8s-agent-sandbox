@@ -771,6 +771,8 @@ data:
 
     controller {
       name = "kubernetes-controller"
+      description = "Boundary controller running in Kubernetes"
+      public_cluster_addr = "boundary-controller-cluster.boundary.svc.cluster.local:9201"
       database {
         url = "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable"
       }

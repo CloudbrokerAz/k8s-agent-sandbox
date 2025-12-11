@@ -1,0 +1,75 @@
+==========================================
+  Boundary OIDC Configuration
+==========================================
+
+Auth Method ID:     amoidc_38nRYdknEd
+Issuer:             http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox
+Client ID:          boundary
+
+==========================================
+  Managed Groups
+==========================================
+
+Admins Group:         ✅ Created managed group: keycloak-admins (mgoidc_W8usdDvnDv)
+mgoidc_W8usdDvnDv
+Developers Group:     ✅ Created managed group: keycloak-developers (mgoidc_P4Rw7mFzOX)
+mgoidc_P4Rw7mFzOX
+Readonly Group:       ✅ Created managed group: keycloak-readonly (mgoidc_D3ecTlFbGN)
+mgoidc_D3ecTlFbGN
+
+==========================================
+  Group Mappings
+==========================================
+
+Keycloak Group      → Boundary Access
+-----------------------------------------
+admins              → Full access (all operations)
+developers          → Connect access (read + authorize-session on targets)
+readonly            → List access (read + list on all resources)
+
+==========================================
+  Keycloak Configuration Required
+==========================================
+
+1. Create client in Keycloak:
+   - Realm: agent-sandbox
+   - Client ID: boundary
+   - Client Protocol: openid-connect
+   - Access Type: confidential
+   - Valid Redirect URIs:
+     * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback
+     * http://boundary-controller-api.boundary.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback
+
+2. Configure client scopes to include 'groups' claim
+
+3. Create groups in Keycloak:
+   - admins
+   - developers
+   - readonly
+
+4. Assign users to groups
+
+==========================================
+  Usage
+==========================================
+
+1. Port forward to Boundary API:
+   kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200
+
+2. Authenticate with OIDC:
+   export BOUNDARY_ADDR=http://127.0.0.1:9200
+   boundary authenticate oidc -auth-method-id=amoidc_38nRYdknEd
+
+3. Your browser will open for Keycloak login
+   - Login with Keycloak credentials
+   - You'll be redirected back to Boundary
+
+4. Connect to targets based on your group membership
+
+==========================================
+  Testing OIDC Auth
+==========================================
+
+Run the test script:
+  ./test-oidc-auth.sh
+
