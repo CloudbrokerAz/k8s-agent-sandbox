@@ -118,6 +118,27 @@ data:
             -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
     fi
 
+    # Add groups mapper to include groups in OIDC tokens
+    echo ""
+    echo "3b. Adding groups mapper to client..."
+    curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients/$CLIENT_UUID/protocol-mappers/models" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"name\": \"groups\",
+            \"protocol\": \"openid-connect\",
+            \"protocolMapper\": \"oidc-group-membership-mapper\",
+            \"consentRequired\": false,
+            \"config\": {
+                \"full.path\": \"false\",
+                \"id.token.claim\": \"true\",
+                \"access.token.claim\": \"true\",
+                \"claim.name\": \"groups\",
+                \"userinfo.token.claim\": \"true\"
+            }
+        }" || echo "  Groups mapper may already exist"
+    echo "  Groups mapper configured"
+
     # Create groups if they don't exist
     echo ""
     echo "4. Creating groups..."
