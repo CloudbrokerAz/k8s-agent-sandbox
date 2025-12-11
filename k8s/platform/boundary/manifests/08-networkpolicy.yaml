@@ -58,6 +58,16 @@ spec:
           port: 8080
         - protocol: TCP
           port: 8443
+    # Allow traffic to ingress-nginx (for OIDC via external URLs)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
     # Allow traffic to vault namespace (for secrets)
     - to:
         - namespaceSelector:
