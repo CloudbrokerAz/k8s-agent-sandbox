@@ -84,7 +84,12 @@
       "Bash(boundary targets list:*)",
       "Bash(export BOUNDARY_TLS_INSECURE=true)",
       "Bash(boundary connect ssh -target-id=tssh_bu1SpYV1Zi:*)",
-      "Bash(kubectl patch:*)"
+      "Bash(kubectl patch:*)",
+      "Bash(openssl x509:*)",
+      "Bash(boundary connect ssh:*)",
+      "Bash(timeout 5 boundary connect ssh:*)",
+      "Bash(boundary sessions list:*)",
+      "Bash(xargs:*)"
     ],
     "deny": [
       "Write(.gitignore)",

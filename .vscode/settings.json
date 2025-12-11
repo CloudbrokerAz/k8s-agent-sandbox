@@ -8,6 +8,7 @@
     },
     "terminal.integrated.shellIntegration.enabled": true,
     "chat.agent.maxRequests": 256,
+    "remote.SSH.configFile": "/Users/simon.lynch/.ssh/config",
     "chat.tools.terminal.enableAutoApprove": true,
     "chat.tools.terminal.blockDetectedFileWrites": "outsideWorkspace",
     "chat.tools.terminal.autoApprove": {
@@ -31,5 +32,7 @@
         "curl": true,
         "rm": true,
         "export": true
-    }
+    },
+    "remote.SSH.enableDynamicForwarding": true,
+    "remote.SSH.connectTimeout": 30
 }

@@ -87,6 +87,9 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /boundary/config
+            - name: tls
+              mountPath: /tls
+              readOnly: true
           resources:
             requests:
               memory: "256Mi"
@@ -117,3 +120,6 @@ spec:
             name: boundary-worker-config
         - name: config
           emptyDir: {}
+        - name: tls
+          secret:
+            secretName: boundary-worker-tls

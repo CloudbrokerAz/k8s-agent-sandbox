@@ -94,10 +94,12 @@ data:
     }
 
     # Proxy listener - session connections
+    # TLS enabled for external client connections via ingress
     listener "tcp" {
       address = "0.0.0.0:9202"
       purpose = "proxy"
-      tls_disable = true
+      tls_cert_file = "/tls/tls.crt"
+      tls_key_file = "/tls/tls.key"
     }
 
     # Ops listener - health checks
