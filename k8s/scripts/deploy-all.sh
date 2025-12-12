@@ -809,9 +809,15 @@ if [[ "$SKIP_BOUNDARY" != "true" ]]; then
             --dry-run=client -o yaml | kubectl apply -f -
         echo "✅ Boundary Enterprise license secret created"
     fi
+fi
 
     # Create configmaps with embedded keys (proper multi-line HCL format)
-    POSTGRES_USER="boundary"
+    # These need to be created/updated on every run
+    ROOT_KEY=$(kubectl get secret boundary-kms-keys -n boundary -o jsonpath='{.data.BOUNDARY_ROOT_KEY}' | base64 -d)
+    WORKER_KEY=$(kubectl get secret boundary-kms-keys -n boundary -o jsonpath='{.data.BOUNDARY_WORKER_AUTH_KEY}' | base64 -d)
+    RECOVERY_KEY=$(kubectl get secret boundary-kms-keys -n boundary -o jsonpath='{.data.BOUNDARY_RECOVERY_KEY}' | base64 -d)
+    POSTGRES_USER=$(kubectl get secret boundary-db-secrets -n boundary -o jsonpath='{.data.POSTGRES_USER}' | base64 -d)
+    POSTGRES_PASSWORD=$(kubectl get secret boundary-db-secrets -n boundary -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)
     cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ConfigMap
@@ -906,10 +912,15 @@ data:
       key_id = "global_worker-auth"
     }
 EOF
-fi
 
 # Deploy Boundary components
 kubectl apply -f "$K8S_DIR/platform/boundary/manifests/01-namespace.yaml"
+
+# Apply TLS secrets (required by controller and worker manifests even if TLS disabled in config)
+echo "Creating TLS secrets..."
+kubectl apply -f "$K8S_DIR/platform/boundary/manifests/09-tls-secret.yaml"
+kubectl apply -f "$K8S_DIR/platform/boundary/manifests/11-worker-tls-secret.yaml"
+
 kubectl apply -f "$K8S_DIR/platform/boundary/manifests/04-postgres.yaml"
 
 echo "⏳ Waiting for PostgreSQL..."
