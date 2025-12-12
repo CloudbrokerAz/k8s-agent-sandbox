@@ -304,8 +304,70 @@ fi
 
 echo ""
 
-# Create groups
-echo "6. Creating user groups..."
+# Create 'groups' client scope with mapper for group memberships
+echo "6. Creating 'groups' client scope..."
+GROUPS_SCOPE_RESPONSE=$(kc_curl -s -w "\nHTTP_CODE:%{http_code}" -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "name": "groups",
+        "description": "OpenID Connect scope for group memberships",
+        "protocol": "openid-connect",
+        "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "true"
+        }
+    }' 2>&1)
+
+GROUPS_SCOPE_HTTP=$(echo "$GROUPS_SCOPE_RESPONSE" | grep -o 'HTTP_CODE:[0-9]*' | cut -d: -f2)
+if [[ "$GROUPS_SCOPE_HTTP" == "201" ]]; then
+    echo "   Created 'groups' client scope"
+elif [[ "$GROUPS_SCOPE_HTTP" == "409" ]]; then
+    echo "   'groups' client scope already exists"
+else
+    echo "   Warning: groups scope creation returned HTTP $GROUPS_SCOPE_HTTP"
+fi
+
+# Get the groups scope ID
+GROUPS_SCOPE_ID=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.[] | select(.name=="groups") | .id')
+
+if [ -n "$GROUPS_SCOPE_ID" ] && [ "$GROUPS_SCOPE_ID" != "null" ]; then
+    # Add protocol mapper to include groups in token
+    echo "   Adding groups mapper..."
+    kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "groups",
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-group-membership-mapper",
+            "consentRequired": false,
+            "config": {
+                "full.path": "false",
+                "introspection.token.claim": "true",
+                "userinfo.token.claim": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "groups"
+            }
+        }' || echo "   Mapper may already exist"
+
+    # Assign groups scope to boundary client as optional scope
+    if [ -n "$CLIENT_UUID" ] && [ "$CLIENT_UUID" != "null" ]; then
+        echo "   Assigning 'groups' scope to boundary client..."
+        kc_curl -s -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/optional-client-scopes/${GROUPS_SCOPE_ID}" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" || echo "   Scope may already be assigned"
+    fi
+    echo "   Groups scope configured!"
+else
+    echo "   Warning: Could not find groups scope ID"
+fi
+
+echo ""
+
+# Create user groups
+echo "7. Creating user groups...
 for group in "admins" "developers" "readonly"; do
     echo "  - Creating group: ${group}"
     kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
@@ -320,7 +382,7 @@ echo "Groups created!"
 echo ""
 
 # Create demo users
-echo "7. Creating demo users..."
+echo "8. Creating demo users..."
 
 # Helper function to create user
 create_user() {
