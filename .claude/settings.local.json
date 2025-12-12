@@ -91,7 +91,8 @@
       "Bash(boundary sessions list:*)",
       "Bash(xargs:*)",
       "Bash(./k8s/platform/boundary/scripts/configure-oidc-auth.sh:*)",
-      "Bash(__NEW_LINE__ echo \"\")"
+      "Bash(__NEW_LINE__ echo \"\")",
+      "Bash(./k8s/scripts/tests/test-secrets.sh:*)"
     ],
     "deny": [
       "Write(.gitignore)",

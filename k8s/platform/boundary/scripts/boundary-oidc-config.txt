@@ -2,7 +2,7 @@
   Boundary OIDC Configuration
 ==========================================
 
-Auth Method ID:     amoidc_OsXVv2Zbrc
+Auth Method ID:     amoidc_ZuxikrSxy4
 Issuer:             http://keycloak.local/realms/agent-sandbox
 Client ID:          boundary
 
@@ -10,12 +10,12 @@ Client ID:          boundary
   Managed Groups
 ==========================================
 
-Admins Group:         ✅ Created managed group: keycloak-admins (mgoidc_fHoAvroPln)
-mgoidc_fHoAvroPln
-Developers Group:     ✅ Created managed group: keycloak-developers (mgoidc_WXpdTAN5DP)
-mgoidc_WXpdTAN5DP
-Readonly Group:       ✅ Created managed group: keycloak-readonly (mgoidc_BOHWUy5WKh)
-mgoidc_BOHWUy5WKh
+Admins Group:         ✅ Created managed group: keycloak-admins (mgoidc_yGvxEirrUp)
+mgoidc_yGvxEirrUp
+Developers Group:     ✅ Created managed group: keycloak-developers (mgoidc_9dw4oifmhd)
+mgoidc_9dw4oifmhd
+Readonly Group:       ✅ Created managed group: keycloak-readonly (mgoidc_Ir9rymol2p)
+mgoidc_Ir9rymol2p
 
 ==========================================
   Group Mappings
@@ -58,7 +58,7 @@ readonly            → List access (read + list on all resources)
 
 2. Authenticate with OIDC:
    export BOUNDARY_ADDR=http://127.0.0.1:9200
-   boundary authenticate oidc -auth-method-id=amoidc_OsXVv2Zbrc
+   boundary authenticate oidc -auth-method-id=amoidc_ZuxikrSxy4
 
 3. Your browser will open for Keycloak login
    - Login with Keycloak credentials
