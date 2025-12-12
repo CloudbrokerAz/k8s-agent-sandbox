@@ -299,6 +299,28 @@ fi
 echo "✅ Prerequisites met"
 echo ""
 
+# ==========================================
+# Install Nginx Ingress Controller (if not present)
+# ==========================================
+echo "Checking for ingress controller..."
+if ! kubectl get namespace ingress-nginx &>/dev/null; then
+    echo "Installing nginx ingress controller for Kind..."
+
+    # Use the Kind-specific ingress controller manifest
+    kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+    echo "⏳ Waiting for ingress controller to be ready..."
+    kubectl wait --namespace ingress-nginx \
+        --for=condition=ready pod \
+        --selector=app.kubernetes.io/component=controller \
+        --timeout=90s 2>/dev/null || echo "  ⚠️  Ingress controller may still be starting..."
+
+    echo "✅ Nginx ingress controller installed"
+else
+    echo "✅ Ingress controller already installed"
+fi
+echo ""
+
 # Check for Boundary Enterprise license file (only if Boundary will be deployed)
 if [[ "${SKIP_BOUNDARY:-false}" != "true" ]]; then
     echo "Checking for Boundary Enterprise license..."
