@@ -57,9 +57,16 @@ REALM_NAME="agent-sandbox"
 CLIENT_ID="boundary"
 CLIENT_SECRET="boundary-client-secret-change-me"
 
-# Boundary redirect URIs (update with your Boundary URLs)
-BOUNDARY_URL="${BOUNDARY_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
-REDIRECT_URIS="[\"${BOUNDARY_URL}/v1/auth-methods/oidc:authenticate:callback\"]"
+# Boundary redirect URIs - include internal, external (ingress), and local (port-forward) URLs
+BOUNDARY_INTERNAL_URL="${BOUNDARY_INTERNAL_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
+BOUNDARY_EXTERNAL_URL="${BOUNDARY_EXTERNAL_URL:-https://boundary.local}"
+BOUNDARY_LOCAL_URL="${BOUNDARY_LOCAL_URL:-http://127.0.0.1:9200}"
+
+# For backwards compatibility
+BOUNDARY_URL="${BOUNDARY_URL:-$BOUNDARY_INTERNAL_URL}"
+
+# All redirect URIs for OIDC callback
+REDIRECT_URIS="[\"${BOUNDARY_INTERNAL_URL}/v1/auth-methods/oidc:authenticate:callback\",\"${BOUNDARY_EXTERNAL_URL}/v1/auth-methods/oidc:authenticate:callback\",\"${BOUNDARY_LOCAL_URL}/v1/auth-methods/oidc:authenticate:callback\"]"
 
 echo "========================================="
 echo "Configuring Keycloak Realm"
@@ -270,7 +277,7 @@ kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
         \"serviceAccountsEnabled\": false,
         \"authorizationServicesEnabled\": false,
         \"redirectUris\": ${REDIRECT_URIS},
-        \"webOrigins\": [\"${BOUNDARY_URL}\"],
+        \"webOrigins\": [\"${BOUNDARY_INTERNAL_URL}\",\"${BOUNDARY_EXTERNAL_URL}\",\"${BOUNDARY_LOCAL_URL}\"],
         \"attributes\": {
             \"access.token.lifespan\": \"3600\",
             \"client.secret.creation.time\": \"$(date +%s)\"
