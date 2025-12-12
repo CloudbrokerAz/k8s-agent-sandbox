@@ -127,9 +127,17 @@ OIDC_DISCOVERY_URL="${OIDC_ISSUER}/.well-known/openid-configuration"
 # Boundary external URL
 BOUNDARY_EXTERNAL_URL="https://boundary.local"
 
+# Use HTTP for internal cluster communication (Keycloak inside cluster)
+# The issuer URL must match what Keycloak advertises in its OIDC discovery
+# Keycloak is configured to advertise keycloak.local, so we use that
+# Note: Boundary controller needs hostAliases to resolve keycloak.local
+KEYCLOAK_INTERNAL_URL="http://keycloak.local"
+OIDC_ISSUER="${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}"
+
 echo ""
 echo "Keycloak Configuration:"
-echo "  External URL: $KEYCLOAK_EXTERNAL_URL"
+echo "  External URL (https): $KEYCLOAK_EXTERNAL_URL"
+echo "  Internal URL (http): $KEYCLOAK_INTERNAL_URL"
 echo "  Realm: $KEYCLOAK_REALM"
 echo "  Client ID: $KEYCLOAK_CLIENT_ID"
 echo "  Issuer: $OIDC_ISSUER"
@@ -310,9 +318,9 @@ else
         exit 1
     fi
 
-    # Create OIDC auth method with external URLs and disabled discovery validation
-    # Note: Discovery validation is disabled because the Boundary controller pod
-    # cannot resolve external DNS names (keycloak.local), but users' browsers can.
+    # Create OIDC auth method
+    # Note: Boundary controller needs hostAliases configured to resolve keycloak.local
+    # The issuer URL must match what Keycloak advertises in OIDC discovery
 
     # Run the command with KEYCLOAK_CLIENT_SECRET exported in the pod environment
     if [[ -n "$AUTH_TOKEN" ]]; then
@@ -330,9 +338,8 @@ else
                     -client-secret='env://KEYCLOAK_CLIENT_SECRET' \
                     -signing-algorithm=RS256 \
                     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
-                    -disable-discovered-config-validation \
                     -format=json
-            " 2>/dev/null || echo "{}")
+            " 2>&1 || echo "{}")
     else
         AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
             /bin/ash -c "
@@ -348,13 +355,13 @@ else
                     -client-secret='env://KEYCLOAK_CLIENT_SECRET' \
                     -signing-algorithm=RS256 \
                     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
-                    -disable-discovered-config-validation \
                     -recovery-kms-hcl=file:///tmp/recovery.hcl \
                     -format=json
-            " 2>/dev/null || echo "{}")
+            " 2>&1 || echo "{}")
     fi
 
-    AUTH_METHOD_ID=$(echo "$AUTH_RESULT" | jq -r '.item.id // empty')
+    # Filter out deprecation warnings before parsing JSON
+    AUTH_METHOD_ID=$(echo "$AUTH_RESULT" | grep -E '^\{' | jq -r '.item.id // empty' 2>/dev/null)
     if [[ -z "$AUTH_METHOD_ID" ]]; then
         echo "❌ Failed to create OIDC auth method"
         echo "$AUTH_RESULT"
@@ -366,11 +373,29 @@ else
     echo "Configuring claims scopes..."
     run_boundary auth-methods update oidc \
         -id="$AUTH_METHOD_ID" \
-        -claims-scope="profile" \
-        -claims-scope="email" \
-        -claims-scope="groups" \
+        -claims-scopes="profile" \
+        -claims-scopes="email" \
+        -claims-scopes="groups" \
         2>/dev/null || true
     echo "✅ Configured claims scopes"
+
+    # Activate the OIDC auth method (make it public)
+    echo "Activating OIDC auth method..."
+    ACTIVATE_RESULT=$(run_boundary auth-methods change-state oidc \
+        -id="$AUTH_METHOD_ID" \
+        -state=active-public \
+        -format=json 2>&1 || echo "{}")
+
+    ACTIVE_STATE=$(echo "$ACTIVATE_RESULT" | grep -E '^\{' | jq -r '.item.attributes.state // empty' 2>/dev/null)
+    if [[ "$ACTIVE_STATE" == "active-public" ]]; then
+        echo "✅ OIDC auth method activated"
+    else
+        echo "⚠️  Failed to activate OIDC auth method"
+        echo "   You may need to activate manually:"
+        echo "   boundary auth-methods change-state oidc -id=$AUTH_METHOD_ID -state=active-public"
+        echo ""
+        echo "   Error: $ACTIVATE_RESULT"
+    fi
 fi
 
 echo ""

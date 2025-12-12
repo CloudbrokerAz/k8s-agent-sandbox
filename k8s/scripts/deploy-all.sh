@@ -1225,6 +1225,50 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
             "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" --in-cluster || echo "⚠️  Keycloak realm configuration failed (may need manual setup)"
         fi
 
+        # Create keycloak-http service for port 80 -> 8080 mapping
+        # This is needed because Keycloak advertises issuer without port, but listens on 8080
+        echo "Creating keycloak-http service (port 80 -> 8080)..."
+        cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-http
+  namespace: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+EOF
+
+        # Update Boundary controller hostAliases if Boundary is deployed
+        if kubectl get deployment boundary-controller -n boundary &>/dev/null; then
+            echo "Updating Boundary controller hostAliases for Keycloak/Boundary connectivity..."
+            KEYCLOAK_HTTP_IP=$(kubectl get svc keycloak-http -n keycloak -o jsonpath='{.spec.clusterIP}')
+            BOUNDARY_API_IP=$(kubectl get svc boundary-controller-api -n boundary -o jsonpath='{.spec.clusterIP}')
+
+            kubectl patch deployment boundary-controller -n boundary --type='json' -p="[
+              {
+                \"op\": \"replace\",
+                \"path\": \"/spec/template/spec/hostAliases\",
+                \"value\": [
+                  {
+                    \"ip\": \"$KEYCLOAK_HTTP_IP\",
+                    \"hostnames\": [\"keycloak.local\"]
+                  },
+                  {
+                    \"ip\": \"$BOUNDARY_API_IP\",
+                    \"hostnames\": [\"boundary.local\"]
+                  }
+                ]
+              }
+            ]"
+            kubectl rollout status deployment/boundary-controller -n boundary --timeout=60s 2>/dev/null || true
+        fi
+
         echo "✅ Keycloak deployed"
     else
         echo "⚠️  Keycloak deployment script not found, skipping"
@@ -1265,9 +1309,9 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
             echo ""
             echo "Configuring Boundary OIDC with Keycloak..."
             if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" ]]; then
-                # Pass the client secret created by configure-realm.sh
-                KEYCLOAK_CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-boundary-client-secret-change-me}" \
-                    "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" || echo "⚠️  OIDC configuration failed (may need manual setup)"
+                # Let configure-oidc-auth.sh auto-fetch the client secret from Keycloak
+                # The script has built-in logic to retrieve the actual secret via Keycloak API
+                "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" || echo "⚠️  OIDC configuration failed (may need manual setup)"
             fi
         fi
     fi
