@@ -974,7 +974,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: init
-        image: hashicorp/boundary-enterprise:0.20.1-ent
+        image: hashicorp/boundary:0.20.1
         command: ["boundary", "database", "init", "-config=/config/init.hcl"]
         volumeMounts:
         - name: config
