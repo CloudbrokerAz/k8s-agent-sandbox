@@ -313,19 +313,46 @@ else
     # Create OIDC auth method with external URLs and disabled discovery validation
     # Note: Discovery validation is disabled because the Boundary controller pod
     # cannot resolve external DNS names (keycloak.local), but users' browsers can.
-    AUTH_RESULT=$(run_boundary auth-methods create oidc \
-        -name="keycloak" \
-        -description="Keycloak OIDC Authentication" \
-        -scope-id="$ORG_ID" \
-        -issuer="$OIDC_ISSUER" \
-        -client-id="$KEYCLOAK_CLIENT_ID" \
-        -client-secret="env://KEYCLOAK_CLIENT_SECRET" \
-        -signing-algorithm=RS256 \
-        -api-url-prefix="$BOUNDARY_EXTERNAL_URL" \
-        -disable-discovered-config-validation \
-        -format=json \
-        \
-        <<< "$KEYCLOAK_CLIENT_SECRET" 2>/dev/null || echo "{}")
+
+    # Run the command with KEYCLOAK_CLIENT_SECRET exported in the pod environment
+    if [[ -n "$AUTH_TOKEN" ]]; then
+        AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+            /bin/ash -c "
+                export BOUNDARY_ADDR=http://127.0.0.1:9200
+                export BOUNDARY_TOKEN='$AUTH_TOKEN'
+                export KEYCLOAK_CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
+                boundary auth-methods create oidc \
+                    -name='keycloak' \
+                    -description='Keycloak OIDC Authentication' \
+                    -scope-id='$ORG_ID' \
+                    -issuer='$OIDC_ISSUER' \
+                    -client-id='$KEYCLOAK_CLIENT_ID' \
+                    -client-secret='env://KEYCLOAK_CLIENT_SECRET' \
+                    -signing-algorithm=RS256 \
+                    -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
+                    -disable-discovered-config-validation \
+                    -format=json
+            " 2>/dev/null || echo "{}")
+    else
+        AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+            /bin/ash -c "
+                export BOUNDARY_ADDR=http://127.0.0.1:9200
+                export KEYCLOAK_CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
+                echo 'kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }' > /tmp/recovery.hcl
+                boundary auth-methods create oidc \
+                    -name='keycloak' \
+                    -description='Keycloak OIDC Authentication' \
+                    -scope-id='$ORG_ID' \
+                    -issuer='$OIDC_ISSUER' \
+                    -client-id='$KEYCLOAK_CLIENT_ID' \
+                    -client-secret='env://KEYCLOAK_CLIENT_SECRET' \
+                    -signing-algorithm=RS256 \
+                    -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
+                    -disable-discovered-config-validation \
+                    -recovery-kms-hcl=file:///tmp/recovery.hcl \
+                    -format=json
+            " 2>/dev/null || echo "{}")
+    fi
 
     AUTH_METHOD_ID=$(echo "$AUTH_RESULT" | jq -r '.item.id // empty')
     if [[ -z "$AUTH_METHOD_ID" ]]; then
