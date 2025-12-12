@@ -96,6 +96,9 @@ echo "--- Organization and Project ---"
 
 # Get admin credentials from credentials file
 CREDS_FILE="$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt"
+ADMIN_PASSWORD=""
+AUTH_METHOD_ID=""
+
 if [[ -f "$CREDS_FILE" ]]; then
     ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
     AUTH_METHOD_ID=$(grep "Auth Method ID:" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
