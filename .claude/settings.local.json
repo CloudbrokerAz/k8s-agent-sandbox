@@ -89,7 +89,9 @@
       "Bash(boundary connect ssh:*)",
       "Bash(timeout 5 boundary connect ssh:*)",
       "Bash(boundary sessions list:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(./k8s/platform/boundary/scripts/configure-oidc-auth.sh:*)",
+      "Bash(__NEW_LINE__ echo \"\")"
     ],
     "deny": [
       "Write(.gitignore)",
