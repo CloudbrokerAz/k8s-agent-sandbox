@@ -31,3 +31,7 @@ When you discover new information that would be helpful for future development w
 
 When performing any research concurrent subagents can be used for performance and isolation
 use parrallel tool calls and tasks where possible
+
+## deployment scripts
+
+Any fixes identified and fixed should always also be added to the deployment script ./k8s/scripts/deploy-all.sh
