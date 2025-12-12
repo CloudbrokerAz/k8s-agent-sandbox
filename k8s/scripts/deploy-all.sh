@@ -1002,12 +1002,44 @@ EOF
         echo "   Check job status: kubectl get job boundary-db-init -n boundary"
         echo "   Check logs: kubectl logs job/boundary-db-init -n boundary"
         echo "   Continuing, but Boundary may not work correctly..."
+    else
+        # Extract and save admin credentials
+        echo "Extracting admin credentials..."
+        INIT_OUTPUT=$(kubectl logs job/boundary-db-init -n boundary 2>/dev/null || echo "")
+
+        AUTH_METHOD_ID=$(echo "$INIT_OUTPUT" | grep -E "Auth Method ID:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
+        LOGIN_NAME=$(echo "$INIT_OUTPUT" | grep -E "Login Name:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
+        PASSWORD=$(echo "$INIT_OUTPUT" | grep -E "Password:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
+
+        if [[ -n "$AUTH_METHOD_ID" ]] && [[ -n "$PASSWORD" ]]; then
+            mkdir -p "$K8S_DIR/platform/boundary/scripts"
+            cat > "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" << EOF
+==========================================
+  Boundary Admin Credentials
+==========================================
+
+Auth Method ID: $AUTH_METHOD_ID
+Login Name:     ${LOGIN_NAME:-admin}
+Password:       $PASSWORD
+
+==========================================
+EOF
+            chmod 600 "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt"
+            echo "✅ Credentials saved to platform/boundary/scripts/boundary-credentials.txt"
+        else
+            echo "⚠️  Could not extract credentials from init job logs"
+        fi
     fi
 fi
 
     kubectl apply -f "$K8S_DIR/platform/boundary/manifests/05-controller.yaml"
     kubectl apply -f "$K8S_DIR/platform/boundary/manifests/06-worker.yaml"
     kubectl apply -f "$K8S_DIR/platform/boundary/manifests/07-service.yaml"
+
+    # Apply ingress resources
+    echo "Applying Boundary ingress resources..."
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/10-ingress.yaml" 2>/dev/null || echo "  ⚠️  Ingress not applied (may require ingress controller)"
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/12-worker-ingress.yaml" 2>/dev/null || echo "  ⚠️  Worker ingress not applied (may require ingress controller)"
 
     echo "✅ Boundary deployed"
 else
