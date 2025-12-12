@@ -504,6 +504,8 @@ deploy_vault() {
         kubectl apply -f "$K8S_DIR/platform/vault/manifests/04-rbac.yaml"
         kubectl apply -f "$K8S_DIR/platform/vault/manifests/05-statefulset.yaml"
         kubectl apply -f "$K8S_DIR/platform/vault/manifests/06-service.yaml"
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/08-tls-secret.yaml" 2>/dev/null || echo "[Vault] TLS secret skipped"
+        kubectl apply -f "$K8S_DIR/platform/vault/manifests/07-ingress.yaml" 2>/dev/null || echo "[Vault] Ingress skipped"
         echo "[Vault] Manifests applied"
     else
         echo "[Vault] Skipping (SKIP_VAULT=true)"
