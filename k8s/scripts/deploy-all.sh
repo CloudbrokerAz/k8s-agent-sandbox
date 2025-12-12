@@ -1137,6 +1137,17 @@ POLICY
     # Apply example secret sync
     kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/04-vaultstaticsecret-example.yaml"
 
+    # Wait for VSO to sync the secret
+    echo "⏳ Waiting for VSO to sync secrets..."
+    sleep 10
+
+    # Restart devenv pod to pick up the newly synced secrets
+    # The pod was likely created before VSO synced the secrets
+    if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null; then
+        echo "🔄 Restarting devenv sandbox to pick up VSO-synced secrets..."
+        kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
+    fi
+
     echo "✅ Vault Secrets Operator deployed"
 else
     echo "⏭️  Skipping Vault Secrets Operator deployment (SKIP_VSO=true)"

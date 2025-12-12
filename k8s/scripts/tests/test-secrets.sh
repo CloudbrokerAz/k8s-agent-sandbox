@@ -176,7 +176,8 @@ echo ""
 echo "--- Test 3: Container Environment Variables ---"
 
 # Test GITHUB_TOKEN in container
-CONTAINER_GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- printenv GITHUB_TOKEN 2>/dev/null || echo "")
+# Use sh -c 'echo $VAR' instead of printenv since printenv may not be available in minimal containers
+CONTAINER_GH_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- /bin/sh -c 'echo $GITHUB_TOKEN' 2>/dev/null || echo "")
 if [[ -n "$CONTAINER_GH_TOKEN" ]]; then
     if [[ "$CONTAINER_GH_TOKEN" == "placeholder-update-me" ]]; then
         test_pass "GITHUB_TOKEN visible in container (placeholder)"
@@ -190,7 +191,7 @@ else
 fi
 
 # Test TFE_TOKEN in container
-CONTAINER_TFE_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- printenv TFE_TOKEN 2>/dev/null || echo "")
+CONTAINER_TFE_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- /bin/sh -c 'echo $TFE_TOKEN' 2>/dev/null || echo "")
 if [[ -n "$CONTAINER_TFE_TOKEN" ]]; then
     MASKED="${CONTAINER_TFE_TOKEN:0:4}...${CONTAINER_TFE_TOKEN: -4}"
     test_pass "TFE_TOKEN visible in container (value: $MASKED)"
@@ -200,7 +201,7 @@ else
 fi
 
 # Test TF_TOKEN_app_terraform_io (alias for TFE_TOKEN)
-CONTAINER_TF_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- printenv TF_TOKEN_app_terraform_io 2>/dev/null || echo "")
+CONTAINER_TF_TOKEN=$(kubectl exec -n "$DEVENV_NAMESPACE" "$DEVENV_POD" -- /bin/sh -c 'echo $TF_TOKEN_app_terraform_io' 2>/dev/null || echo "")
 if [[ -n "$CONTAINER_TF_TOKEN" ]]; then
     test_pass "TF_TOKEN_app_terraform_io visible in container"
 else
