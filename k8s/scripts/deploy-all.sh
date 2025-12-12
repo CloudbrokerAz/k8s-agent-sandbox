@@ -299,6 +299,36 @@ fi
 echo "✅ Prerequisites met"
 echo ""
 
+# Check for Boundary Enterprise license file (only if Boundary will be deployed)
+if [[ "${SKIP_BOUNDARY:-false}" != "true" ]]; then
+    echo "Checking for Boundary Enterprise license..."
+    LICENSE_FILE="$SCRIPT_DIR/license/boundary.hclic"
+    if [[ ! -f "$LICENSE_FILE" ]]; then
+        echo "❌ Boundary Enterprise license file not found: $LICENSE_FILE"
+        echo ""
+        echo "   Please ensure the Boundary license file exists at:"
+        echo "   k8s/scripts/license/boundary.hclic"
+        echo ""
+        echo "   To obtain a license:"
+        echo "   1. Visit: https://www.hashicorp.com/products/boundary"
+        echo "   2. Request a trial or commercial license"
+        echo "   3. Save the license file to: $LICENSE_FILE"
+        echo ""
+        echo "   Or skip Boundary deployment with: SKIP_BOUNDARY=true ./deploy-all.sh"
+        exit 1
+    fi
+
+    if [[ ! -s "$LICENSE_FILE" ]]; then
+        echo "❌ Boundary Enterprise license file is empty: $LICENSE_FILE"
+        echo ""
+        echo "   Please add a valid Boundary Enterprise license to the file"
+        exit 1
+    fi
+
+    echo "✅ Boundary Enterprise license file found"
+    echo ""
+fi
+
 # Check for existing deployments
 EXISTING=""
 kubectl get ns devenv &>/dev/null && EXISTING="$EXISTING devenv"
@@ -768,6 +798,17 @@ if [[ "$SKIP_BOUNDARY" != "true" ]]; then
         --from-literal=BOUNDARY_WORKER_AUTH_KEY="$WORKER_KEY" \
         --from-literal=BOUNDARY_RECOVERY_KEY="$RECOVERY_KEY" \
         --dry-run=client -o yaml | kubectl apply -f -
+
+    # Create Enterprise license secret
+    if [[ -f "$LICENSE_FILE" ]]; then
+        echo ""
+        echo "🔑 Creating Boundary Enterprise license secret..."
+        kubectl create secret generic boundary-license \
+            --namespace=boundary \
+            --from-file=license="$LICENSE_FILE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo "✅ Boundary Enterprise license secret created"
+    fi
 
     # Create configmaps with embedded keys (proper multi-line HCL format)
     POSTGRES_USER="boundary"
