@@ -285,9 +285,7 @@ kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
         \"description\": \"OIDC client for HashiCorp Boundary authentication\",
         \"enabled\": true,
         \"protocol\": \"openid-connect\",
-        \"publicClient\": false,
-        \"clientAuthenticatorType\": \"client-secret\",
-        \"secret\": \"${CLIENT_SECRET}\",
+        \"publicClient\": true,
         \"directAccessGrantsEnabled\": false,
         \"standardFlowEnabled\": true,
         \"implicitFlowEnabled\": false,
@@ -296,31 +294,23 @@ kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
         \"redirectUris\": ${REDIRECT_URIS},
         \"webOrigins\": [\"${BOUNDARY_INTERNAL_URL}\",\"${BOUNDARY_EXTERNAL_URL}\",\"${BOUNDARY_LOCAL_URL}\"],
         \"attributes\": {
-            \"access.token.lifespan\": \"3600\",
-            \"client.secret.creation.time\": \"$(date +%s)\"
+            \"access.token.lifespan\": \"3600\"
         }
     }" || echo "Client may already exist"
 
 echo "OIDC client created/updated!"
 echo ""
 
-# Verify the client secret was set correctly (GET, not POST - POST regenerates!)
-echo "5. Verifying client secret..."
+# Get client UUID for later scope assignment (public clients don't have secrets)
+echo "5. Retrieving client UUID..."
 CLIENT_UUID=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.[0].id')
 
 if [ -n "$CLIENT_UUID" ] && [ "$CLIENT_UUID" != "null" ]; then
-    # Get the current secret to verify it matches (DO NOT POST - that regenerates the secret!)
-    CURRENT_SECRET=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
-        -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.value // empty')
-    if [ "$CURRENT_SECRET" = "$CLIENT_SECRET" ]; then
-        echo "✅ Client secret verified!"
-    else
-        echo "⚠️  Warning: Client secret mismatch - expected ${CLIENT_SECRET:0:8}..., got ${CURRENT_SECRET:0:8}..."
-        echo "   This may happen if the client already existed. Delete and recreate for fresh setup."
-    fi
+    echo "✅ Client UUID: ${CLIENT_UUID}"
+    echo "   Note: Using public client (no client secret required)"
 else
-    echo "Warning: Could not retrieve client UUID to verify secret"
+    echo "Warning: Could not retrieve client UUID"
 fi
 
 echo ""

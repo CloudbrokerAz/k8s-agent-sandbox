@@ -356,17 +356,15 @@ if [[ -n "$EXISTING_OIDC" ]]; then
 
         if [[ -n "$AUTH_TOKEN" ]]; then
             # Create script to avoid shell escaping issues with certs
-            # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+            # Note: Using public client (no client-secret required)
             cat > /tmp/boundary_update.sh << EOSCRIPT
 #!/bin/ash
 export BOUNDARY_ADDR=http://127.0.0.1:9200
 export BOUNDARY_TOKEN='$AUTH_TOKEN'
-export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
 CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
 boundary auth-methods update oidc \
     -id='$EXISTING_OIDC' \
     -issuer='$OIDC_ISSUER' \
-    -client-secret=env://CLIENT_SECRET \
     -idp-ca-cert="\$CERT_CONTENT" \
     -format=json
 EOSCRIPT
@@ -380,16 +378,14 @@ EOSCRIPT
             rm -f /tmp/boundary_update.sh
         else
             # Create script with recovery key for auth
-            # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+            # Note: Using public client (no client-secret required)
             cat > /tmp/boundary_update.sh << EOSCRIPT
 #!/bin/ash
 export BOUNDARY_ADDR=http://127.0.0.1:9200
-export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
 CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
 boundary auth-methods update oidc \
     -id='$EXISTING_OIDC' \
     -issuer='$OIDC_ISSUER' \
-    -client-secret=env://CLIENT_SECRET \
     -idp-ca-cert="\$CERT_CONTENT" \
     -recovery-config=/tmp/recovery.hcl \
     -format=json
@@ -491,12 +487,11 @@ else
 
     if [[ -n "$AUTH_TOKEN" ]]; then
         # Create script for boundary command - avoids shell escaping issues
-        # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+        # Note: Using public client (no client-secret required)
         cat > /tmp/boundary_create.sh << EOSCRIPT
 #!/bin/ash
 export BOUNDARY_ADDR=http://127.0.0.1:9200
 export BOUNDARY_TOKEN='$AUTH_TOKEN'
-export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
 CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
 boundary auth-methods create oidc \
     -name='keycloak' \
@@ -504,7 +499,6 @@ boundary auth-methods create oidc \
     -scope-id='$ORG_ID' \
     -issuer='$OIDC_ISSUER' \
     -client-id='$KEYCLOAK_CLIENT_ID' \
-    -client-secret=env://CLIENT_SECRET \
     -idp-ca-cert="\$CERT_CONTENT" \
     -signing-algorithm=RS256 \
     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
@@ -519,11 +513,10 @@ EOSCRIPT
         rm -f /tmp/boundary_create.sh
     else
         # Create script with recovery config - avoids shell escaping issues
-        # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+        # Note: Using public client (no client-secret required)
         cat > /tmp/boundary_create.sh << EOSCRIPT
 #!/bin/ash
 export BOUNDARY_ADDR=http://127.0.0.1:9200
-export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
 CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
 boundary auth-methods create oidc \
     -name='keycloak' \
@@ -531,7 +524,6 @@ boundary auth-methods create oidc \
     -scope-id='$ORG_ID' \
     -issuer='$OIDC_ISSUER' \
     -client-id='$KEYCLOAK_CLIENT_ID' \
-    -client-secret=env://CLIENT_SECRET \
     -idp-ca-cert="\$CERT_CONTENT" \
     -signing-algorithm=RS256 \
     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
