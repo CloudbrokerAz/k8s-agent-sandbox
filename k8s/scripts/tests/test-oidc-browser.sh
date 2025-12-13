@@ -53,8 +53,8 @@ echo "  Ingress ClusterIP: $INGRESS_IP"
 
 # Test that boundary.local and keycloak.local are accessible
 if ! curl -sk --connect-timeout 5 "https://boundary.local" -o /dev/null 2>&1; then
-    echo -e "${YELLOW}⚠️  Warning: boundary.local may not be accessible${NC}"
-    echo "  Ensure /etc/hosts contains: $INGRESS_IP boundary.local keycloak.local"
+    echo -e "${BLUE}ℹ️  Info: boundary.local may not be accessible${NC}"
+    echo "  Ensure /etc/hosts contains: 127.0.0.1 boundary.local keycloak.local"
 fi
 
 # Run the test using ingress URLs (default port 443)
