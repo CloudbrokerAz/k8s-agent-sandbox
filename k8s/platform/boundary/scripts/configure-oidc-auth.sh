@@ -487,7 +487,6 @@ else
 
     if [[ -n "$AUTH_TOKEN" ]]; then
         # Create script for boundary command - avoids shell escaping issues
-        # Note: Using public client (no client-secret required)
         cat > /tmp/boundary_create.sh << EOSCRIPT
 #!/bin/ash
 export BOUNDARY_ADDR=http://127.0.0.1:9200
@@ -499,6 +498,7 @@ boundary auth-methods create oidc \
     -scope-id='$ORG_ID' \
     -issuer='$OIDC_ISSUER' \
     -client-id='$KEYCLOAK_CLIENT_ID' \
+    -client-secret='$KEYCLOAK_CLIENT_SECRET' \
     -idp-ca-cert="\$CERT_CONTENT" \
     -signing-algorithm=RS256 \
     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
@@ -513,7 +513,6 @@ EOSCRIPT
         rm -f /tmp/boundary_create.sh
     else
         # Create script with recovery config - avoids shell escaping issues
-        # Note: Using public client (no client-secret required)
         cat > /tmp/boundary_create.sh << EOSCRIPT
 #!/bin/ash
 export BOUNDARY_ADDR=http://127.0.0.1:9200
@@ -524,6 +523,7 @@ boundary auth-methods create oidc \
     -scope-id='$ORG_ID' \
     -issuer='$OIDC_ISSUER' \
     -client-id='$KEYCLOAK_CLIENT_ID' \
+    -client-secret='$KEYCLOAK_CLIENT_SECRET' \
     -idp-ca-cert="\$CERT_CONTENT" \
     -signing-algorithm=RS256 \
     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
