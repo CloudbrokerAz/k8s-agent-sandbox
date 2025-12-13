@@ -1348,6 +1348,10 @@ fi
 # Step 6: Configure Boundary Targets & OIDC
 # ==========================================
 
+# Track configuration failures for final summary
+BOUNDARY_TARGETS_FAILED=""
+BOUNDARY_OIDC_FAILED=""
+
 if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "true" ]]; then
     echo ""
     echo "=========================================="
@@ -1365,7 +1369,21 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
     # Rollout status confirmed readiness - no additional sleep needed
 
     if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" ]]; then
-        "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" boundary devenv || echo "⚠️  Boundary targets configuration failed"
+        echo "Running configure-targets.sh..."
+        CONFIG_OUTPUT_FILE=$(mktemp)
+        if ! "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" boundary devenv 2>&1 | tee "$CONFIG_OUTPUT_FILE"; then
+            echo ""
+            echo "❌ BOUNDARY TARGETS CONFIGURATION FAILED"
+            echo "   Error output saved. Last 20 lines:"
+            echo "   ----------------------------------------"
+            tail -20 "$CONFIG_OUTPUT_FILE" | sed 's/^/   /'
+            echo "   ----------------------------------------"
+            echo ""
+            echo "   To retry manually, run:"
+            echo "   $K8S_DIR/platform/boundary/scripts/configure-targets.sh boundary devenv"
+            BOUNDARY_TARGETS_FAILED="true"
+        fi
+        rm -f "$CONFIG_OUTPUT_FILE"
     fi
 
     # Configure OIDC if Keycloak is deployed
@@ -1375,23 +1393,55 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
             echo ""
             echo "Configuring Boundary OIDC with Keycloak..."
             if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" ]]; then
-                # Let configure-oidc-auth.sh auto-fetch the client secret from Keycloak
-                # The script has built-in logic to retrieve the actual secret via Keycloak API
-                "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" || echo "⚠️  OIDC configuration failed (may need manual setup)"
+                OIDC_OUTPUT_FILE=$(mktemp)
+                if ! "$K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh" 2>&1 | tee "$OIDC_OUTPUT_FILE"; then
+                    echo ""
+                    echo "❌ OIDC CONFIGURATION FAILED"
+                    echo "   Error output saved. Last 20 lines:"
+                    echo "   ----------------------------------------"
+                    tail -20 "$OIDC_OUTPUT_FILE" | sed 's/^/   /'
+                    echo "   ----------------------------------------"
+                    echo ""
+                    echo "   This may require Boundary targets to be configured first."
+                    echo "   To retry manually, run:"
+                    echo "   $K8S_DIR/platform/boundary/scripts/configure-oidc-auth.sh"
+                    BOUNDARY_OIDC_FAILED="true"
+                fi
+                rm -f "$OIDC_OUTPUT_FILE"
             fi
         fi
     fi
 
-    echo "✅ Boundary configuration complete"
+    # Report configuration status
+    if [[ -n "$BOUNDARY_TARGETS_FAILED" ]] || [[ -n "$BOUNDARY_OIDC_FAILED" ]]; then
+        echo ""
+        echo "⚠️  Boundary configuration completed with errors"
+        [[ -n "$BOUNDARY_TARGETS_FAILED" ]] && echo "   - Targets configuration: FAILED"
+        [[ -n "$BOUNDARY_OIDC_FAILED" ]] && echo "   - OIDC configuration: FAILED"
+    else
+        echo "✅ Boundary configuration complete"
+    fi
 else
     echo ""
     echo "Skipping Boundary targets configuration"
 fi
 
+# Determine overall deployment status
+DEPLOYMENT_HAD_ERRORS=""
+if [[ -n "$BOUNDARY_TARGETS_FAILED" ]] || [[ -n "$BOUNDARY_OIDC_FAILED" ]]; then
+    DEPLOYMENT_HAD_ERRORS="true"
+fi
+
 echo ""
-echo "=========================================="
-echo "  ✅ FULL PLATFORM DEPLOYMENT COMPLETE"
-echo "=========================================="
+if [[ -n "$DEPLOYMENT_HAD_ERRORS" ]]; then
+    echo "=========================================="
+    echo "  ⚠️  PLATFORM DEPLOYMENT COMPLETED WITH ERRORS"
+    echo "=========================================="
+else
+    echo "=========================================="
+    echo "  ✅ FULL PLATFORM DEPLOYMENT COMPLETE"
+    echo "=========================================="
+fi
 echo ""
 echo "Components deployed:"
 echo "  ✅ Agent Sandbox (devenv)"
@@ -1400,6 +1450,22 @@ echo "  ✅ Boundary"
 echo "  ✅ Vault Secrets Operator"
 if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
 echo "  ✅ Keycloak"
+fi
+
+# Show configuration status
+if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]]; then
+    if [[ -n "$BOUNDARY_TARGETS_FAILED" ]]; then
+        echo "  ❌ Boundary Targets (FAILED - run configure-targets.sh manually)"
+    else
+        echo "  ✅ Boundary Targets"
+    fi
+    if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
+        if [[ -n "$BOUNDARY_OIDC_FAILED" ]]; then
+            echo "  ❌ Boundary OIDC (FAILED - run configure-oidc-auth.sh manually)"
+        else
+            echo "  ✅ Boundary OIDC"
+        fi
+    fi
 fi
 echo ""
 
@@ -1427,10 +1493,24 @@ else
 fi
 
 echo ""
-echo "=========================================="
-echo "  🎉 Deployment Complete!"
-echo "=========================================="
-echo ""
-echo "All components deployed and verified."
-echo "Check the test results above for any issues."
+if [[ -n "$DEPLOYMENT_HAD_ERRORS" ]]; then
+    echo "=========================================="
+    echo "  ⚠️  Deployment Complete with Errors"
+    echo "=========================================="
+    echo ""
+    echo "Components deployed but some configuration failed."
+    echo ""
+    echo "Failed configurations:"
+    [[ -n "$BOUNDARY_TARGETS_FAILED" ]] && echo "  - Boundary Targets: Run ./platform/boundary/scripts/configure-targets.sh boundary devenv"
+    [[ -n "$BOUNDARY_OIDC_FAILED" ]] && echo "  - Boundary OIDC: Run ./platform/boundary/scripts/configure-oidc-auth.sh"
+    echo ""
+    echo "Check the test results above for any issues."
+else
+    echo "=========================================="
+    echo "  🎉 Deployment Complete!"
+    echo "=========================================="
+    echo ""
+    echo "All components deployed and verified."
+    echo "Check the test results above for any issues."
+fi
 echo ""

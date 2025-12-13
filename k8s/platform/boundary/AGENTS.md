@@ -7,8 +7,18 @@ HashiCorp Boundary provides secure access to infrastructure targets (SSH, databa
 ## Key Scripts
 
 - `scripts/deploy-boundary.sh` - Deploys Boundary controller and workers
+- `scripts/configure-targets.sh` - Creates DevOps org, project, hosts, and SSH target
 - `scripts/configure-oidc-auth.sh` - Configures OIDC authentication with Keycloak
 - `scripts/create-boundary-secrets.sh` - Creates TLS secrets
+
+## Configuration Script Dependencies
+
+**CRITICAL**: Scripts must be run in the correct order:
+
+1. **configure-targets.sh** MUST run first - creates the DevOps organization scope
+2. **configure-oidc-auth.sh** requires DevOps scope to exist - will fail if run before configure-targets.sh
+
+The main deployment script (`deploy-all.sh`) handles this order automatically.
 
 ## OIDC Integration with Keycloak
 
@@ -86,6 +96,19 @@ Stored in `scripts/boundary-credentials.txt`:
 - Password: Generated during initialization
 
 ## Troubleshooting
+
+### Configuration Script Failures
+
+If the OIDC browser flow test fails with "Timeout waiting for popup" or only shows "Global" scope:
+
+1. **Missing DevOps scope** - configure-targets.sh failed silently
+   - Run manually: `./platform/boundary/scripts/configure-targets.sh boundary devenv`
+
+2. **Missing OIDC auth method** - configure-oidc-auth.sh failed silently
+   - Run manually: `./platform/boundary/scripts/configure-oidc-auth.sh`
+
+**Root cause**: The deployment script used `|| echo "warning"` pattern which swallowed errors.
+This was fixed to capture output and display actual error messages.
 
 ### OIDC Errors
 
