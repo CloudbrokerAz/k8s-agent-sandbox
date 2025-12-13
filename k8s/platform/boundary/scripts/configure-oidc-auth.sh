@@ -267,11 +267,57 @@ EXISTING_OIDC=$(run_boundary auth-methods list -scope-id="$ORG_ID" -format=json 
 
 if [[ -n "$EXISTING_OIDC" ]]; then
     echo "✅ OIDC auth method already exists ($EXISTING_OIDC)"
-    echo ""
-    echo "To reconfigure, delete the auth method first:"
-    echo "  boundary auth-methods delete -id=$EXISTING_OIDC"
-    echo ""
     AUTH_METHOD_ID="$EXISTING_OIDC"
+
+    # Update the client secret to ensure it matches Keycloak
+    echo "Syncing client secret with Keycloak..."
+    if [[ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]]; then
+        KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
+    fi
+
+    if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
+        echo "Updating auth method with current Keycloak client secret..."
+        # Write secret to temp file locally and copy to pod (avoids shell escaping issues)
+        TEMP_SECRET_FILE=$(mktemp)
+        echo -n "$KEYCLOAK_CLIENT_SECRET" > "$TEMP_SECRET_FILE"
+        kubectl cp "$TEMP_SECRET_FILE" "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/client_secret.txt" -c boundary-controller
+        rm -f "$TEMP_SECRET_FILE"
+
+        if [[ -n "$AUTH_TOKEN" ]]; then
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+                /bin/ash -c "
+                    export BOUNDARY_ADDR=http://127.0.0.1:9200
+                    export BOUNDARY_TOKEN='$AUTH_TOKEN'
+                    boundary auth-methods update oidc \
+                        -id='$EXISTING_OIDC' \
+                        -client-secret='file:///tmp/client_secret.txt' \
+                        -format=json
+                    rm -f /tmp/client_secret.txt
+                " 2>/dev/null && echo "✅ Client secret synced" || echo "⚠️  Could not sync client secret (may need manual update)"
+        else
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+                /bin/ash -c "
+                    export BOUNDARY_ADDR=http://127.0.0.1:9200
+                    cat > /tmp/recovery.hcl << 'RECEOF'
+kms \"aead\" {
+  purpose = \"recovery\"
+  aead_type = \"aes-gcm\"
+  key = \"$RECOVERY_KEY\"
+  key_id = \"global_recovery\"
+}
+RECEOF
+                    boundary auth-methods update oidc \
+                        -id='$EXISTING_OIDC' \
+                        -client-secret='file:///tmp/client_secret.txt' \
+                        -recovery-config=/tmp/recovery.hcl \
+                        -format=json
+                    rm -f /tmp/client_secret.txt /tmp/recovery.hcl
+                " 2>/dev/null && echo "✅ Client secret synced" || echo "⚠️  Could not sync client secret (may need manual update)"
+        fi
+    else
+        echo "⚠️  Could not fetch client secret from Keycloak - existing auth method unchanged"
+    fi
+    echo ""
 else
     echo ""
     echo "Step 1: Create OIDC Auth Method"
@@ -322,29 +368,33 @@ else
     # Note: Boundary controller needs hostAliases configured to resolve keycloak.local
     # The issuer URL must match what Keycloak advertises in OIDC discovery
 
-    # Run the command with KEYCLOAK_CLIENT_SECRET exported in the pod environment
+    # Write secret to temp file locally and copy to pod (avoids shell escaping issues)
+    TEMP_SECRET_FILE=$(mktemp)
+    echo -n "$KEYCLOAK_CLIENT_SECRET" > "$TEMP_SECRET_FILE"
+    kubectl cp "$TEMP_SECRET_FILE" "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/client_secret.txt" -c boundary-controller
+    rm -f "$TEMP_SECRET_FILE"
+
     if [[ -n "$AUTH_TOKEN" ]]; then
         AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
             /bin/ash -c "
                 export BOUNDARY_ADDR=http://127.0.0.1:9200
                 export BOUNDARY_TOKEN='$AUTH_TOKEN'
-                export KEYCLOAK_CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
                 boundary auth-methods create oidc \
                     -name='keycloak' \
                     -description='Keycloak OIDC Authentication' \
                     -scope-id='$ORG_ID' \
                     -issuer='$OIDC_ISSUER' \
                     -client-id='$KEYCLOAK_CLIENT_ID' \
-                    -client-secret='env://KEYCLOAK_CLIENT_SECRET' \
+                    -client-secret='file:///tmp/client_secret.txt' \
                     -signing-algorithm=RS256 \
                     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
                     -format=json
+                rm -f /tmp/client_secret.txt
             " 2>&1 || echo "{}")
     else
         AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
             /bin/ash -c "
                 export BOUNDARY_ADDR=http://127.0.0.1:9200
-                export KEYCLOAK_CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
                 echo 'kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }' > /tmp/recovery.hcl
                 boundary auth-methods create oidc \
                     -name='keycloak' \
@@ -352,11 +402,12 @@ else
                     -scope-id='$ORG_ID' \
                     -issuer='$OIDC_ISSUER' \
                     -client-id='$KEYCLOAK_CLIENT_ID' \
-                    -client-secret='env://KEYCLOAK_CLIENT_SECRET' \
+                    -client-secret='file:///tmp/client_secret.txt' \
                     -signing-algorithm=RS256 \
                     -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
                     -recovery-kms-hcl=file:///tmp/recovery.hcl \
                     -format=json
+                rm -f /tmp/client_secret.txt /tmp/recovery.hcl
             " 2>&1 || echo "{}")
     fi
 

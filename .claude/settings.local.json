@@ -97,7 +97,9 @@
       "Bash(boundary auth-methods read:*)",
       "Bash(boundary authenticate password:*)",
       "Bash(export BOUNDARY_PASS='DdpoRz3WkfdR8TRbOue1')",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "WebFetch(domain:discuss.hashicorp.com)",
+      "WebSearch"
     ],
     "deny": [
       "Write(.gitignore)",
