@@ -1256,9 +1256,17 @@ spec:
 EOF
 
         # Update Boundary controller hostAliases if Boundary is deployed
+        # IMPORTANT: For OIDC to work, keycloak.local must point to the ingress controller
+        # (which handles TLS termination) so Boundary can validate the HTTPS issuer
         if kubectl get deployment boundary-controller -n boundary &>/dev/null; then
             echo "Updating Boundary controller hostAliases for Keycloak/Boundary connectivity..."
-            KEYCLOAK_HTTP_IP=$(kubectl get svc keycloak-http -n keycloak -o jsonpath='{.spec.clusterIP}')
+
+            # Use ingress controller IP for keycloak.local (required for HTTPS OIDC validation)
+            INGRESS_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+            if [[ -z "$INGRESS_IP" ]]; then
+                echo "⚠️  Ingress controller not found, falling back to keycloak-http service"
+                INGRESS_IP=$(kubectl get svc keycloak-http -n keycloak -o jsonpath='{.spec.clusterIP}')
+            fi
             BOUNDARY_API_IP=$(kubectl get svc boundary-controller-api -n boundary -o jsonpath='{.spec.clusterIP}')
 
             kubectl patch deployment boundary-controller -n boundary --type='json' -p="[
@@ -1267,7 +1275,7 @@ EOF
                 \"path\": \"/spec/template/spec/hostAliases\",
                 \"value\": [
                   {
-                    \"ip\": \"$KEYCLOAK_HTTP_IP\",
+                    \"ip\": \"$INGRESS_IP\",
                     \"hostnames\": [\"keycloak.local\"]
                   },
                   {
