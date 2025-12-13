@@ -1056,7 +1056,16 @@ EOF
     fi
 fi
 
-    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/05-controller.yaml"
+    # Get ingress-nginx ClusterIP for hostAliases (required for OIDC)
+    echo "Detecting ingress-nginx ClusterIP for OIDC..."
+    INGRESS_NGINX_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    if [[ -z "$INGRESS_NGINX_IP" ]]; then
+        INGRESS_NGINX_IP=$(kubectl get svc -n ingress-nginx nginx-ingress-controller -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "127.0.0.1")
+    fi
+    echo "  Using ingress IP: $INGRESS_NGINX_IP"
+
+    # Substitute ingress IP in controller manifest before applying
+    sed "s/\${INGRESS_NGINX_IP}/${INGRESS_NGINX_IP}/g" "$K8S_DIR/platform/boundary/manifests/05-controller.yaml" | kubectl apply -f -
     kubectl apply -f "$K8S_DIR/platform/boundary/manifests/06-worker.yaml"
     kubectl apply -f "$K8S_DIR/platform/boundary/manifests/07-service.yaml"
 
@@ -1217,6 +1226,22 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
     echo "=========================================="
     echo ""
 
+    # Create shared OIDC client secret BEFORE Keycloak deployment
+    # This ensures both Keycloak realm-init and Boundary use the SAME secret
+    # Fixes: "Invalid client or Invalid client credentials" OIDC callback error
+    echo "Creating shared OIDC client secret..."
+    kubectl create namespace keycloak --dry-run=client -o yaml | kubectl apply -f -
+    if ! kubectl get secret boundary-oidc-client-secret -n keycloak &>/dev/null; then
+        OIDC_CLIENT_SECRET=$(openssl rand -base64 32 | tr -d '=/+' | head -c 32)
+        kubectl create secret generic boundary-oidc-client-secret \
+            --namespace=keycloak \
+            --from-literal=client-secret="$OIDC_CLIENT_SECRET" \
+            --dry-run=client -o yaml | kubectl apply -f -
+        echo "✅ Created shared OIDC client secret (boundary-oidc-client-secret)"
+    else
+        echo "✅ Shared OIDC client secret already exists"
+    fi
+
     if [[ -f "$K8S_DIR/platform/keycloak/scripts/deploy-keycloak.sh" ]]; then
         "$K8S_DIR/platform/keycloak/scripts/deploy-keycloak.sh"
 
@@ -1374,6 +1399,9 @@ else
     "$SCRIPT_DIR/tests/test-boundary.sh" || true
     [[ "$DEPLOY_KEYCLOAK" == "true" ]] && "$SCRIPT_DIR/tests/test-keycloak.sh" || true
     [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && "$SCRIPT_DIR/tests/test-oidc-auth.sh" || true
+    # CRITICAL: Validate OIDC client secret consistency between Keycloak and Boundary
+    # This test catches the "Invalid client or Invalid client credentials" error
+    [[ "$DEPLOY_KEYCLOAK" == "true" ]] && [[ -f "$SCRIPT_DIR/tests/test-oidc-client-secret.sh" ]] && "$SCRIPT_DIR/tests/test-oidc-client-secret.sh" || true
 fi
 
 echo ""

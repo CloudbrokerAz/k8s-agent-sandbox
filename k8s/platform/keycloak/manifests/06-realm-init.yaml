@@ -14,7 +14,13 @@ data:
     KEYCLOAK_URL="http://keycloak.keycloak.svc.cluster.local:8080"
     REALM_NAME="agent-sandbox"
     CLIENT_ID="boundary"
-    CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-boundary-client-secret-change-me}"
+    # Use shared secret from Kubernetes (created by deploy-all.sh)
+    # This ensures Boundary OIDC uses the SAME secret as Keycloak
+    CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET}"
+    if [[ -z "$CLIENT_SECRET" ]]; then
+        echo "WARNING: KEYCLOAK_CLIENT_SECRET not set, using fallback"
+        CLIENT_SECRET="boundary-client-secret-change-me"
+    fi
     BOUNDARY_URL="${BOUNDARY_URL:-https://boundary.local}"
     # External URL for OIDC issuer - MUST be resolvable by external users
     KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://keycloak.local}"
@@ -96,8 +102,19 @@ data:
 
     if [ -n "$CLIENT_UUID" ]; then
         echo "  Client '$CLIENT_ID' already exists ($CLIENT_UUID)"
+        # Update client secret to match the shared secret
+        echo "  Updating client secret to match shared secret..."
+        curl -sf -X PUT "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients/$CLIENT_UUID" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"clientId\": \"$CLIENT_ID\",
+                \"secret\": \"$CLIENT_SECRET\"
+            }" || echo "  (client secret update may have failed)"
     else
-        echo "  Creating client '$CLIENT_ID'..."
+        echo "  Creating client '$CLIENT_ID' with pre-defined secret..."
+        # IMPORTANT: Set secret explicitly to match the shared Kubernetes secret
+        # This prevents secret mismatch between Keycloak and Boundary
         curl -sf -X POST "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
@@ -107,13 +124,18 @@ data:
                 \"enabled\": true,
                 \"protocol\": \"openid-connect\",
                 \"publicClient\": false,
+                \"secret\": \"$CLIENT_SECRET\",
                 \"standardFlowEnabled\": true,
-                \"redirectUris\": [\"$BOUNDARY_URL/v1/auth-methods/oidc:authenticate:callback\"],
-                \"webOrigins\": [\"$BOUNDARY_URL\"]
+                \"redirectUris\": [
+                    \"$BOUNDARY_URL/v1/auth-methods/oidc:authenticate:callback\",
+                    \"http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback\",
+                    \"http://localhost:9200/v1/auth-methods/oidc:authenticate:callback\"
+                ],
+                \"webOrigins\": [\"$BOUNDARY_URL\", \"http://127.0.0.1:9200\", \"http://localhost:9200\"]
             }"
-        echo "  Client created!"
+        echo "  Client created with shared secret!"
 
-        # Get client UUID and regenerate secret
+        # Get client UUID
         CLIENT_UUID=$(curl -sf "$KEYCLOAK_URL/admin/realms/$REALM_NAME/clients?clientId=$CLIENT_ID" \
             -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
     fi
@@ -211,9 +233,10 @@ data:
         fi
     }
 
-    create_user "admin" "admin@example.com" "Admin" "User" "Admin123!@#" "admins"
-    create_user "developer" "developer@example.com" "Developer" "User" "Dev123!@#" "developers"
-    create_user "readonly" "readonly@example.com" "ReadOnly" "User" "Read123!@#" "readonly"
+    # Note: Using simpler passwords without special shell characters to avoid escaping issues
+    create_user "admin" "admin@example.com" "Admin" "User" "Admin123" "admins"
+    create_user "developer" "developer@example.com" "Developer" "User" "Developer123" "developers"
+    create_user "readonly" "readonly@example.com" "ReadOnly" "User" "Readonly123" "readonly"
 
     echo ""
     echo "========================================="
@@ -225,9 +248,9 @@ data:
     echo "Issuer (external): $KEYCLOAK_EXTERNAL_URL/realms/$REALM_NAME"
     echo ""
     echo "Demo Users:"
-    echo "  admin@example.com / Admin123!@# (admins)"
-    echo "  developer@example.com / Dev123!@# (developers)"
-    echo "  readonly@example.com / Read123!@# (readonly)"
+    echo "  admin@example.com / Admin123 (admins)"
+    echo "  developer@example.com / Developer123 (developers)"
+    echo "  readonly@example.com / Readonly123 (readonly)"
 ---
 apiVersion: batch/v1
 kind: Job
@@ -242,8 +265,9 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: realm-init
-          image: curlimages/curl:latest
-          command: ["/bin/sh", "/scripts/init-realm.sh"]
+          # Use alpine with curl and jq installed
+          image: alpine:3.19
+          command: ["/bin/sh", "-c", "apk add --no-cache curl jq && /bin/sh /scripts/init-realm.sh"]
           env:
             - name: KEYCLOAK_ADMIN
               valueFrom:
@@ -259,6 +283,14 @@ spec:
               value: "https://boundary.local"
             - name: KEYCLOAK_EXTERNAL_URL
               value: "https://keycloak.local"
+            # Shared OIDC client secret - ensures Boundary uses the same secret as Keycloak
+            # Created by deploy-all.sh before Keycloak deployment
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: boundary-oidc-client-secret
+                  key: client-secret
+                  optional: true  # Allows fallback if secret doesn't exist
           volumeMounts:
             - name: scripts
               mountPath: /scripts

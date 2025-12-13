@@ -2,20 +2,20 @@
   Boundary OIDC Configuration
 ==========================================
 
-Auth Method ID:     amoidc_vjun9nmTjn
-Issuer:             http://keycloak.local/realms/agent-sandbox
+Auth Method ID:     amoidc_dd9zaQBEM8
+Issuer:             https://keycloak.local/realms/agent-sandbox
 Client ID:          boundary
 
 ==========================================
   Managed Groups
 ==========================================
 
-Admins Group:         ✅ Created managed group: keycloak-admins (mgoidc_AcJcv4LJeL)
-mgoidc_AcJcv4LJeL
-Developers Group:     ✅ Created managed group: keycloak-developers (mgoidc_PZhAmhVVvN)
-mgoidc_PZhAmhVVvN
-Readonly Group:       ✅ Created managed group: keycloak-readonly (mgoidc_573GTESmoL)
-mgoidc_573GTESmoL
+Admins Group:         ✅ Managed group 'keycloak-admins' already exists (mgoidc_K0MQoI37ZD)
+mgoidc_K0MQoI37ZD
+Developers Group:     ✅ Managed group 'keycloak-developers' already exists (mgoidc_6YX5A8hQhD)
+mgoidc_6YX5A8hQhD
+Readonly Group:       ✅ Managed group 'keycloak-readonly' already exists (mgoidc_KI0QbGDLZi)
+mgoidc_KI0QbGDLZi
 
 ==========================================
   Group Mappings
@@ -31,14 +31,15 @@ readonly            → List access (read + list on all resources)
   Keycloak Configuration Required
 ==========================================
 
-1. Create client in Keycloak:
+1. Keycloak client configuration (auto-configured by this script):
    - Realm: agent-sandbox
    - Client ID: boundary
    - Client Protocol: openid-connect
    - Access Type: confidential
    - Valid Redirect URIs:
-     * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback
-     * http://boundary-controller-api.boundary.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback
+     * https://boundary.local/v1/auth-methods/oidc:authenticate:callback (via ingress)
+     * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
+     * http://localhost:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
 
 2. Configure client scopes to include 'groups' claim
 
@@ -58,7 +59,7 @@ readonly            → List access (read + list on all resources)
 
 2. Authenticate with OIDC:
    export BOUNDARY_ADDR=http://127.0.0.1:9200
-   boundary authenticate oidc -auth-method-id=amoidc_vjun9nmTjn
+   boundary authenticate oidc -auth-method-id=amoidc_dd9zaQBEM8
 
 3. Your browser will open for Keycloak login
    - Login with Keycloak credentials

@@ -1,6 +1,35 @@
 #!/bin/bash
 set -e
 
+# ============================================================================
+# DEPRECATED: Use k8s/platform/boundary/scripts/configure-oidc-auth.sh instead
+# ============================================================================
+#
+# This script is deprecated and retained for reference only.
+# The authoritative OIDC configuration script is:
+#   k8s/platform/boundary/scripts/configure-oidc-auth.sh
+#
+# Key differences in the new script:
+#   - Automatically fetches Keycloak client secret (no hardcoded default)
+#   - Uses correct managed group filter syntax: "/token/groups" contains "group"
+#   - Properly handles TLS certificates for Keycloak
+#   - Includes comprehensive error handling and cleanup
+#
+# ============================================================================
+
+echo "========================================="
+echo "⚠️  DEPRECATION WARNING"
+echo "========================================="
+echo ""
+echo "This script is DEPRECATED."
+echo "Please use instead:"
+echo "  k8s/platform/boundary/scripts/configure-oidc-auth.sh"
+echo ""
+echo "Continuing with legacy script in 5 seconds..."
+echo "(Press Ctrl+C to abort)"
+sleep 5
+echo ""
+
 # Boundary OIDC Setup Script
 # Automates the configuration of Boundary OIDC auth method with Keycloak
 
@@ -161,17 +190,17 @@ create_managed_group() {
 ADMIN_GROUP_ID=$(create_managed_group \
     "keycloak-admins" \
     "Keycloak administrators" \
-    '"admins" in "/resource/groups"')
+    '"/token/groups" contains "admins"')
 
 DEV_GROUP_ID=$(create_managed_group \
     "keycloak-developers" \
     "Keycloak developers" \
-    '"developers" in "/resource/groups"')
+    '"/token/groups" contains "developers"')
 
 READONLY_GROUP_ID=$(create_managed_group \
     "keycloak-readonly" \
     "Keycloak read-only users" \
-    '"readonly" in "/resource/groups"')
+    '"/token/groups" contains "readonly"')
 
 echo ""
 

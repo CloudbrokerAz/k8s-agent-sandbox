@@ -145,11 +145,35 @@ echo ""
 # Uses port-forward since curl may not be available in the Keycloak container
 get_keycloak_client_secret() {
     local KEYCLOAK_LOCAL_PORT=18080
+    local PF_PID=""
+
+    # Cleanup function for port-forward
+    cleanup_port_forward() {
+        if [[ -n "$PF_PID" ]]; then
+            kill $PF_PID 2>/dev/null || true
+            wait $PF_PID 2>/dev/null || true
+        fi
+    }
+
+    # Set trap to ensure cleanup on exit or error
+    trap cleanup_port_forward EXIT
 
     # Start port-forward to Keycloak
     kubectl port-forward -n "$KEYCLOAK_NAMESPACE" svc/keycloak ${KEYCLOAK_LOCAL_PORT}:8080 >/dev/null 2>&1 &
-    local PF_PID=$!
-    sleep 2
+    PF_PID=$!
+
+    # Wait for port-forward to be ready with health check (up to 10 seconds)
+    local WAIT_COUNT=0
+    while ! curl -s "http://localhost:${KEYCLOAK_LOCAL_PORT}/health/ready" >/dev/null 2>&1; do
+        WAIT_COUNT=$((WAIT_COUNT + 1))
+        if [[ $WAIT_COUNT -ge 20 ]]; then
+            echo "Timeout waiting for Keycloak port-forward" >&2
+            cleanup_port_forward
+            trap - EXIT
+            return 1
+        fi
+        sleep 0.5
+    done
 
     # Get admin credentials from Kubernetes secret
     local ADMIN_USER ADMIN_PASS
@@ -157,7 +181,8 @@ get_keycloak_client_secret() {
     ADMIN_PASS=$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "")
 
     if [[ -z "$ADMIN_PASS" ]]; then
-        kill $PF_PID 2>/dev/null || true
+        cleanup_port_forward
+        trap - EXIT  # Reset trap
         echo ""
         return 1
     fi
@@ -173,7 +198,8 @@ get_keycloak_client_secret() {
 
     ADMIN_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
     if [[ -z "$ADMIN_TOKEN" ]]; then
-        kill $PF_PID 2>/dev/null || true
+        cleanup_port_forward
+        trap - EXIT  # Reset trap
         echo ""
         return 1
     fi
@@ -207,7 +233,7 @@ get_keycloak_client_secret() {
                     "http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
                 ],
                 "webOrigins": ["*"],
-                "defaultClientScopes": ["openid", "profile", "email", "groups"]
+                "defaultClientScopes": ["openid", "profile", "email"]
             }' >/dev/null 2>&1
 
         # Get the client ID again
@@ -215,10 +241,33 @@ get_keycloak_client_secret() {
         CLIENT_ID_INTERNAL=$(curl -s \
             -H "Authorization: Bearer $ADMIN_TOKEN" \
             "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+
+        # Add groups mapper to include groups claim in OIDC tokens
+        # This is required for Boundary managed groups to work
+        if [[ -n "$CLIENT_ID_INTERNAL" ]]; then
+            echo "Adding groups mapper to client..." >&2
+            curl -s -X POST "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients/${CLIENT_ID_INTERNAL}/protocol-mappers/models" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{
+                    "name": "groups",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-group-membership-mapper",
+                    "consentRequired": false,
+                    "config": {
+                        "full.path": "false",
+                        "id.token.claim": "true",
+                        "access.token.claim": "true",
+                        "claim.name": "groups",
+                        "userinfo.token.claim": "true"
+                    }
+                }' >/dev/null 2>&1 || echo "  (groups mapper may already exist)" >&2
+        fi
     fi
 
     if [[ -z "$CLIENT_ID_INTERNAL" ]]; then
-        kill $PF_PID 2>/dev/null || true
+        cleanup_port_forward
+        trap - EXIT  # Reset trap
         echo ""
         return 1
     fi
@@ -232,7 +281,8 @@ get_keycloak_client_secret() {
     CLIENT_SECRET=$(echo "$SECRET_RESPONSE" | jq -r '.value // empty' 2>/dev/null)
 
     # Cleanup port-forward
-    kill $PF_PID 2>/dev/null || true
+    cleanup_port_forward
+    trap - EXIT  # Reset trap
     echo "$CLIENT_SECRET"
 }
 
@@ -268,8 +318,16 @@ if [[ -n "$EXISTING_OIDC" ]]; then
 
     # Update the client secret, issuer, and CA cert to ensure they match Keycloak
     echo "Syncing OIDC config with Keycloak..."
+
+    # Try to get client secret from shared Kubernetes secret first (preferred)
     if [[ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]]; then
-        KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
+        KEYCLOAK_CLIENT_SECRET=$(kubectl get secret boundary-oidc-client-secret -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d || echo "")
+        if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
+            echo "✅ Using shared client secret from Kubernetes"
+        else
+            echo "No shared secret found, fetching from Keycloak API..."
+            KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
+        fi
     fi
 
     if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
@@ -332,45 +390,61 @@ else
     echo "Step 1: Create OIDC Auth Method"
     echo "--------------------------------"
 
-    # Check if client secret is in environment, auto-fetch from Keycloak, or prompt as fallback
+    # Try to get client secret from shared Kubernetes secret first (preferred)
+    # This ensures Boundary uses the SAME secret as Keycloak
     if [[ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]]; then
-        echo "Fetching client secret from Keycloak..."
-        KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
-
+        echo "Checking for shared OIDC client secret in Kubernetes..."
+        KEYCLOAK_CLIENT_SECRET=$(kubectl get secret boundary-oidc-client-secret -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d || echo "")
         if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
-            echo "✅ Retrieved client secret from Keycloak"
+            echo "✅ Using shared client secret from Kubernetes (boundary-oidc-client-secret)"
         else
-            # Fallback to manual prompt only if auto-fetch fails and interactive mode
-            echo ""
-            echo "⚠️  Could not auto-fetch client secret from Keycloak."
-            echo "    You need to create a client in Keycloak with the following settings:"
-            echo "    - Realm: $KEYCLOAK_REALM"
-            echo "    - Client ID: $KEYCLOAK_CLIENT_ID"
-            echo "    - Client Protocol: openid-connect"
-            echo "    - Access Type: confidential"
-            echo "    - Valid Redirect URIs: https://boundary.local/v1/auth-methods/oidc:authenticate:callback"
-            echo "                           http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
-            echo "                           http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
-            echo ""
-
-            # Check if we're in non-interactive mode
-            if [[ ! -t 0 ]]; then
-                echo "❌ Cannot prompt for client secret in non-interactive mode"
-                echo "   Set KEYCLOAK_CLIENT_SECRET environment variable or ensure Keycloak is accessible"
-                exit 1
+            echo "No shared secret found, fetching from Keycloak API..."
+            KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
+            if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
+                echo "✅ Retrieved client secret from Keycloak"
+                # Save to Kubernetes secret for future use
+                echo "Saving client secret to Kubernetes for consistency..."
+                kubectl create secret generic boundary-oidc-client-secret \
+                    --namespace="$KEYCLOAK_NAMESPACE" \
+                    --from-literal=client-secret="$KEYCLOAK_CLIENT_SECRET" \
+                    --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || true
             fi
-
-            echo "Please enter the client secret from Keycloak:"
-            read -s KEYCLOAK_CLIENT_SECRET
-            echo ""
         fi
     else
         echo "Using KEYCLOAK_CLIENT_SECRET from environment"
     fi
 
     if [[ -z "$KEYCLOAK_CLIENT_SECRET" ]]; then
-        echo "❌ Client secret is required"
-        exit 1
+        # Fallback to manual prompt only if auto-fetch fails and interactive mode
+        echo ""
+        echo "⚠️  Could not auto-fetch client secret."
+        echo "    Tried: Kubernetes secret (boundary-oidc-client-secret), Keycloak API"
+        echo ""
+        echo "    You need to create a client in Keycloak with the following settings:"
+        echo "    - Realm: $KEYCLOAK_REALM"
+        echo "    - Client ID: $KEYCLOAK_CLIENT_ID"
+        echo "    - Client Protocol: openid-connect"
+        echo "    - Access Type: confidential"
+        echo "    - Valid Redirect URIs: https://boundary.local/v1/auth-methods/oidc:authenticate:callback"
+        echo "                           http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
+        echo "                           http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
+        echo ""
+
+        # Check if we're in non-interactive mode
+        if [[ ! -t 0 ]]; then
+            echo "❌ Cannot prompt for client secret in non-interactive mode"
+            echo "   Set KEYCLOAK_CLIENT_SECRET environment variable or ensure Keycloak is accessible"
+            exit 1
+        fi
+
+        echo "Please enter the client secret from Keycloak:"
+        read -s KEYCLOAK_CLIENT_SECRET
+        echo ""
+
+        if [[ -z "$KEYCLOAK_CLIENT_SECRET" ]]; then
+            echo "❌ Client secret is required"
+            exit 1
+        fi
     fi
 
     # Create OIDC auth method
@@ -442,14 +516,15 @@ else
     echo "✅ Created OIDC auth method: keycloak ($AUTH_METHOD_ID)"
 
     # Configure claims scopes
+    # Note: "groups" is NOT a standard OIDC scope - groups are included via Keycloak mapper
+    # Only request standard scopes that Keycloak supports
     echo "Configuring claims scopes..."
     run_boundary auth-methods update oidc \
         -id="$AUTH_METHOD_ID" \
         -claims-scopes="profile" \
         -claims-scopes="email" \
-        -claims-scopes="groups" \
         2>/dev/null || true
-    echo "✅ Configured claims scopes"
+    echo "✅ Configured claims scopes (profile, email)"
 
     # Activate the OIDC auth method (make it public)
     echo "Activating OIDC auth method..."
@@ -468,6 +543,41 @@ else
         echo ""
         echo "   Error: $ACTIVATE_RESULT"
     fi
+fi
+
+# Set OIDC auth method as primary for the scope (enables auto-user creation)
+echo "Setting OIDC auth method as primary for the scope..."
+if [[ -n "$AUTH_TOKEN" ]]; then
+    PRIMARY_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        /bin/ash -c "
+            export BOUNDARY_ADDR=http://127.0.0.1:9200
+            export BOUNDARY_TOKEN='$AUTH_TOKEN'
+            boundary scopes update -id='$ORG_ID' -primary-auth-method-id='$AUTH_METHOD_ID' -format=json
+        " 2>&1 || echo "{}")
+else
+    PRIMARY_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        /bin/ash -c "
+            export BOUNDARY_ADDR=http://127.0.0.1:9200
+            cat > /tmp/recovery.hcl << 'RECEOF'
+kms \"aead\" {
+  purpose = \"recovery\"
+  aead_type = \"aes-gcm\"
+  key = \"$RECOVERY_KEY\"
+  key_id = \"global_recovery\"
+}
+RECEOF
+            boundary scopes update -id='$ORG_ID' -primary-auth-method-id='$AUTH_METHOD_ID' -recovery-config=/tmp/recovery.hcl -format=json
+            rm -f /tmp/recovery.hcl
+        " 2>&1 || echo "{}")
+fi
+
+PRIMARY_ID=$(echo "$PRIMARY_RESULT" | grep -E '^\{' | jq -r '.item.primary_auth_method_id // empty' 2>/dev/null)
+if [[ "$PRIMARY_ID" == "$AUTH_METHOD_ID" ]]; then
+    echo "✅ OIDC auth method set as primary (enables auto-user creation)"
+else
+    echo "⚠️  Could not set OIDC as primary auth method"
+    echo "   Users may need to be pre-created manually"
+    echo "   To fix, run: boundary scopes update -id=$ORG_ID -primary-auth-method-id=$AUTH_METHOD_ID"
 fi
 
 echo ""
@@ -647,14 +757,15 @@ readonly            → List access (read + list on all resources)
   Keycloak Configuration Required
 ==========================================
 
-1. Create client in Keycloak:
+1. Keycloak client configuration (auto-configured by this script):
    - Realm: $KEYCLOAK_REALM
    - Client ID: $KEYCLOAK_CLIENT_ID
    - Client Protocol: openid-connect
    - Access Type: confidential
    - Valid Redirect URIs:
-     * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback
-     * http://boundary-controller-api.${BOUNDARY_NAMESPACE}.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback
+     * https://boundary.local/v1/auth-methods/oidc:authenticate:callback (via ingress)
+     * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
+     * http://localhost:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
 
 2. Configure client scopes to include 'groups' claim
 

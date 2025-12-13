@@ -15,9 +15,11 @@ spec:
       labels:
         app: boundary-controller
     spec:
-      # DNS resolution for external hostnames via ingress
+      # OIDC requires Boundary controller to resolve keycloak.local and boundary.local
+      # The ingress IP is dynamically set by deploy-boundary.sh using envsubst
+      # Placeholder ${INGRESS_NGINX_IP} is replaced at deployment time with actual ingress ClusterIP
       hostAliases:
-        - ip: "10.96.197.168"  # ingress-nginx-controller ClusterIP
+        - ip: "${INGRESS_NGINX_IP}"
           hostnames:
             - "keycloak.local"
             - "boundary.local"
@@ -123,12 +125,13 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: BOUNDARY_POSTGRES_URL
               value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@boundary-postgres.boundary.svc.cluster.local:5432/boundary?sslmode=disable"
-            # Enterprise license from secret
+            # Enterprise license from secret (optional for Community Edition)
             - name: BOUNDARY_LICENSE
               valueFrom:
                 secretKeyRef:
                   name: boundary-license
                   key: license
+                  optional: true
           volumeMounts:
             - name: config
               mountPath: /boundary/config

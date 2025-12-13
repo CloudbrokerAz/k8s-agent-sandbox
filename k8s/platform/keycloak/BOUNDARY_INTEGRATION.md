@@ -99,11 +99,12 @@ boundary auth-methods update oidc \
 
 ```bash
 # Create managed group for Keycloak 'admins' group
+# Note: Use "/token/groups" for OIDC token claims, NOT "/resource/groups"
 boundary managed-groups create oidc \
   -auth-method-id $AUTH_METHOD_ID \
   -name "keycloak-admins" \
   -description "Keycloak administrators" \
-  -filter '"admins" in "/resource/groups"' \
+  -filter '"/token/groups" contains "admins"' \
   -format json | tee managed-group-admins.json
 
 export ADMIN_GROUP_ID=$(cat managed-group-admins.json | jq -r '.item.id')
@@ -113,7 +114,7 @@ boundary managed-groups create oidc \
   -auth-method-id $AUTH_METHOD_ID \
   -name "keycloak-developers" \
   -description "Keycloak developers" \
-  -filter '"developers" in "/resource/groups"' \
+  -filter '"/token/groups" contains "developers"' \
   -format json | tee managed-group-developers.json
 
 export DEV_GROUP_ID=$(cat managed-group-developers.json | jq -r '.item.id')
@@ -123,7 +124,7 @@ boundary managed-groups create oidc \
   -auth-method-id $AUTH_METHOD_ID \
   -name "keycloak-readonly" \
   -description "Keycloak read-only users" \
-  -filter '"readonly" in "/resource/groups"' \
+  -filter '"/token/groups" contains "readonly"' \
   -format json | tee managed-group-readonly.json
 
 export READONLY_GROUP_ID=$(cat managed-group-readonly.json | jq -r '.item.id')
@@ -304,13 +305,14 @@ curl ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration |
 
 **Solution:**
 ```bash
-# Update managed group filter
+# Update managed group filter - use "/token/groups" for OIDC claims
 boundary managed-groups update oidc \
   -id $ADMIN_GROUP_ID \
-  -filter '"admins" in "/resource/groups"'
+  -filter '"/token/groups" contains "admins"'
 
 # Verify user groups in Keycloak token
 # Decode JWT token at https://jwt.io
+# The groups claim should show: ["admins", "developers", ...]
 ```
 
 ### Issue: "Cannot connect to Keycloak from Boundary"

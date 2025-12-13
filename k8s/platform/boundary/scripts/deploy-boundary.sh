@@ -58,6 +58,23 @@ fi
 echo "📦 Deploying Boundary components..."
 echo ""
 
+# Get ingress-nginx ClusterIP for hostAliases (required for OIDC)
+echo "  → Detecting ingress-nginx ClusterIP for OIDC..."
+INGRESS_NGINX_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+if [[ -z "$INGRESS_NGINX_IP" ]]; then
+    # Try alternate service name
+    INGRESS_NGINX_IP=$(kubectl get svc -n ingress-nginx nginx-ingress-controller -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+fi
+if [[ -z "$INGRESS_NGINX_IP" ]]; then
+    echo "  ⚠️  Could not detect ingress-nginx ClusterIP"
+    echo "      OIDC authentication may not work correctly"
+    echo "      Set INGRESS_NGINX_IP environment variable or fix ingress-nginx deployment"
+    INGRESS_NGINX_IP="127.0.0.1"
+else
+    echo "  ✅ Ingress ClusterIP: $INGRESS_NGINX_IP"
+fi
+export INGRESS_NGINX_IP
+
 # Apply manifests in order
 echo "  → Applying namespace..."
 kubectl apply -f "$MANIFESTS_DIR/01-namespace.yaml"
@@ -73,9 +90,15 @@ kubectl rollout status statefulset/boundary-postgres -n "$NAMESPACE" --timeout=1
 
 echo "  → Initializing Boundary database..."
 # Run database init as a one-time job
+# Use matching image version (Enterprise or Community) to avoid mismatch
+if [[ "$ENTERPRISE_MODE" == "true" ]]; then
+    BOUNDARY_INIT_IMAGE="hashicorp/boundary-enterprise:0.20.1-ent"
+else
+    BOUNDARY_INIT_IMAGE="hashicorp/boundary:0.20.1"
+fi
 kubectl run boundary-db-init \
     --namespace="$NAMESPACE" \
-    --image=hashicorp/boundary:0.20.1 \
+    --image="$BOUNDARY_INIT_IMAGE" \
     --restart=Never \
     --env="POSTGRES_USER=$(kubectl get secret boundary-db-secrets -n $NAMESPACE -o jsonpath='{.data.POSTGRES_USER}' | base64 -d)" \
     --env="POSTGRES_PASSWORD=$(kubectl get secret boundary-db-secrets -n $NAMESPACE -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)" \
@@ -150,7 +173,21 @@ kubectl delete pod boundary-db-init -n "$NAMESPACE" --ignore-not-found=true 2>/d
 
 echo ""
 echo "  → Deploying Boundary Controller..."
-kubectl apply -f "$MANIFESTS_DIR/05-controller.yaml"
+# Substitute ingress IP in controller manifest before applying
+echo "    Using ingress IP: $INGRESS_NGINX_IP"
+
+# Create temp file with substitution (most reliable method)
+TEMP_MANIFEST=$(mktemp)
+sed "s/\${INGRESS_NGINX_IP}/${INGRESS_NGINX_IP}/g" "$MANIFESTS_DIR/05-controller.yaml" > "$TEMP_MANIFEST"
+
+# Verify substitution worked
+if grep -q '\${INGRESS_NGINX_IP}' "$TEMP_MANIFEST"; then
+    echo "    ⚠️  Warning: Variable substitution may have failed"
+    cat "$TEMP_MANIFEST" | grep -A2 "hostAliases"
+fi
+
+kubectl apply -f "$TEMP_MANIFEST"
+rm -f "$TEMP_MANIFEST"
 
 echo "  → Deploying Boundary Worker..."
 kubectl apply -f "$MANIFESTS_DIR/06-worker.yaml"
