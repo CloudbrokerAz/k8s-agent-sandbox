@@ -19,35 +19,87 @@ echo "  Browser OIDC Flow Test"
 echo "=========================================="
 echo ""
 
-# Prerequisites check
+# Prerequisites check with auto-install
 echo "Checking prerequisites..."
-PREREQ_FAILED=false
 
+# Detect package manager for auto-install
+detect_pkg_manager() {
+    if [[ "$OSTYPE" == "darwin"* ]] && command -v brew &>/dev/null; then
+        echo "brew"
+    elif command -v apt-get &>/dev/null; then
+        echo "apt"
+    elif command -v dnf &>/dev/null; then
+        echo "dnf"
+    elif command -v yum &>/dev/null; then
+        echo "yum"
+    else
+        echo "unknown"
+    fi
+}
+
+PKG_MANAGER=$(detect_pkg_manager)
+
+# Check and install python3
 if ! command -v python3 &>/dev/null; then
-    echo -e "${RED}❌ python3 not found${NC}"
-    PREREQ_FAILED=true
+    echo -e "${YELLOW}⚠️  python3 not found, attempting install...${NC}"
+    case $PKG_MANAGER in
+        brew)
+            brew install python3 && echo -e "${GREEN}✓${NC} python3 installed" || { echo -e "${RED}❌ Failed to install python3${NC}"; exit 1; }
+            ;;
+        apt)
+            sudo apt-get update -qq && sudo apt-get install -y -qq python3 python3-venv && echo -e "${GREEN}✓${NC} python3 installed" || { echo -e "${RED}❌ Failed to install python3${NC}"; exit 1; }
+            ;;
+        dnf)
+            sudo dnf install -y python3 && echo -e "${GREEN}✓${NC} python3 installed" || { echo -e "${RED}❌ Failed to install python3${NC}"; exit 1; }
+            ;;
+        yum)
+            sudo yum install -y python3 && echo -e "${GREEN}✓${NC} python3 installed" || { echo -e "${RED}❌ Failed to install python3${NC}"; exit 1; }
+            ;;
+        *)
+            echo -e "${RED}❌ python3 not found and cannot auto-install${NC}"
+            echo "  Please install python3 manually"
+            exit 1
+            ;;
+    esac
 else
     echo -e "${GREEN}✓${NC} python3 found"
 fi
 
+# Check kubectl (cannot auto-install easily)
 if ! command -v kubectl &>/dev/null; then
     echo -e "${RED}❌ kubectl not found${NC}"
-    PREREQ_FAILED=true
+    echo "  Install: https://kubernetes.io/docs/tasks/tools/"
+    exit 1
 else
     echo -e "${GREEN}✓${NC} kubectl found"
 fi
 
+# Check and install pip
 if ! python3 -m pip --version &>/dev/null; then
-    echo -e "${RED}❌ pip not found${NC}"
-    PREREQ_FAILED=true
+    echo -e "${YELLOW}⚠️  pip not found, attempting install...${NC}"
+    case $PKG_MANAGER in
+        brew)
+            # pip comes with python3 on brew, try ensurepip
+            python3 -m ensurepip --upgrade 2>/dev/null || brew reinstall python3
+            ;;
+        apt)
+            sudo apt-get install -y -qq python3-pip || python3 -m ensurepip --upgrade
+            ;;
+        dnf|yum)
+            sudo $PKG_MANAGER install -y python3-pip || python3 -m ensurepip --upgrade
+            ;;
+        *)
+            python3 -m ensurepip --upgrade 2>/dev/null || { echo -e "${RED}❌ Failed to install pip${NC}"; exit 1; }
+            ;;
+    esac
+    if python3 -m pip --version &>/dev/null; then
+        echo -e "${GREEN}✓${NC} pip installed"
+    else
+        echo -e "${RED}❌ Failed to install pip${NC}"
+        exit 1
+    fi
 else
     echo -e "${GREEN}✓${NC} pip found"
-fi
-
-if [[ "$PREREQ_FAILED" == "true" ]]; then
-    echo ""
-    echo -e "${RED}Prerequisites not met. Please install missing dependencies.${NC}"
-    exit 1
 fi
 echo ""
 
