@@ -1405,8 +1405,9 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
         rm -f "$CONFIG_OUTPUT_FILE"
     fi
 
-    # Configure OIDC if Keycloak is deployed
-    if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
+    # Configure OIDC if Keycloak is deployed AND targets configuration succeeded
+    # OIDC requires the DevOps organization that configure-targets.sh creates
+    if [[ "$DEPLOY_KEYCLOAK" == "true" ]] && [[ -z "$BOUNDARY_TARGETS_FAILED" ]]; then
         KEYCLOAK_STATUS=$(kubectl get pod -l app=keycloak -n keycloak -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
         if [[ "$KEYCLOAK_STATUS" == "Running" ]]; then
             echo ""
@@ -1429,6 +1430,10 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
                 rm -f "$OIDC_OUTPUT_FILE"
             fi
         fi
+    elif [[ "$DEPLOY_KEYCLOAK" == "true" ]] && [[ -n "$BOUNDARY_TARGETS_FAILED" ]]; then
+        echo ""
+        echo "⏭️  Skipping OIDC configuration (requires DevOps organization from configure-targets.sh)"
+        BOUNDARY_OIDC_FAILED="skipped"
     fi
 
     # Report configuration status
@@ -1436,7 +1441,8 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
         echo ""
         echo "⚠️  Boundary configuration completed with errors"
         [[ -n "$BOUNDARY_TARGETS_FAILED" ]] && echo "   - Targets configuration: FAILED"
-        [[ -n "$BOUNDARY_OIDC_FAILED" ]] && echo "   - OIDC configuration: FAILED"
+        [[ "$BOUNDARY_OIDC_FAILED" == "skipped" ]] && echo "   - OIDC configuration: SKIPPED (depends on targets)"
+        [[ "$BOUNDARY_OIDC_FAILED" == "true" ]] && echo "   - OIDC configuration: FAILED"
     else
         echo "✅ Boundary configuration complete"
     fi
@@ -1479,7 +1485,9 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]]; then
         echo "  ✅ Boundary Targets"
     fi
     if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
-        if [[ -n "$BOUNDARY_OIDC_FAILED" ]]; then
+        if [[ "$BOUNDARY_OIDC_FAILED" == "skipped" ]]; then
+            echo "  ⏭️  Boundary OIDC (SKIPPED - run configure-targets.sh first, then configure-oidc-auth.sh)"
+        elif [[ "$BOUNDARY_OIDC_FAILED" == "true" ]]; then
             echo "  ❌ Boundary OIDC (FAILED - run configure-oidc-auth.sh manually)"
         else
             echo "  ✅ Boundary OIDC"
@@ -1521,7 +1529,8 @@ if [[ -n "$DEPLOYMENT_HAD_ERRORS" ]]; then
     echo ""
     echo "Failed configurations:"
     [[ -n "$BOUNDARY_TARGETS_FAILED" ]] && echo "  - Boundary Targets: Run ./platform/boundary/scripts/configure-targets.sh boundary devenv"
-    [[ -n "$BOUNDARY_OIDC_FAILED" ]] && echo "  - Boundary OIDC: Run ./platform/boundary/scripts/configure-oidc-auth.sh"
+    [[ "$BOUNDARY_OIDC_FAILED" == "skipped" ]] && echo "  - Boundary OIDC: Run configure-targets.sh first, then ./platform/boundary/scripts/configure-oidc-auth.sh"
+    [[ "$BOUNDARY_OIDC_FAILED" == "true" ]] && echo "  - Boundary OIDC: Run ./platform/boundary/scripts/configure-oidc-auth.sh"
     echo ""
     echo "Check the test results above for any issues."
 else
