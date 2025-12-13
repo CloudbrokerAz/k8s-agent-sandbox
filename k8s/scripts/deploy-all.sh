@@ -1366,7 +1366,26 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
         echo "   Check status: kubectl get pods -n boundary"
         echo "   Continuing, but Boundary configuration may fail..."
     fi
-    # Rollout status confirmed readiness - no additional sleep needed
+
+    # Wait for Boundary API to be ready (rollout status doesn't guarantee API readiness)
+    echo "⏳ Waiting for Boundary API to be ready..."
+    BOUNDARY_READY=false
+    for i in {1..30}; do
+        if kubectl exec -n boundary deployment/boundary-controller -c boundary-controller -- \
+            boundary auth-methods list -scope-id=global -format=json >/dev/null 2>&1; then
+            BOUNDARY_READY=true
+            break
+        fi
+        echo "   Attempt $i/30: Boundary API not ready yet..."
+        sleep 2
+    done
+
+    if [[ "$BOUNDARY_READY" != "true" ]]; then
+        echo "⚠️  Boundary API did not become ready in time"
+        echo "   Configuration may fail, but will attempt anyway..."
+    else
+        echo "✅ Boundary API is ready"
+    fi
 
     if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" ]]; then
         echo "Running configure-targets.sh..."
