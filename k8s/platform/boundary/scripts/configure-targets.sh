@@ -35,9 +35,12 @@ else
 fi
 
 # Check Boundary controller is running
+# Use field-selector to only match Running pods (avoids race conditions during rollouts)
 echo "Checking Boundary controller status..."
-CONTROLLER_STATUS=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
-if [[ "$CONTROLLER_STATUS" != "Running" ]]; then
+CONTROLLER_POD_COUNT=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" --field-selector=status.phase=Running -o name 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$CONTROLLER_POD_COUNT" -eq 0 ]]; then
+    # Get actual status for error message
+    CONTROLLER_STATUS=$(kubectl get pod -l app=boundary-controller -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
     echo "❌ Boundary controller not running (status: $CONTROLLER_STATUS)"
     exit 1
 fi
