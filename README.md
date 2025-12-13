@@ -1,4 +1,4 @@
-# K8s AI Agent Sandbox
+# K8s Remote AI Agent Sandbox - Lab Concept Validation
 
 Local Kubernetes sandbox with Vault, Boundary, and Keycloak for secure agent development.
 
