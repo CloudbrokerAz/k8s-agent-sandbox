@@ -20,10 +20,6 @@ spec:
             cpu: "1000m"
             memory: "2Gi"
             ephemeral-storage: "8Gi"
-          limits:
-            cpu: "2000m"
-            memory: "4Gi"
-            ephemeral-storage: "8Gi"
         env:
         # Envbuilder configuration - using local files (no git clone needed)
         # See: https://github.com/coder/envbuilder/blob/main/docs/using-local-files.md
