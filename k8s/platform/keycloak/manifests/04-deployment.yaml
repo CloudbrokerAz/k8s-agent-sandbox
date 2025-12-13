@@ -58,10 +58,12 @@ spec:
           value: "true"
         - name: KC_METRICS_ENABLED
           value: "true"
-        - name: KC_HOSTNAME
-          value: "keycloak.local"
-        - name: KC_HOSTNAME_ADMIN
-          value: "keycloak.local"
+        # KC_HOSTNAME_URL (not KC_HOSTNAME) required to advertise HTTPS URLs
+        # when Keycloak runs behind an ingress with TLS termination
+        - name: KC_HOSTNAME_URL
+          value: "https://keycloak.local"
+        - name: KC_HOSTNAME_ADMIN_URL
+          value: "https://keycloak.local"
         - name: KC_HOSTNAME_STRICT
           value: "true"
         - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
@@ -79,13 +81,7 @@ spec:
         - name: https
           containerPort: 8443
           protocol: TCP
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
+        # No resource limits for lab environment
         livenessProbe:
           httpGet:
             path: /health/live

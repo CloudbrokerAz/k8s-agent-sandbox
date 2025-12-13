@@ -118,6 +118,11 @@ run_boundary() {
 }
 
 # Keycloak configuration - use external URLs for user access
+# IMPORTANT: Keycloak must have KC_HOSTNAME_URL=https://keycloak.local set
+# so that it advertises HTTPS URLs in its OIDC discovery document.
+# This is required because users access Keycloak via ingress (HTTPS),
+# while Boundary controller accesses it internally via HTTP.
+# The issuer URL MUST match what Keycloak advertises in OIDC discovery.
 KEYCLOAK_EXTERNAL_URL="https://keycloak.local"
 KEYCLOAK_REALM="agent-sandbox"
 KEYCLOAK_CLIENT_ID="boundary"
@@ -127,17 +132,9 @@ OIDC_DISCOVERY_URL="${OIDC_ISSUER}/.well-known/openid-configuration"
 # Boundary external URL
 BOUNDARY_EXTERNAL_URL="https://boundary.local"
 
-# Use HTTP for internal cluster communication (Keycloak inside cluster)
-# The issuer URL must match what Keycloak advertises in its OIDC discovery
-# Keycloak is configured to advertise keycloak.local, so we use that
-# Note: Boundary controller needs hostAliases to resolve keycloak.local
-KEYCLOAK_INTERNAL_URL="http://keycloak.local"
-OIDC_ISSUER="${KEYCLOAK_INTERNAL_URL}/realms/${KEYCLOAK_REALM}"
-
 echo ""
 echo "Keycloak Configuration:"
-echo "  External URL (https): $KEYCLOAK_EXTERNAL_URL"
-echo "  Internal URL (http): $KEYCLOAK_INTERNAL_URL"
+echo "  URL: $KEYCLOAK_EXTERNAL_URL"
 echo "  Realm: $KEYCLOAK_REALM"
 echo "  Client ID: $KEYCLOAK_CLIENT_ID"
 echo "  Issuer: $OIDC_ISSUER"

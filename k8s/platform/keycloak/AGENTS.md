@@ -11,6 +11,21 @@ Keycloak is deployed as the Identity Provider (IdP) for OIDC authentication with
 
 ## Critical Configuration Details
 
+### HTTPS Issuer URL (KC_HOSTNAME_URL)
+
+**CRITICAL**: Keycloak must be configured with `KC_HOSTNAME_URL=https://keycloak.local` (NOT `KC_HOSTNAME`) when running behind an ingress with TLS termination.
+
+This ensures Keycloak advertises HTTPS URLs in its OIDC discovery document:
+- Authorization endpoint: `https://keycloak.local/realms/agent-sandbox/protocol/openid-connect/auth`
+- Token endpoint: `https://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token`
+- Issuer: `https://keycloak.local/realms/agent-sandbox`
+
+**Common Issue**: Using `KC_HOSTNAME=keycloak.local` (without `_URL`) causes Keycloak to advertise `http://` URLs, which breaks browser-based OIDC flows where users access via `https://boundary.local`.
+
+**Important**: Do NOT set both `KC_HOSTNAME` and `KC_HOSTNAME_URL` - Keycloak will fail to start with error: `You can not set both 'hostname' and 'hostname-url' options`.
+
+The manifest `manifests/04-deployment.yaml` has this configured correctly.
+
 ### Redirect URIs
 
 The Boundary OIDC client must have multiple redirect URIs configured for different access methods:
