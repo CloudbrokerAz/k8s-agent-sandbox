@@ -1390,9 +1390,30 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
     if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" ]]; then
         echo "Running configure-targets.sh..."
         CONFIG_OUTPUT_FILE=$(mktemp)
-        if ! "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" boundary devenv 2>&1 | tee "$CONFIG_OUTPUT_FILE"; then
+        TARGETS_MAX_RETRIES=3
+        TARGETS_RETRY_DELAY=10
+        TARGETS_SUCCESS=false
+
+        for attempt in $(seq 1 $TARGETS_MAX_RETRIES); do
+            if [[ $attempt -gt 1 ]]; then
+                echo ""
+                echo "⏳ Retry attempt $attempt/$TARGETS_MAX_RETRIES (waiting ${TARGETS_RETRY_DELAY}s)..."
+                sleep $TARGETS_RETRY_DELAY
+            fi
+
+            if "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" boundary devenv 2>&1 | tee "$CONFIG_OUTPUT_FILE"; then
+                TARGETS_SUCCESS=true
+                break
+            fi
+
+            if [[ $attempt -lt $TARGETS_MAX_RETRIES ]]; then
+                echo "⚠️  Attempt $attempt failed, will retry..."
+            fi
+        done
+
+        if [[ "$TARGETS_SUCCESS" != "true" ]]; then
             echo ""
-            echo "❌ BOUNDARY TARGETS CONFIGURATION FAILED"
+            echo "❌ BOUNDARY TARGETS CONFIGURATION FAILED (after $TARGETS_MAX_RETRIES attempts)"
             echo "   Error output saved. Last 20 lines:"
             echo "   ----------------------------------------"
             tail -20 "$CONFIG_OUTPUT_FILE" | sed 's/^/   /'
