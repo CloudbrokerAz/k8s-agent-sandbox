@@ -17,7 +17,7 @@ spec:
         image: ghcr.io/coder/envbuilder
         resources:
           requests:
-            memory: "2Gi"
+            memory: "512Mi"
             ephemeral-storage: "8Gi"
         env:
         # Envbuilder configuration - using local files (no git clone needed)
