@@ -1,4 +1,4 @@
-# K8s Agent Sandbox
+# K8s AI Agent Sandbox
 
 Local Kubernetes sandbox with Vault, Boundary, and Keycloak for secure agent development.
 
