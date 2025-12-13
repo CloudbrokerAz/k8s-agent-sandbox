@@ -93,7 +93,6 @@ spec:
           resources:
             requests:
               memory: "256Mi"
-              cpu: "250m"
           securityContext:
             allowPrivilegeEscalation: true
             capabilities:

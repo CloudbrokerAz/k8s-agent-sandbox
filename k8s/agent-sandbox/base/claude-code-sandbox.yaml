@@ -17,7 +17,6 @@ spec:
         image: ghcr.io/coder/envbuilder
         resources:
           requests:
-            cpu: "1000m"
             memory: "2Gi"
             ephemeral-storage: "8Gi"
         env:
