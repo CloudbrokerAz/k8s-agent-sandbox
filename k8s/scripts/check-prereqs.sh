@@ -419,6 +419,28 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
+# Check python3 (optional - for browser OIDC tests)
+echo -n "Checking python3... "
+if command -v python3 &> /dev/null; then
+    VERSION=$(python3 --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+    echo "OK ($VERSION)"
+else
+    echo "NOT INSTALLED [optional]"
+    echo "  Required for browser OIDC tests (test-oidc-browser.sh)"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# Check pip (optional - for browser OIDC tests)
+echo -n "Checking pip... "
+if python3 -m pip --version &> /dev/null 2>&1; then
+    VERSION=$(python3 -m pip --version 2>/dev/null | awk '{print $2}' || echo "unknown")
+    echo "OK ($VERSION)"
+else
+    echo "NOT INSTALLED [optional]"
+    echo "  Required for browser OIDC tests (playwright installation)"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
 echo ""
 
 # Check for existing deployments (only if cluster is available)
