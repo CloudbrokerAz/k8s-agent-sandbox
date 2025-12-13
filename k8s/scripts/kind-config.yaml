@@ -1,0 +1,33 @@
+# Kind cluster configuration for k8s-agent-sandbox
+# This config maps container ports to host ports for external access
+#
+# Usage:
+#   kind create cluster --name sandbox --config=k8s/scripts/kind-config.yaml
+#
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # HTTP - for ingress
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      # HTTPS - for ingress (boundary.local, keycloak.local, vault.local)
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      # Boundary API - direct access
+      - containerPort: 9200
+        hostPort: 9200
+        protocol: TCP
+      # Boundary Worker - for proxy connections
+      - containerPort: 9202
+        hostPort: 9202
+        protocol: TCP
