@@ -19,6 +19,38 @@ echo "  Browser OIDC Flow Test"
 echo "=========================================="
 echo ""
 
+# Prerequisites check
+echo "Checking prerequisites..."
+PREREQ_FAILED=false
+
+if ! command -v python3 &>/dev/null; then
+    echo -e "${RED}❌ python3 not found${NC}"
+    PREREQ_FAILED=true
+else
+    echo -e "${GREEN}✓${NC} python3 found"
+fi
+
+if ! command -v kubectl &>/dev/null; then
+    echo -e "${RED}❌ kubectl not found${NC}"
+    PREREQ_FAILED=true
+else
+    echo -e "${GREEN}✓${NC} kubectl found"
+fi
+
+if ! python3 -m pip --version &>/dev/null; then
+    echo -e "${RED}❌ pip not found${NC}"
+    PREREQ_FAILED=true
+else
+    echo -e "${GREEN}✓${NC} pip found"
+fi
+
+if [[ "$PREREQ_FAILED" == "true" ]]; then
+    echo ""
+    echo -e "${RED}Prerequisites not met. Please install missing dependencies.${NC}"
+    exit 1
+fi
+echo ""
+
 # Check if playwright is available
 PLAYWRIGHT_VENV="/tmp/playwright_venv"
 if [[ ! -d "$PLAYWRIGHT_VENV" ]]; then
