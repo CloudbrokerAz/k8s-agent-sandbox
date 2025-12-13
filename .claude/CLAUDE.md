@@ -36,3 +36,8 @@ use parrallel tool calls and tasks where possible
 
 Any fixes identified and fixed should always also be added to the deployment script ./k8s/scripts/deploy-all.sh
 we need to ensure all fixes are captured maintain a fixes log and ensure these are in the deployment script
+
+## Principles
+
+Test driven improvements with determinstic results and reliability is priority, always fix issues related to failing tests
+Fix issues rather than applying workarounds

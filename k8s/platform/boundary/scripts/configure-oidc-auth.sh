@@ -143,19 +143,21 @@ echo ""
 
 # Function to get or create Boundary client in Keycloak and return its secret
 # Uses port-forward since curl may not be available in the Keycloak container
-get_keycloak_client_secret() {
+# Note: This function runs in a SUBSHELL to properly scope the trap
+get_keycloak_client_secret() (
+    set -e
     local KEYCLOAK_LOCAL_PORT=18080
     local PF_PID=""
 
     # Cleanup function for port-forward
     cleanup_port_forward() {
         if [[ -n "$PF_PID" ]]; then
-            kill $PF_PID 2>/dev/null || true
-            wait $PF_PID 2>/dev/null || true
+            kill "$PF_PID" 2>/dev/null || true
+            wait "$PF_PID" 2>/dev/null || true
         fi
     }
 
-    # Set trap to ensure cleanup on exit or error
+    # Trap is scoped to this subshell only (won't affect parent)
     trap cleanup_port_forward EXIT
 
     # Start port-forward to Keycloak
@@ -169,7 +171,6 @@ get_keycloak_client_secret() {
         if [[ $WAIT_COUNT -ge 20 ]]; then
             echo "Timeout waiting for Keycloak port-forward" >&2
             cleanup_port_forward
-            trap - EXIT
             return 1
         fi
         sleep 0.5
@@ -182,7 +183,6 @@ get_keycloak_client_secret() {
 
     if [[ -z "$ADMIN_PASS" ]]; then
         cleanup_port_forward
-        trap - EXIT  # Reset trap
         echo ""
         return 1
     fi
@@ -199,7 +199,6 @@ get_keycloak_client_secret() {
     ADMIN_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
     if [[ -z "$ADMIN_TOKEN" ]]; then
         cleanup_port_forward
-        trap - EXIT  # Reset trap
         echo ""
         return 1
     fi
@@ -236,11 +235,14 @@ get_keycloak_client_secret() {
                 "defaultClientScopes": ["openid", "profile", "email"]
             }' >/dev/null 2>&1
 
-        # Get the client ID again
-        sleep 1
-        CLIENT_ID_INTERNAL=$(curl -s \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+        # Get the client ID again with retry loop (Keycloak is eventually consistent)
+        for i in {1..10}; do
+            CLIENT_ID_INTERNAL=$(curl -s \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                "http://localhost:${KEYCLOAK_LOCAL_PORT}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${KEYCLOAK_CLIENT_ID}" 2>/dev/null | jq -r '.[0].id // empty' 2>/dev/null)
+            [[ -n "$CLIENT_ID_INTERNAL" ]] && break
+            sleep 0.5
+        done
 
         # Add groups mapper to include groups claim in OIDC tokens
         # This is required for Boundary managed groups to work
@@ -263,14 +265,19 @@ get_keycloak_client_secret() {
                     }
                 }' >/dev/null 2>&1 || echo "  (groups mapper may already exist)" >&2
         fi
+        # New client created - Keycloak generates an initial secret automatically
+        # Do NOT regenerate - just use the initial secret to avoid sync issues
     fi
 
     if [[ -z "$CLIENT_ID_INTERNAL" ]]; then
         cleanup_port_forward
-        trap - EXIT  # Reset trap
         echo ""
         return 1
     fi
+
+    # IMPORTANT: Never regenerate client secret automatically
+    # Regeneration causes sync issues between Keycloak, K8s secret, and Boundary
+    # If you need to rotate secrets, do it manually and update all consumers
 
     # Get client secret
     local SECRET_RESPONSE CLIENT_SECRET
@@ -280,11 +287,11 @@ get_keycloak_client_secret() {
 
     CLIENT_SECRET=$(echo "$SECRET_RESPONSE" | jq -r '.value // empty' 2>/dev/null)
 
-    # Cleanup port-forward
+    # Cleanup port-forward (trap will handle it, but explicit call ensures it)
     cleanup_port_forward
-    trap - EXIT  # Reset trap
+    # No need to reset trap - it's scoped to this subshell
     echo "$CLIENT_SECRET"
-}
+)
 
 # Get organization ID (should be created by configure-targets.sh)
 echo "Looking up organization scope..."
@@ -316,70 +323,94 @@ if [[ -n "$EXISTING_OIDC" ]]; then
     echo "✅ OIDC auth method already exists ($EXISTING_OIDC)"
     AUTH_METHOD_ID="$EXISTING_OIDC"
 
-    # Update the client secret, issuer, and CA cert to ensure they match Keycloak
+    # Sync OIDC config using the shared Kubernetes secret
+    # This ensures both Boundary and Keycloak use the same pre-shared secret
     echo "Syncing OIDC config with Keycloak..."
 
-    # Try to get client secret from shared Kubernetes secret first (preferred)
-    if [[ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]]; then
-        KEYCLOAK_CLIENT_SECRET=$(kubectl get secret boundary-oidc-client-secret -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d || echo "")
+    # Use the shared K8s secret as the authoritative source (created by deploy-all.sh)
+    # This avoids secret mismatch issues that can occur when regenerating
+    KEYCLOAK_CLIENT_SECRET=$(kubectl get secret boundary-oidc-client-secret -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d || echo "")
+    if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
+        echo "✅ Using shared client secret from Kubernetes (boundary-oidc-client-secret)"
+    else
+        # Fallback: fetch from Keycloak API (without regeneration)
+        echo "No shared secret found, fetching current secret from Keycloak..."
+        KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
         if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
-            echo "✅ Using shared client secret from Kubernetes"
-        else
-            echo "No shared secret found, fetching from Keycloak API..."
-            KEYCLOAK_CLIENT_SECRET=$(get_keycloak_client_secret)
+            echo "✅ Retrieved client secret from Keycloak"
+            kubectl create secret generic boundary-oidc-client-secret \
+                --namespace="$KEYCLOAK_NAMESPACE" \
+                --from-literal=client-secret="$KEYCLOAK_CLIENT_SECRET" \
+                --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null || true
         fi
     fi
 
     if [[ -n "$KEYCLOAK_CLIENT_SECRET" ]]; then
         echo "Updating auth method with current Keycloak client secret and CA cert..."
-        # Write secret to temp file locally and copy to pod
-        TEMP_SECRET_FILE=$(mktemp)
-        echo -n "$KEYCLOAK_CLIENT_SECRET" > "$TEMP_SECRET_FILE"
-        kubectl cp "$TEMP_SECRET_FILE" "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/client_secret.txt" -c boundary-controller
-        rm -f "$TEMP_SECRET_FILE"
 
-        # Get and copy the CA certificate
-        TEMP_CA_FILE=$(mktemp)
-        kubectl get secret keycloak-tls -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.tls\.crt}' | base64 -d > "$TEMP_CA_FILE"
-        kubectl cp "$TEMP_CA_FILE" "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/keycloak-ca.crt" -c boundary-controller
-        rm -f "$TEMP_CA_FILE"
+        # Get the CA certificate as base64
+        CA_CERT_B64=$(kubectl get secret keycloak-tls -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.tls\.crt}')
+
+        # Prepare update script - file:// doesn't work for idp-ca-cert, so use inline content
+        CA_CERT_CONTENT=$(echo "$CA_CERT_B64" | base64 -d)
 
         if [[ -n "$AUTH_TOKEN" ]]; then
-            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-                /bin/ash -c "
-                    export BOUNDARY_ADDR=http://127.0.0.1:9200
-                    export BOUNDARY_TOKEN='$AUTH_TOKEN'
-                    CA_CERT=\$(cat /tmp/keycloak-ca.crt)
-                    boundary auth-methods update oidc \
-                        -id='$EXISTING_OIDC' \
-                        -issuer='$OIDC_ISSUER' \
-                        -client-secret='file:///tmp/client_secret.txt' \
-                        -idp-ca-cert=\"\$CA_CERT\" \
-                        -format=json
-                    rm -f /tmp/client_secret.txt /tmp/keycloak-ca.crt
-                " 2>/dev/null && echo "✅ OIDC config synced" || echo "⚠️  Could not sync OIDC config (may need manual update)"
+            # Create script to avoid shell escaping issues with certs
+            # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+            cat > /tmp/boundary_update.sh << EOSCRIPT
+#!/bin/ash
+export BOUNDARY_ADDR=http://127.0.0.1:9200
+export BOUNDARY_TOKEN='$AUTH_TOKEN'
+export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
+CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
+boundary auth-methods update oidc \
+    -id='$EXISTING_OIDC' \
+    -issuer='$OIDC_ISSUER' \
+    -client-secret=env://CLIENT_SECRET \
+    -idp-ca-cert="\$CERT_CONTENT" \
+    -format=json
+EOSCRIPT
+
+            # Write CA cert to pod
+            echo "$CA_CERT_CONTENT" | kubectl exec -i -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- tee /tmp/keycloak-ca.crt > /dev/null
+            # Copy and run script
+            kubectl cp /tmp/boundary_update.sh "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/boundary_update.sh" -c boundary-controller 2>/dev/null
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash /tmp/boundary_update.sh 2>/dev/null && echo "✅ OIDC config synced" || echo "⚠️  Could not sync OIDC config (may need manual update)"
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- rm -f /tmp/boundary_update.sh /tmp/keycloak-ca.crt 2>/dev/null
+            rm -f /tmp/boundary_update.sh
         else
-            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-                /bin/ash -c "
-                    export BOUNDARY_ADDR=http://127.0.0.1:9200
-                    cat > /tmp/recovery.hcl << 'RECEOF'
-kms \"aead\" {
-  purpose = \"recovery\"
-  aead_type = \"aes-gcm\"
-  key = \"$RECOVERY_KEY\"
-  key_id = \"global_recovery\"
+            # Create script with recovery key for auth
+            # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+            cat > /tmp/boundary_update.sh << EOSCRIPT
+#!/bin/ash
+export BOUNDARY_ADDR=http://127.0.0.1:9200
+export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
+CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
+boundary auth-methods update oidc \
+    -id='$EXISTING_OIDC' \
+    -issuer='$OIDC_ISSUER' \
+    -client-secret=env://CLIENT_SECRET \
+    -idp-ca-cert="\$CERT_CONTENT" \
+    -recovery-config=/tmp/recovery.hcl \
+    -format=json
+EOSCRIPT
+
+            # Write CA cert and recovery config to pod
+            echo "$CA_CERT_CONTENT" | kubectl exec -i -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- tee /tmp/keycloak-ca.crt > /dev/null
+            # Write recovery HCL properly
+            cat > /tmp/recovery.hcl << EOF
+kms "aead" {
+  purpose = "recovery"
+  aead_type = "aes-gcm"
+  key = "$RECOVERY_KEY"
+  key_id = "global_recovery"
 }
-RECEOF
-                    CA_CERT=\$(cat /tmp/keycloak-ca.crt)
-                    boundary auth-methods update oidc \
-                        -id='$EXISTING_OIDC' \
-                        -issuer='$OIDC_ISSUER' \
-                        -client-secret='file:///tmp/client_secret.txt' \
-                        -idp-ca-cert=\"\$CA_CERT\" \
-                        -recovery-config=/tmp/recovery.hcl \
-                        -format=json
-                    rm -f /tmp/client_secret.txt /tmp/recovery.hcl /tmp/keycloak-ca.crt
-                " 2>/dev/null && echo "✅ OIDC config synced" || echo "⚠️  Could not sync OIDC config (may need manual update)"
+EOF
+            kubectl cp /tmp/recovery.hcl "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/recovery.hcl" -c boundary-controller 2>/dev/null
+            kubectl cp /tmp/boundary_update.sh "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/boundary_update.sh" -c boundary-controller 2>/dev/null
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash /tmp/boundary_update.sh 2>/dev/null && echo "✅ OIDC config synced" || echo "⚠️  Could not sync OIDC config (may need manual update)"
+            kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- rm -f /tmp/boundary_update.sh /tmp/keycloak-ca.crt /tmp/recovery.hcl 2>/dev/null
+            rm -f /tmp/boundary_update.sh /tmp/recovery.hcl
         fi
     else
         echo "⚠️  Could not fetch client secret from Keycloak - existing auth method unchanged"
@@ -451,59 +482,82 @@ else
     # Note: Boundary controller needs hostAliases configured to resolve keycloak.local
     # The issuer URL must match what Keycloak advertises in OIDC discovery
 
-    # Write client secret to temp file and copy to pod (avoids shell escaping issues)
-    TEMP_SECRET_FILE=$(mktemp)
-    echo -n "$KEYCLOAK_CLIENT_SECRET" > "$TEMP_SECRET_FILE"
-    kubectl cp "$TEMP_SECRET_FILE" "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/client_secret.txt" -c boundary-controller
-    rm -f "$TEMP_SECRET_FILE"
-
-    # Get the Keycloak TLS CA certificate for OIDC provider validation
-    # This is needed because Boundary validates the HTTPS issuer certificate
+    # Get the Keycloak TLS CA certificate for OIDC provider validation (already base64 in k8s)
     echo "Fetching Keycloak TLS certificate for OIDC validation..."
-    TEMP_CA_FILE=$(mktemp)
-    kubectl get secret keycloak-tls -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.tls\.crt}' | base64 -d > "$TEMP_CA_FILE"
-    kubectl cp "$TEMP_CA_FILE" "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/keycloak-ca.crt" -c boundary-controller
-    rm -f "$TEMP_CA_FILE"
+    CA_CERT_B64=$(kubectl get secret keycloak-tls -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.tls\.crt}')
+
+    # Prepare CA cert content - file:// doesn't work for idp-ca-cert, so use inline content via script
+    CA_CERT_CONTENT=$(echo "$CA_CERT_B64" | base64 -d)
 
     if [[ -n "$AUTH_TOKEN" ]]; then
-        AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-            /bin/ash -c "
-                export BOUNDARY_ADDR=http://127.0.0.1:9200
-                export BOUNDARY_TOKEN='$AUTH_TOKEN'
-                CA_CERT=\$(cat /tmp/keycloak-ca.crt)
-                boundary auth-methods create oidc \
-                    -name='keycloak' \
-                    -description='Keycloak OIDC Authentication' \
-                    -scope-id='$ORG_ID' \
-                    -issuer='$OIDC_ISSUER' \
-                    -client-id='$KEYCLOAK_CLIENT_ID' \
-                    -client-secret='file:///tmp/client_secret.txt' \
-                    -idp-ca-cert=\"\$CA_CERT\" \
-                    -signing-algorithm=RS256 \
-                    -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
-                    -format=json
-                rm -f /tmp/client_secret.txt /tmp/keycloak-ca.crt
-            " 2>&1 || echo "{}")
+        # Create script for boundary command - avoids shell escaping issues
+        # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+        cat > /tmp/boundary_create.sh << EOSCRIPT
+#!/bin/ash
+export BOUNDARY_ADDR=http://127.0.0.1:9200
+export BOUNDARY_TOKEN='$AUTH_TOKEN'
+export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
+CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
+boundary auth-methods create oidc \
+    -name='keycloak' \
+    -description='Keycloak OIDC Authentication' \
+    -scope-id='$ORG_ID' \
+    -issuer='$OIDC_ISSUER' \
+    -client-id='$KEYCLOAK_CLIENT_ID' \
+    -client-secret=env://CLIENT_SECRET \
+    -idp-ca-cert="\$CERT_CONTENT" \
+    -signing-algorithm=RS256 \
+    -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
+    -format=json
+rm -f /tmp/keycloak-ca.crt
+EOSCRIPT
+
+        # Copy cert and script to pod, then execute
+        echo "$CA_CERT_CONTENT" | kubectl exec -i -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- tee /tmp/keycloak-ca.crt > /dev/null
+        kubectl cp /tmp/boundary_create.sh "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/boundary_create.sh" -c boundary-controller
+        AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash /tmp/boundary_create.sh 2>&1 || echo "{}")
+        rm -f /tmp/boundary_create.sh
     else
-        AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
-            /bin/ash -c "
-                export BOUNDARY_ADDR=http://127.0.0.1:9200
-                echo 'kms \"aead\" { purpose = \"recovery\"; aead_type = \"aes-gcm\"; key = \"$RECOVERY_KEY\"; key_id = \"global_recovery\" }' > /tmp/recovery.hcl
-                CA_CERT=\$(cat /tmp/keycloak-ca.crt)
-                boundary auth-methods create oidc \
-                    -name='keycloak' \
-                    -description='Keycloak OIDC Authentication' \
-                    -scope-id='$ORG_ID' \
-                    -issuer='$OIDC_ISSUER' \
-                    -client-id='$KEYCLOAK_CLIENT_ID' \
-                    -client-secret='file:///tmp/client_secret.txt' \
-                    -idp-ca-cert=\"\$CA_CERT\" \
-                    -signing-algorithm=RS256 \
-                    -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
-                    -recovery-kms-hcl=file:///tmp/recovery.hcl \
-                    -format=json
-                rm -f /tmp/client_secret.txt /tmp/recovery.hcl /tmp/keycloak-ca.crt
-            " 2>&1 || echo "{}")
+        # Create script with recovery config - avoids shell escaping issues
+        # IMPORTANT: Use env:// for client-secret, NOT file:// - file:// doesn't work reliably
+        cat > /tmp/boundary_create.sh << EOSCRIPT
+#!/bin/ash
+export BOUNDARY_ADDR=http://127.0.0.1:9200
+export CLIENT_SECRET='$KEYCLOAK_CLIENT_SECRET'
+CERT_CONTENT=\$(cat /tmp/keycloak-ca.crt)
+boundary auth-methods create oidc \
+    -name='keycloak' \
+    -description='Keycloak OIDC Authentication' \
+    -scope-id='$ORG_ID' \
+    -issuer='$OIDC_ISSUER' \
+    -client-id='$KEYCLOAK_CLIENT_ID' \
+    -client-secret=env://CLIENT_SECRET \
+    -idp-ca-cert="\$CERT_CONTENT" \
+    -signing-algorithm=RS256 \
+    -api-url-prefix='$BOUNDARY_EXTERNAL_URL' \
+    -recovery-config=/tmp/recovery.hcl \
+    -format=json
+rm -f /tmp/keycloak-ca.crt
+EOSCRIPT
+
+        # Create recovery config file
+        cat > /tmp/recovery.hcl << 'EOHCL'
+kms "aead" {
+  purpose = "recovery"
+  aead_type = "aes-gcm"
+  key = "$RECOVERY_KEY"
+  key_id = "global_recovery"
+}
+EOHCL
+        # Substitute actual recovery key
+        sed -i '' "s/\$RECOVERY_KEY/$RECOVERY_KEY/" /tmp/recovery.hcl
+
+        # Copy cert, recovery config, and script to pod, then execute
+        echo "$CA_CERT_CONTENT" | kubectl exec -i -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- tee /tmp/keycloak-ca.crt > /dev/null
+        kubectl cp /tmp/recovery.hcl "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/recovery.hcl" -c boundary-controller
+        kubectl cp /tmp/boundary_create.sh "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/boundary_create.sh" -c boundary-controller
+        AUTH_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- /bin/ash /tmp/boundary_create.sh 2>&1 || echo "{}")
+        rm -f /tmp/boundary_create.sh /tmp/recovery.hcl
     fi
 
     # Filter out deprecation warnings before parsing JSON

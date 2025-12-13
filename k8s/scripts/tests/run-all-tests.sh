@@ -83,6 +83,13 @@ run_test_suite "Keycloak IDP Verification" "$SCRIPT_DIR/test-keycloak.sh"
 # OIDC authentication tests
 run_test_suite "OIDC Authentication" "$SCRIPT_DIR/test-oidc-auth.sh"
 
+# Browser-based OIDC flow test (optional, requires playwright)
+# Note: Disabled by default as it requires playwright and proper DNS resolution
+# Enable with: RUN_BROWSER_TESTS=true ./run-all-tests.sh
+if [[ "${RUN_BROWSER_TESTS:-true}" == "true" ]]; then
+    run_test_suite "OIDC Browser Flow" "$SCRIPT_DIR/test-oidc-browser.sh"
+fi
+
 # Claude Code Sandbox tests
 run_test_suite "Claude Code Sandbox" "$SCRIPT_DIR/test-sandbox.sh"
 

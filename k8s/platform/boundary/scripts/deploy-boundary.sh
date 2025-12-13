@@ -138,8 +138,8 @@ boundary database init -config=/tmp/init.hcl || echo "Database may already be in
 
 # Wait for init job to complete
 echo "  → Waiting for database initialization..."
-kubectl wait --for=condition=Ready pod/boundary-db-init -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
-sleep 5
+kubectl wait --for=condition=complete job/boundary-db-init -n "$NAMESPACE" --timeout=120s 2>/dev/null || \
+    kubectl wait --for=condition=Ready pod/boundary-db-init -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
 
 # Get init output and save credentials
 echo ""
@@ -250,9 +250,15 @@ echo "  Configuring Boundary Resources"
 echo "==========================================="
 echo ""
 
-# Wait for controller to be fully ready
+# Wait for controller to be fully ready using health endpoint
 echo "Waiting for controller to be fully ready..."
-sleep 5
+for i in {1..30}; do
+    if kubectl exec -n "$NAMESPACE" deploy/boundary-controller -c boundary-controller -- \
+        wget -q -O- http://127.0.0.1:9203/health &>/dev/null; then
+        break
+    fi
+    sleep 1
+done
 
 # Configure targets (scopes, hosts, targets)
 if [[ -x "$SCRIPT_DIR/configure-targets.sh" ]]; then

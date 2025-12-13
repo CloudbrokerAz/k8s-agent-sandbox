@@ -61,67 +61,66 @@ fi
 
 echo ""
 echo "=========================================="
-echo "  Step 1: Remove Vault Secrets Operator"
+echo "  Step 1-4: Remove Platform Components (Parallel)"
 echo "=========================================="
 echo ""
 
-# Remove VSO custom resources first
+# Run teardowns in parallel for faster cleanup
+# VSO must be removed first since it depends on Vault
+
+echo "Removing VSO custom resources..."
 kubectl delete vaultstaticsecret --all -n devenv 2>/dev/null || true
 kubectl delete vaultauth --all -n devenv 2>/dev/null || true
 kubectl delete vaultconnection --all -n devenv 2>/dev/null || true
 kubectl delete vaultauth --all -n vault-secrets-operator-system 2>/dev/null || true
 kubectl delete vaultconnection --all -n vault-secrets-operator-system 2>/dev/null || true
 
-# Uninstall Helm release
+# Uninstall Helm release first (must be sequential)
 if helm status vault-secrets-operator -n vault-secrets-operator-system &>/dev/null; then
     helm uninstall vault-secrets-operator -n vault-secrets-operator-system --wait
 fi
 
-# Delete namespace
-kubectl delete namespace vault-secrets-operator-system --timeout=60s 2>/dev/null || true
-echo "Vault Secrets Operator removed"
+# Now delete all namespaces in parallel for speed
+echo "Removing all platform namespaces in parallel..."
+(
+    kubectl delete namespace vault-secrets-operator-system --timeout=60s 2>/dev/null || true
+    echo "  Vault Secrets Operator removed"
+) &
 
-echo ""
-echo "=========================================="
-echo "  Step 2: Remove Boundary"
-echo "=========================================="
-echo ""
+(
+    kubectl delete deployment boundary-controller -n boundary 2>/dev/null || true
+    kubectl delete deployment boundary-worker -n boundary 2>/dev/null || true
+    kubectl delete statefulset boundary-postgres -n boundary 2>/dev/null || true
+    kubectl delete job boundary-db-init -n boundary 2>/dev/null || true
+    kubectl delete pvc -l app=boundary-postgres -n boundary 2>/dev/null || true
+    kubectl delete namespace boundary --timeout=60s 2>/dev/null || true
+    echo "  Boundary removed"
+) &
 
-# Delete Boundary components
-kubectl delete deployment boundary-controller -n boundary 2>/dev/null || true
-kubectl delete deployment boundary-worker -n boundary 2>/dev/null || true
-kubectl delete statefulset boundary-postgres -n boundary 2>/dev/null || true
-kubectl delete job boundary-db-init -n boundary 2>/dev/null || true
-kubectl delete pvc -l app=boundary-postgres -n boundary 2>/dev/null || true
-kubectl delete namespace boundary --timeout=60s 2>/dev/null || true
-echo "Boundary removed"
+(
+    kubectl delete statefulset vault -n vault 2>/dev/null || true
+    kubectl delete pvc -l app=vault -n vault 2>/dev/null || true
+    kubectl delete namespace vault --timeout=60s 2>/dev/null || true
+    echo "  Vault removed"
+) &
 
-echo ""
-echo "=========================================="
-echo "  Step 3: Remove Vault"
-echo "=========================================="
-echo ""
+(
+    kubectl delete statefulset devenv -n devenv 2>/dev/null || true
+    kubectl delete sandbox --all -n devenv 2>/dev/null || true
+    kubectl delete pvc -l app=devenv -n devenv 2>/dev/null || true
+    kubectl delete pvc -l app=claude-code-sandbox -n devenv 2>/dev/null || true
+    kubectl delete namespace devenv --timeout=60s 2>/dev/null || true
+    echo "  Agent Sandbox removed"
+) &
 
-kubectl delete statefulset vault -n vault 2>/dev/null || true
-kubectl delete pvc -l app=vault -n vault 2>/dev/null || true
-kubectl delete namespace vault --timeout=60s 2>/dev/null || true
+# Wait for all parallel deletions
+wait
+echo "All platform namespaces deletion initiated"
 
-# Remove vault keys file
+# Remove credential files
 rm -f "$K8S_DIR/platform/vault/scripts/vault-keys.txt" 2>/dev/null || true
 rm -f "$K8S_DIR/platform/vault/scripts/vault-ssh-ca.pub" 2>/dev/null || true
 rm -f "$K8S_DIR/platform/vault/scripts/vault-ca.crt" 2>/dev/null || true
-echo "Vault removed"
-
-echo ""
-echo "=========================================="
-echo "  Step 4: Remove Agent Sandbox (DevEnv)"
-echo "=========================================="
-echo ""
-
-kubectl delete statefulset devenv -n devenv 2>/dev/null || true
-kubectl delete pvc -l app=devenv -n devenv 2>/dev/null || true
-kubectl delete namespace devenv --timeout=60s 2>/dev/null || true
-echo "Agent Sandbox removed"
 
 # Remove Boundary credentials files
 rm -f "$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt" 2>/dev/null || true
@@ -133,11 +132,20 @@ echo "  Step 5: Remove Nginx Ingress Controller"
 echo "=========================================="
 echo ""
 
-if kubectl get namespace ingress-nginx &>/dev/null; then
-    kubectl delete namespace ingress-nginx --timeout=60s 2>/dev/null || true
-    echo "Nginx Ingress Controller removed"
+# Remove remaining namespaces in parallel for faster teardown
+echo "Removing remaining namespaces in parallel..."
+(
+    kubectl get namespace ingress-nginx &>/dev/null && kubectl delete namespace ingress-nginx --timeout=60s 2>/dev/null && echo "Nginx Ingress Controller removed"
+) &
+(
+    kubectl get namespace agent-sandbox-system &>/dev/null && kubectl delete namespace agent-sandbox-system --timeout=60s 2>/dev/null && echo "Agent Sandbox system removed"
+) &
+wait
+
+if ! kubectl get namespace ingress-nginx &>/dev/null; then
+    echo "Nginx Ingress Controller cleanup complete"
 else
-    echo "Nginx Ingress Controller not installed"
+    echo "Nginx Ingress Controller not installed or still terminating"
 fi
 
 echo ""
@@ -165,4 +173,9 @@ echo "  - platform/boundary/scripts/boundary-oidc-config.txt"
 echo ""
 echo "To also remove the Kind cluster:"
 echo "  kind delete cluster --name sandbox"
+echo ""
+echo "To recreate the cluster with proper port mappings:"
+echo "  kind create cluster --name sandbox --config=k8s/scripts/kind-config.yaml"
+echo ""
+echo "Or let deploy-all.sh handle cluster creation automatically."
 echo ""

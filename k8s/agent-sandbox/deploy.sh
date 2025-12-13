@@ -51,8 +51,21 @@ install_agent_sandbox_crd() {
     fi
 
     log_info "Installing Agent-Sandbox CRD and controller (${AGENT_SANDBOX_VERSION})..."
-    log_info "Downloading from: ${MANIFEST_URL}"
 
+    # Try cached manifest first for faster/more reliable deployment
+    local cached_manifest="${SCRIPT_DIR}/cached-manifest.yaml"
+    if [[ -f "$cached_manifest" ]]; then
+        log_info "Using cached manifest: ${cached_manifest}"
+        if kubectl apply -f "$cached_manifest"; then
+            log_info "Waiting for CRD to be established..."
+            kubectl wait --for=condition=established --timeout=60s crd/sandboxes.agents.x-k8s.io
+            log_info "Agent-Sandbox CRD installed successfully"
+            return 0
+        fi
+        log_warn "Cached manifest failed, trying remote..."
+    fi
+
+    log_info "Downloading from: ${MANIFEST_URL}"
     if ! kubectl apply -f "${MANIFEST_URL}"; then
         log_error "Failed to install Agent-Sandbox CRD"
         exit 1

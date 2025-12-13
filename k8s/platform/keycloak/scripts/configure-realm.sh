@@ -46,16 +46,28 @@ fi
 # Get admin credentials from K8s secret if available
 if kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
     ADMIN_USER="${KEYCLOAK_ADMIN:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN}' 2>/dev/null | base64 -d || echo "admin")}"
-    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "admin123!@#")}"
+    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-$(kubectl get secret keycloak-admin -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' 2>/dev/null | base64 -d || echo "Admin123")}"
 else
     ADMIN_USER="${KEYCLOAK_ADMIN:-admin}"
-    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-admin123!@#}"
+    ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-Admin123}"
 fi
 
 # Realm configuration
 REALM_NAME="agent-sandbox"
 CLIENT_ID="boundary"
-CLIENT_SECRET="boundary-client-secret-change-me"
+
+# Try to get client secret from shared Kubernetes secret (created by deploy-all.sh)
+# This ensures Keycloak and Boundary use the SAME client secret
+if [[ "$IN_CLUSTER" == "true" ]] && kubectl get secret boundary-oidc-client-secret -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
+    CLIENT_SECRET=$(kubectl get secret boundary-oidc-client-secret -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.data.client-secret}' | base64 -d)
+    echo "Using shared client secret from Kubernetes secret (boundary-oidc-client-secret)"
+elif [[ -n "${OIDC_CLIENT_SECRET:-}" ]]; then
+    CLIENT_SECRET="$OIDC_CLIENT_SECRET"
+    echo "Using client secret from OIDC_CLIENT_SECRET environment variable"
+else
+    CLIENT_SECRET="boundary-client-secret-change-me"
+    echo "Warning: Using default client secret - should be overridden in production"
+fi
 
 # Boundary redirect URIs - include internal, external (ingress), and local (port-forward) URLs
 BOUNDARY_INTERNAL_URL="${BOUNDARY_INTERNAL_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
@@ -175,8 +187,8 @@ while [[ $WAITED -lt $MAX_WAIT ]]; do
         break
     fi
     echo "   Waiting for Keycloak... (${WAITED}s)"
-    sleep 10
-    WAITED=$((WAITED + 10))
+    sleep 3
+    WAITED=$((WAITED + 3))
 done
 
 if [[ $WAITED -ge $MAX_WAIT ]]; then
@@ -260,7 +272,10 @@ fi
 echo ""
 
 # Create Boundary OIDC client
+# IMPORTANT: The secret MUST be included at creation time - Keycloak API doesn't allow updating
+# an existing client's secret to a specific value (POST to /client-secret only regenerates it)
 echo "4. Creating OIDC client: ${CLIENT_ID}..."
+echo "   Using client secret: ${CLIENT_SECRET:0:8}..."
 kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
@@ -271,6 +286,8 @@ kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
         \"enabled\": true,
         \"protocol\": \"openid-connect\",
         \"publicClient\": false,
+        \"clientAuthenticatorType\": \"client-secret\",
+        \"secret\": \"${CLIENT_SECRET}\",
         \"directAccessGrantsEnabled\": false,
         \"standardFlowEnabled\": true,
         \"implicitFlowEnabled\": false,
@@ -287,19 +304,23 @@ kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
 echo "OIDC client created/updated!"
 echo ""
 
-# Get client UUID for setting secret
-echo "5. Setting client secret..."
+# Verify the client secret was set correctly (GET, not POST - POST regenerates!)
+echo "5. Verifying client secret..."
 CLIENT_UUID=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${CLIENT_ID}" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.[0].id')
 
 if [ -n "$CLIENT_UUID" ] && [ "$CLIENT_UUID" != "null" ]; then
-    kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
-        -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "{\"type\": \"secret\", \"value\": \"${CLIENT_SECRET}\"}"
-    echo "Client secret set!"
+    # Get the current secret to verify it matches (DO NOT POST - that regenerates the secret!)
+    CURRENT_SECRET=$(kc_curl -s -X GET "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" \
+        -H "Authorization: Bearer ${ACCESS_TOKEN}" | kc_jq -r '.value // empty')
+    if [ "$CURRENT_SECRET" = "$CLIENT_SECRET" ]; then
+        echo "✅ Client secret verified!"
+    else
+        echo "⚠️  Warning: Client secret mismatch - expected ${CLIENT_SECRET:0:8}..., got ${CURRENT_SECRET:0:8}..."
+        echo "   This may happen if the client already existed. Delete and recreate for fresh setup."
+    fi
 else
-    echo "Warning: Could not retrieve client UUID to set secret"
+    echo "Warning: Could not retrieve client UUID to verify secret"
 fi
 
 echo ""
@@ -367,7 +388,7 @@ fi
 echo ""
 
 # Create user groups
-echo "7. Creating user groups...
+echo "7. Creating user groups..."
 for group in "admins" "developers" "readonly"; do
     echo "  - Creating group: ${group}"
     kc_curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/groups" \
@@ -440,9 +461,9 @@ create_user() {
 }
 
 # Create users with different roles
-create_user "admin" "admin@example.com" "Admin" "User" "Admin123!@#" "admins"
-create_user "developer" "developer@example.com" "Developer" "User" "Dev123!@#" "developers"
-create_user "readonly" "readonly@example.com" "ReadOnly" "User" "Read123!@#" "readonly"
+create_user "admin" "admin@example.com" "Admin" "User" "Admin123" "admins"
+create_user "developer" "developer@example.com" "Developer" "User" "Developer123" "developers"
+create_user "readonly" "readonly@example.com" "ReadOnly" "User" "ReadOnly123" "readonly"
 
 echo ""
 echo "========================================="
@@ -462,9 +483,9 @@ echo "  UserInfo Endpoint: ${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-
 echo "  JWKS URI: ${KEYCLOAK_URL}/realms/${REALM_NAME}/protocol/openid-connect/certs"
 echo ""
 echo "Demo Users:"
-echo "  admin@example.com / Admin123!@# (admins group)"
-echo "  developer@example.com / Dev123!@# (developers group)"
-echo "  readonly@example.com / Read123!@# (readonly group)"
+echo "  admin@example.com / Admin123 (admins group)"
+echo "  developer@example.com / Developer123 (developers group)"
+echo "  readonly@example.com / ReadOnly123 (readonly group)"
 echo ""
 echo "Next Steps:"
 echo "  1. Configure Boundary OIDC auth method with above credentials"

@@ -95,27 +95,35 @@ echo ""
 echo "--- Organization and Project ---"
 
 # Get admin credentials from credentials file
-CREDS_FILE="$K8S_DIR/platform/boundary/scripts/boundary-credentials.txt"
+CREDS_FILE="$K8S_DIR/k8s/platform/boundary/scripts/boundary-credentials.txt"
 ADMIN_PASSWORD=""
-AUTH_METHOD_ID=""
 
 if [[ -f "$CREDS_FILE" ]]; then
     ADMIN_PASSWORD=$(grep "Password:" "$CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
-    AUTH_METHOD_ID=$(grep "Auth Method ID:" "$CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
 fi
 
+# Get the global auth method ID (no auth required for this query)
+# The global auth method is the one created during Boundary init and is needed to authenticate
+GLOBAL_AUTH_METHOD_ID=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- sh -c "
+    BOUNDARY_ADDR=http://127.0.0.1:9200 boundary auth-methods list -scope-id=global -format=json 2>/dev/null
+" 2>/dev/null | jq -r '.items[] | select(.type=="password") | .id' 2>/dev/null | head -1 || echo "")
+
 # Authenticate with admin to get token
-if [[ -n "$ADMIN_PASSWORD" ]] && [[ -n "$AUTH_METHOD_ID" ]]; then
-    echo "$ADMIN_PASSWORD" > /tmp/boundary-pass.txt
-    TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- sh -c "
+if [[ -n "$ADMIN_PASSWORD" ]] && [[ -n "$GLOBAL_AUTH_METHOD_ID" ]]; then
+    # Write password to temp file locally, copy to pod, then authenticate
+    echo -n "$ADMIN_PASSWORD" > /tmp/boundary-pass.txt
+    kubectl cp /tmp/boundary-pass.txt "$BOUNDARY_NAMESPACE/$CONTROLLER_POD:/tmp/boundary-pass.txt" -c boundary-controller 2>/dev/null || true
+    rm -f /tmp/boundary-pass.txt
+
+    TOKEN=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- sh -c "
         BOUNDARY_ADDR=http://127.0.0.1:9200 boundary authenticate password \
-            -auth-method-id='$AUTH_METHOD_ID' \
+            -auth-method-id='$GLOBAL_AUTH_METHOD_ID' \
             -login-name=admin \
             -password=file:///tmp/boundary-pass.txt \
             -keyring-type=none \
             -format=json 2>/dev/null
-    " 2>/dev/null | sed -n 's/.*\"token\":\"\([^\"]*\)\".*/\1/p' || echo "")
-    kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -- rm -f /tmp/boundary-pass.txt 2>/dev/null || true
+        rm -f /tmp/boundary-pass.txt
+    " 2>/dev/null | jq -r '.item.attributes.token // empty' 2>/dev/null || echo "")
 fi
 
 # List scopes using token if available, otherwise check init job for org ID

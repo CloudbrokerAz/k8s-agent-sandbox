@@ -255,8 +255,15 @@ if ! kubectl cluster-info &> /dev/null; then
             fi
 
             CLUSTER_NAME="${KIND_CLUSTER_NAME:-sandbox}"
+            KIND_CONFIG_FILE="$SCRIPT_DIR/kind-config.yaml"
             echo "🚀 Creating kind cluster '$CLUSTER_NAME'..."
-            cat <<EOF | kind create cluster --name "$CLUSTER_NAME" --config=-
+
+            if [[ -f "$KIND_CONFIG_FILE" ]]; then
+                echo "   Using config: $KIND_CONFIG_FILE"
+                kind create cluster --name "$CLUSTER_NAME" --config="$KIND_CONFIG_FILE"
+            else
+                echo "   ⚠️  kind-config.yaml not found, using inline config"
+                cat <<EOF | kind create cluster --name "$CLUSTER_NAME" --config=-
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -281,6 +288,7 @@ nodes:
         hostPort: 9202
         protocol: TCP
 EOF
+            fi
             echo "⏳ Waiting for cluster to be ready..."
             kubectl wait --for=condition=Ready nodes --all --timeout=60s
         fi
@@ -313,7 +321,7 @@ if ! kubectl get namespace ingress-nginx &>/dev/null; then
     kubectl wait --namespace ingress-nginx \
         --for=condition=ready pod \
         --selector=app.kubernetes.io/component=controller \
-        --timeout=90s 2>/dev/null || echo "  ⚠️  Ingress controller may still be starting..."
+        --timeout=60s 2>/dev/null || echo "  ⚠️  Ingress controller may still be starting..."
 
     echo "✅ Nginx ingress controller installed"
 else
@@ -448,65 +456,67 @@ fi
 
 echo ""
 echo "=========================================="
-echo "  Step 1: Deploy Agent Sandbox (Claude Code)"
+echo "  Step 1-3: Deploy All Base Components (Parallel)"
 echo "=========================================="
 echo ""
+echo "Deploying Agent Sandbox, Vault, and Boundary in parallel..."
+echo ""
 
-if [[ "$SKIP_DEVENV" != "true" ]]; then
-    # Use the new kubernetes-sigs/agent-sandbox pattern
-    AGENT_SANDBOX_DIR="$K8S_DIR/agent-sandbox"
+# Deploy Agent Sandbox in background (no dependencies on Vault/Boundary)
+deploy_agent_sandbox() {
+    if [[ "$SKIP_DEVENV" != "true" ]]; then
+        # Use the new kubernetes-sigs/agent-sandbox pattern
+        AGENT_SANDBOX_DIR="$K8S_DIR/agent-sandbox"
 
-    if [[ -f "$AGENT_SANDBOX_DIR/deploy.sh" ]]; then
-        # Use the new deploy.sh which handles CRD installation
-        echo "Deploying Claude Code Sandbox using kubernetes-sigs/agent-sandbox pattern..."
-        NAMESPACE="$DEVENV_NAMESPACE" "$AGENT_SANDBOX_DIR/deploy.sh"
+        if [[ -f "$AGENT_SANDBOX_DIR/deploy.sh" ]]; then
+            # Use the new deploy.sh which handles CRD installation
+            echo "[AgentSandbox] Deploying using kubernetes-sigs/agent-sandbox pattern..."
+            NAMESPACE="$DEVENV_NAMESPACE" "$AGENT_SANDBOX_DIR/deploy.sh"
+        else
+            # Fallback: manual deployment
+            echo "[AgentSandbox] Deploying manually..."
+
+            # Create devenv namespace and secrets
+            kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+
+            # Check if secrets exist
+            if ! kubectl get secret devenv-vault-secrets -n devenv &>/dev/null; then
+                echo "[AgentSandbox] Creating placeholder secrets..."
+                kubectl create secret generic devenv-vault-secrets \
+                    --namespace=devenv \
+                    --from-literal=GITHUB_TOKEN=placeholder \
+                    --from-literal=TFE_TOKEN=placeholder \
+                    --dry-run=client -o yaml | kubectl apply -f -
+            fi
+
+            # Apply kustomize manifests
+            if [[ -d "$AGENT_SANDBOX_DIR/base" ]]; then
+                kubectl apply -k "$AGENT_SANDBOX_DIR/base"
+            fi
+        fi
+
+        echo "[AgentSandbox] ✅ Deployment initiated"
     else
-        # Fallback: manual deployment
-        echo "Deploying Agent Sandbox manually..."
-
-        # Create devenv namespace and secrets
-        kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
-
-        # Check if secrets exist
-        if ! kubectl get secret devenv-vault-secrets -n devenv &>/dev/null; then
-            echo "Creating placeholder secrets..."
-            kubectl create secret generic devenv-vault-secrets \
-                --namespace=devenv \
-                --from-literal=GITHUB_TOKEN=placeholder \
-                --from-literal=TFE_TOKEN=placeholder \
-                --dry-run=client -o yaml | kubectl apply -f -
-            echo "⚠️  Update devenv-vault-secrets with real values later"
-        fi
-
-        # Apply kustomize manifests
-        if [[ -d "$AGENT_SANDBOX_DIR/base" ]]; then
-            kubectl apply -k "$AGENT_SANDBOX_DIR/base"
-        fi
+        echo "[AgentSandbox] Skipping (SKIP_DEVENV=true)"
     fi
-
-    echo "✅ Agent Sandbox deployment initiated"
-else
-    echo "⏭️  Skipping DevEnv deployment (SKIP_DEVENV=true)"
-fi
-
-echo ""
-echo "=========================================="
-echo "  Step 2-3: Deploy Vault & Boundary (Parallel)"
-echo "=========================================="
-echo ""
+}
 
 # Deploy Vault in background
 deploy_vault() {
     if [[ "$SKIP_VAULT" != "true" ]]; then
         echo "[Vault] Deploying..."
         kubectl apply -f "$K8S_DIR/platform/vault/manifests/01-namespace.yaml"
-        kubectl apply -f "$K8S_DIR/platform/vault/manifests/03-configmap.yaml"
-        kubectl apply -f "$K8S_DIR/platform/vault/manifests/04-rbac.yaml"
-        kubectl apply -f "$K8S_DIR/platform/vault/manifests/05-statefulset.yaml"
-        kubectl apply -f "$K8S_DIR/platform/vault/manifests/06-service.yaml"
-        kubectl apply -f "$K8S_DIR/platform/vault/manifests/08-tls-secret.yaml" 2>/dev/null || echo "[Vault] TLS secret skipped"
-        kubectl apply -f "$K8S_DIR/platform/vault/manifests/07-ingress.yaml" 2>/dev/null || echo "[Vault] Ingress skipped"
-        echo "[Vault] Manifests applied"
+        # Apply remaining vault manifests in parallel (all depend on namespace only)
+        {
+            kubectl apply -f "$K8S_DIR/platform/vault/manifests/03-configmap.yaml" &
+            kubectl apply -f "$K8S_DIR/platform/vault/manifests/04-rbac.yaml" &
+            kubectl apply -f "$K8S_DIR/platform/vault/manifests/05-statefulset.yaml" &
+            kubectl apply -f "$K8S_DIR/platform/vault/manifests/06-service.yaml" &
+            kubectl apply -f "$K8S_DIR/platform/vault/manifests/08-tls-secret.yaml" 2>/dev/null &
+            kubectl apply -f "$K8S_DIR/platform/vault/manifests/07-ingress.yaml" 2>/dev/null &
+            wait
+        }
+        echo "[Vault] ✅ Manifests applied"
     else
         echo "[Vault] Skipping (SKIP_VAULT=true)"
     fi
@@ -517,6 +527,7 @@ deploy_boundary_base() {
     if [[ "$SKIP_BOUNDARY" != "true" ]]; then
         echo "[Boundary] Creating namespace and secrets..."
         kubectl create namespace boundary --dry-run=client -o yaml | kubectl apply -f -
+        echo "[Boundary] ✅ Namespace ready"
     else
         echo "[Boundary] Skipping (SKIP_BOUNDARY=true)"
     fi
@@ -527,23 +538,27 @@ setup_helm_repos() {
     echo "[Helm] Setting up repositories..."
     helm repo add hashicorp https://helm.releases.hashicorp.com 2>/dev/null || true
     helm repo update >/dev/null 2>&1
-    echo "[Helm] Repositories ready"
+    echo "[Helm] ✅ Repositories ready"
 }
 
-# Run deployments in parallel
+# Run ALL initial deployments in parallel (Agent Sandbox has no dependencies)
+run_parallel deploy_agent_sandbox
 run_parallel deploy_vault
 run_parallel deploy_boundary_base
 run_parallel setup_helm_repos
 wait_parallel
 
+echo ""
+echo "✅ All base component deployments initiated"
+echo ""
+
 if [[ "$SKIP_VAULT" != "true" ]]; then
     echo "⏳ Waiting for Vault..."
-    kubectl rollout status statefulset/vault -n vault --timeout=180s
+    kubectl rollout status statefulset/vault -n vault --timeout=120s
 
     # Initialize and/or unseal Vault
     echo "Checking Vault status..."
-    sleep 3
-    VAULT_STATUS=$(get_vault_status 5 5)  # 5 attempts, 5 seconds apart
+    VAULT_STATUS=$(get_vault_status 3 2)  # 3 attempts, 2 seconds apart (pod already ready)
     INITIALIZED=$(echo "$VAULT_STATUS" | jq -r '.initialized // false')
     # Note: Cannot use '.sealed // true' because jq's // operator treats false as falsy
     SEALED=$(echo "$VAULT_STATUS" | jq -r 'if .sealed == null then true else .sealed end')
@@ -659,12 +674,7 @@ EOF
                 --from-literal=vault-ssh-ca.pub="$SSH_CA_KEY" \
                 --dry-run=client -o yaml | kubectl apply -f -
             echo "✅ SSH CA configured and secret created"
-
-            # Restart devenv pod to pick up the new SSH CA secret
-            if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null 2>&1; then
-                echo "🔄 Restarting devenv sandbox to pick up SSH CA secret..."
-                kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
-            fi
+            # Note: devenv pod restart moved to after VSO config to avoid double restart
         fi
 
         # Export Vault CA certificate for devenv pods
@@ -748,12 +758,7 @@ EOF
                     kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
                     kubectl create secret generic vault-ssh-ca --namespace=devenv --from-literal=vault-ssh-ca.pub="$SSH_CA_KEY" --dry-run=client -o yaml | kubectl apply -f -
                     echo "✅ SSH CA configured"
-
-                    # Restart devenv pod to pick up the new SSH CA secret
-                    if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null 2>&1; then
-                        echo "🔄 Restarting devenv sandbox to pick up SSH CA secret..."
-                        kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
-                    fi
+                    # Note: devenv pod restart moved to after VSO config to avoid double restart
                 fi
 
                 # Export Vault CA
@@ -940,15 +945,17 @@ EOF
 # Deploy Boundary components
 kubectl apply -f "$K8S_DIR/platform/boundary/manifests/01-namespace.yaml"
 
-# Apply TLS secrets (required by controller and worker manifests even if TLS disabled in config)
-echo "Creating TLS secrets..."
-kubectl apply -f "$K8S_DIR/platform/boundary/manifests/09-tls-secret.yaml"
-kubectl apply -f "$K8S_DIR/platform/boundary/manifests/11-worker-tls-secret.yaml"
-
-kubectl apply -f "$K8S_DIR/platform/boundary/manifests/04-postgres.yaml"
+# Apply TLS secrets and postgres in parallel (secrets required by controller/worker manifests)
+echo "Creating TLS secrets and PostgreSQL..."
+{
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/09-tls-secret.yaml" &
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/11-worker-tls-secret.yaml" &
+    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/04-postgres.yaml" &
+    wait
+}
 
 echo "⏳ Waiting for PostgreSQL..."
-kubectl rollout status statefulset/boundary-postgres -n boundary --timeout=120s
+kubectl rollout status statefulset/boundary-postgres -n boundary --timeout=90s
 
 # Initialize database
 if ! kubectl get job boundary-db-init -n boundary &>/dev/null; then
@@ -1021,7 +1028,7 @@ spec:
   backoffLimit: 1
 EOF
     echo "⏳ Initializing Boundary database..."
-    if ! kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=60s; then
+    if ! kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=30s; then
         echo "⚠️  Boundary database init job timed out or failed"
         echo "   Check job status: kubectl get job boundary-db-init -n boundary"
         echo "   Check logs: kubectl logs job/boundary-db-init -n boundary"
@@ -1064,15 +1071,22 @@ fi
     fi
     echo "  Using ingress IP: $INGRESS_NGINX_IP"
 
-    # Substitute ingress IP in controller manifest before applying
-    sed "s/\${INGRESS_NGINX_IP}/${INGRESS_NGINX_IP}/g" "$K8S_DIR/platform/boundary/manifests/05-controller.yaml" | kubectl apply -f -
-    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/06-worker.yaml"
-    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/07-service.yaml"
+    # Apply controller, worker, and service in parallel for speed
+    echo "Applying Boundary controller, worker, and services..."
+    {
+        sed "s/\${INGRESS_NGINX_IP}/${INGRESS_NGINX_IP}/g" "$K8S_DIR/platform/boundary/manifests/05-controller.yaml" | kubectl apply -f - &
+        kubectl apply -f "$K8S_DIR/platform/boundary/manifests/06-worker.yaml" &
+        kubectl apply -f "$K8S_DIR/platform/boundary/manifests/07-service.yaml" &
+        wait
+    }
 
-    # Apply ingress resources
+    # Apply ingress resources in parallel
     echo "Applying Boundary ingress resources..."
-    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/10-ingress.yaml" 2>/dev/null || echo "  ⚠️  Ingress not applied (may require ingress controller)"
-    kubectl apply -f "$K8S_DIR/platform/boundary/manifests/12-worker-ingress.yaml" 2>/dev/null || echo "  ⚠️  Worker ingress not applied (may require ingress controller)"
+    {
+        kubectl apply -f "$K8S_DIR/platform/boundary/manifests/10-ingress.yaml" 2>/dev/null || echo "  ⚠️  Ingress not applied" &
+        kubectl apply -f "$K8S_DIR/platform/boundary/manifests/12-worker-ingress.yaml" 2>/dev/null || echo "  ⚠️  Worker ingress not applied" &
+        wait
+    }
 
     echo "✅ Boundary deployed"
 else
@@ -1093,11 +1107,14 @@ if [[ "$SKIP_VSO" != "true" ]]; then
         --namespace vault-secrets-operator-system \
         --set defaultVaultConnection.enabled=false \
         --set defaultAuthMethod.enabled=false \
-        --wait --timeout 5m
+        --wait --timeout 2m
 
-    # Apply VSO custom resources
-    kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/02-vaultconnection.yaml"
-    kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/03-vaultauth.yaml"
+    # Apply VSO custom resources in parallel
+    {
+        kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/02-vaultconnection.yaml" &
+        kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/03-vaultauth.yaml" &
+        wait
+    }
 
     # Configure Vault for VSO - first ensure Vault is unsealed
     if [[ -n "$ROOT_TOKEN" ]]; then
@@ -1146,14 +1163,19 @@ POLICY
     # Apply example secret sync
     kubectl apply -f "$K8S_DIR/platform/vault-secrets-operator/manifests/04-vaultstaticsecret-example.yaml"
 
-    # Wait for VSO to sync the secret
+    # Wait for VSO to sync the secret (poll instead of sleep)
     echo "⏳ Waiting for VSO to sync secrets..."
-    sleep 10
+    for i in {1..30}; do
+        if kubectl get secret devenv-vault-secrets -n devenv &>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
 
-    # Restart devenv pod to pick up the newly synced secrets
-    # The pod was likely created before VSO synced the secrets
+    # Restart devenv pod to pick up the newly synced secrets (SSH CA + VSO secrets)
+    # This single restart replaces the earlier SSH CA restart to avoid double restart
     if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null; then
-        echo "🔄 Restarting devenv sandbox to pick up VSO-synced secrets..."
+        echo "🔄 Restarting devenv sandbox to pick up SSH CA and VSO-synced secrets..."
         kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
     fi
 
@@ -1166,7 +1188,7 @@ echo ""
 echo "=========================================="
 echo "  Waiting for all pods..."
 echo "=========================================="
-sleep 15
+# Removed redundant sleep - pods already confirmed rolling out
 
 echo ""
 echo "=========================================="
@@ -1247,7 +1269,7 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
 
         # Wait for Keycloak to be ready
         echo "⏳ Waiting for Keycloak to be ready..."
-        if ! kubectl rollout status deployment/keycloak -n keycloak --timeout=300s; then
+        if ! kubectl rollout status deployment/keycloak -n keycloak --timeout=180s; then
             echo "⚠️  Keycloak rollout timed out or failed"
             echo "   Check status: kubectl get pods -n keycloak"
             echo "   Continuing, but Keycloak may not be fully ready..."
@@ -1257,7 +1279,7 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]]; then
         if [[ -f "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" ]]; then
             echo ""
             echo "Configuring Keycloak realm and demo users..."
-            sleep 10  # Give Keycloak time to fully initialize
+            # Keycloak already confirmed ready via rollout status - no sleep needed
             "$K8S_DIR/platform/keycloak/scripts/configure-realm.sh" --in-cluster || echo "⚠️  Keycloak realm configuration failed (may need manual setup)"
         fi
 
@@ -1335,12 +1357,12 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
 
     # Wait for Boundary to be fully ready
     echo "⏳ Waiting for Boundary controller..."
-    if ! kubectl rollout status deployment/boundary-controller -n boundary --timeout=180s; then
+    if ! kubectl rollout status deployment/boundary-controller -n boundary --timeout=120s; then
         echo "⚠️  Boundary controller rollout timed out or failed"
         echo "   Check status: kubectl get pods -n boundary"
         echo "   Continuing, but Boundary configuration may fail..."
     fi
-    sleep 5
+    # Rollout status confirmed readiness - no additional sleep needed
 
     if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" ]]; then
         "$K8S_DIR/platform/boundary/scripts/configure-targets.sh" boundary devenv || echo "⚠️  Boundary targets configuration failed"
