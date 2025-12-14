@@ -8,8 +8,7 @@
 			"host": "0.0.0.0"
 		},
 		"ghcr.io/devcontainers/features/sshd:1": {
-			"version": "latest",
-			"sshPort": 22
+			"version": "latest"
 		}
 	},
 	"postCreateCommand": "npm install -g @anthropic-ai/claude-code && claude --version && bash /workspaces/k8s-agent-sandbox/k8s/agent-sandbox/vscode-claude/scripts/setup-ssh-ca.sh 2>/dev/null || true",

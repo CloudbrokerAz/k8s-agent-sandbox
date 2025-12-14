@@ -19,6 +19,12 @@ echo "  Copied vault-ssh-ca.pub to /etc/ssh/"
 # Configure sshd to trust Vault CA certificates
 SSHD_CONFIG="/etc/ssh/sshd_config"
 
+# Change sshd port from 2222 to 22 (devcontainer default is 2222)
+if grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
+    sudo sed -i 's/^Port 2222/Port 22/' "$SSHD_CONFIG"
+    echo "  Changed sshd port from 2222 to 22"
+fi
+
 if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" "$SSHD_CONFIG" 2>/dev/null; then
     echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
     echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
@@ -37,13 +43,14 @@ sudo chmod 0755 /run/sshd
 # Generate host keys if they don't exist
 sudo ssh-keygen -A 2>/dev/null || true
 
-# Start or restart sshd
+# Stop existing sshd (which is on port 2222) and restart on new port
 if pgrep -x sshd > /dev/null; then
-    echo "  SSH server already running, reloading config..."
-    sudo kill -HUP $(pgrep -x sshd | head -1) 2>/dev/null || true
-else
-    echo "  Starting SSH server..."
-    sudo /usr/sbin/sshd 2>/dev/null || true
+    echo "  Stopping existing SSH server..."
+    sudo pkill -x sshd 2>/dev/null || true
+    sleep 1
 fi
+
+echo "  Starting SSH server on port 22..."
+sudo /usr/sbin/sshd 2>/dev/null || true
 
 echo "  Vault SSH CA configuration complete"
