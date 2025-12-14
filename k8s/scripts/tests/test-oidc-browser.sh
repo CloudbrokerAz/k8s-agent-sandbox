@@ -121,9 +121,6 @@ if [[ ! -f "$TEST_SCRIPT" ]]; then
     exit 1
 fi
 
-# Activate venv and run test
-source "$PLAYWRIGHT_VENV/bin/activate"
-
 # Use ingress directly (boundary.local and keycloak.local must resolve to ingress)
 # Verify /etc/hosts entries or external DNS are configured correctly
 
@@ -135,18 +132,22 @@ if [[ -z "$INGRESS_IP" ]]; then
 fi
 echo "  Ingress ClusterIP: $INGRESS_IP"
 
-# Test that boundary.local resolves and is accessible
-if ! getent hosts boundary.local &>/dev/null; then
-    echo -e "${YELLOW}⚠️  Warning: boundary.local does not resolve${NC}"
-    echo "  Ensure /etc/hosts contains: 127.0.0.1 boundary.local keycloak.local"
+# Test that boundary.local is configured in /etc/hosts
+if ! grep -q "boundary.local" /etc/hosts 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  Warning: boundary.local not found in /etc/hosts${NC}"
+    echo "  Add to /etc/hosts: 127.0.0.1 boundary.local keycloak.local"
     exit 1
 fi
+echo -e "${GREEN}✓${NC} boundary.local configured in /etc/hosts"
 
 # Check if Boundary Ingress is deployed
 if ! kubectl get ingress boundary -n boundary &>/dev/null; then
     echo -e "${BLUE}ℹ️  Info: Boundary Ingress not ready yet${NC}"
     echo "  Waiting for Boundary deployment to complete..."
 fi
+
+# Activate venv and run test
+source "$PLAYWRIGHT_VENV/bin/activate"
 
 # Run the test using ingress URLs (default port 443)
 export BOUNDARY_PORT=443
