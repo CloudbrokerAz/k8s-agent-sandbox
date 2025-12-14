@@ -298,7 +298,8 @@ if [[ -f "$BOUNDARY_CREDS_FILE" ]]; then
     BOUNDARY_ORG_ID=$(grep "Organization:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
     BOUNDARY_PROJECT_ID=$(grep "Project:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $2}' || echo "")
     BOUNDARY_HOST_CATALOG_ID=$(grep "Host Catalog:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
-    BOUNDARY_TARGET_ID=$(grep "Target (SSH):" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $3}' || echo "")
+    # Look for any SSH target (claude-ssh, gemini-ssh, devenv-ssh, etc.)
+    BOUNDARY_TARGET_ID=$(grep -E "^\s+(claude-ssh|gemini-ssh|devenv-ssh):" "$BOUNDARY_CREDS_FILE" 2>/dev/null | head -1 | awk '{print $2}' || echo "")
     BOUNDARY_AUTH_METHOD_ID=$(grep "Auth Method ID:" "$BOUNDARY_CREDS_FILE" 2>/dev/null | awk '{print $4}' || echo "")
 
     if [[ -n "$BOUNDARY_ORG_ID" ]] && [[ "$BOUNDARY_ORG_ID" != "not" ]]; then
