@@ -125,10 +125,10 @@ apply_manifests() {
     log_info "Applying Claude Code Sandbox manifests..."
 
     # Check if we should use base or an overlay
-    local kustomize_dir="${SCRIPT_DIR}/base"
+    local kustomize_dir="${SCRIPT_DIR}/vscode-claude/base"
 
-    if [[ -n "${OVERLAY}" ]] && [[ -d "${SCRIPT_DIR}/overlays/${OVERLAY}" ]]; then
-        kustomize_dir="${SCRIPT_DIR}/overlays/${OVERLAY}"
+    if [[ -n "${OVERLAY}" ]] && [[ -d "${SCRIPT_DIR}/vscode-claude/overlays/${OVERLAY}" ]]; then
+        kustomize_dir="${SCRIPT_DIR}/vscode-claude/overlays/${OVERLAY}"
         log_info "Using overlay: ${OVERLAY}"
     fi
 

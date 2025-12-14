@@ -379,12 +379,14 @@ echo ""
 echo "--- Persistent Volume Tests ---"
 
 if [[ -n "$POD_NAME" ]]; then
-    # Check workspaces PVC (created by Sandbox CRD with pattern: <pvc-name>-<sandbox-name>)
+    # Check workspaces PVC (single PVC contains all persistent data)
+    # Created by Sandbox CRD with pattern: <pvc-name>-<sandbox-name>
     WORKSPACES_PVC=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -o name 2>/dev/null | grep "workspaces.*$SANDBOX_NAME" | head -1)
     if [[ -n "$WORKSPACES_PVC" ]]; then
         PVC_STATUS=$(kubectl get "$WORKSPACES_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+        PVC_SIZE=$(kubectl get "$WORKSPACES_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.spec.resources.requests.storage}' 2>/dev/null || echo "Unknown")
         if [[ "$PVC_STATUS" == "Bound" ]]; then
-            test_pass "Workspaces PVC is bound (${WORKSPACES_PVC#pvc/})"
+            test_pass "Workspaces PVC is bound (${WORKSPACES_PVC#pvc/}, $PVC_SIZE)"
         else
             test_warn "Workspaces PVC status: $PVC_STATUS"
         fi
@@ -392,30 +394,23 @@ if [[ -n "$POD_NAME" ]]; then
         test_warn "Workspaces PVC not found"
     fi
 
-    # Check claude-config PVC
-    CONFIG_PVC=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -o name 2>/dev/null | grep "claude-config.*$SANDBOX_NAME" | head -1)
-    if [[ -n "$CONFIG_PVC" ]]; then
-        PVC_STATUS=$(kubectl get "$CONFIG_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-        if [[ "$PVC_STATUS" == "Bound" ]]; then
-            test_pass "Claude config PVC is bound (${CONFIG_PVC#pvc/})"
-        else
-            test_warn "Claude config PVC status: $PVC_STATUS"
-        fi
+    # Check persistent subdirectories within workspaces PVC
+    if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- test -d /workspaces/.claude-config &>/dev/null; then
+        test_pass "Claude config directory exists (/workspaces/.claude-config)"
     else
-        test_warn "Claude config PVC not found"
+        test_warn "Claude config directory not found"
     fi
 
-    # Check bash-history PVC
-    HISTORY_PVC=$(kubectl get pvc -n "$SANDBOX_NAMESPACE" -o name 2>/dev/null | grep "bash-history.*$SANDBOX_NAME" | head -1)
-    if [[ -n "$HISTORY_PVC" ]]; then
-        PVC_STATUS=$(kubectl get "$HISTORY_PVC" -n "$SANDBOX_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-        if [[ "$PVC_STATUS" == "Bound" ]]; then
-            test_pass "Bash history PVC is bound (${HISTORY_PVC#pvc/})"
-        else
-            test_warn "Bash history PVC status: $PVC_STATUS"
-        fi
+    if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- test -d /workspaces/.bash_history &>/dev/null; then
+        test_pass "Bash history directory exists (/workspaces/.bash_history)"
     else
-        test_warn "Bash history PVC not found"
+        test_warn "Bash history directory not found"
+    fi
+
+    if kubectl exec -n "$SANDBOX_NAMESPACE" "$POD_NAME" -- test -d /workspaces/repos &>/dev/null; then
+        test_pass "Repos directory exists (/workspaces/repos)"
+    else
+        test_warn "Repos directory not found"
     fi
 fi
 

@@ -1,0 +1,47 @@
+# VSCode Sandbox - Following kubernetes-sigs/agent-sandbox pattern exactly
+# Reference: https://github.com/kubernetes-sigs/agent-sandbox/tree/f735f9833ecfed56faeef6101be8fb08ee73a7d2/examples/vscode-sandbox
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: sandbox-example
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: sandbox-example
+    spec:
+      containers:
+        - name: devcontainer-main
+          image: ghcr.io/coder/envbuilder
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+              ephemeral-storage: "4Gi"
+            limits:
+              ephemeral-storage: "4Gi"
+          env:
+            - name: ENVBUILDER_GIT_URL
+              value: "https://github.com/CloudbrokerAz/k8s-agent-sandbox.git"
+            - name: ENVBUILDER_DEVCONTAINER_DIR
+              value: "k8s/agent-sandbox/vscode-gemini"
+            - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
+              value: "true"
+            - name: ENVBUILDER_INIT_SCRIPT
+              value: "k8s/agent-sandbox/vscode-gemini/entrypoint.sh"
+            - name: AGENT_PROMPT
+              value: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Dont make any code changes. Would you approve it ?"
+            - name: ENVBUILDER_IGNORE_PATHS
+              value: "/var/run,/product_uuid,/product_name,/tokens"
+          volumeMounts:
+            - mountPath: /workspaces
+              name: workspaces-pvc
+  volumeClaimTemplates:
+    - metadata:
+        name: workspaces-pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi

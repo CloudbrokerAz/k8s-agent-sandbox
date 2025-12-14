@@ -19,9 +19,9 @@ echo "========================================="
 echo ""
 
 # Determine which kustomization to use
-KUSTOMIZE_DIR="${SCRIPT_DIR}/base"
-if [[ -n "${OVERLAY}" ]] && [[ -d "${SCRIPT_DIR}/overlays/${OVERLAY}" ]]; then
-    KUSTOMIZE_DIR="${SCRIPT_DIR}/overlays/${OVERLAY}"
+KUSTOMIZE_DIR="${SCRIPT_DIR}/vscode-claude/base"
+if [[ -n "${OVERLAY}" ]] && [[ -d "${SCRIPT_DIR}/vscode-claude/overlays/${OVERLAY}" ]]; then
+    KUSTOMIZE_DIR="${SCRIPT_DIR}/vscode-claude/overlays/${OVERLAY}"
 fi
 
 log_info "Deleting sandbox resources..."

@@ -1,0 +1,131 @@
+# Claude Code Sandbox - Using ENVBUILDER_GIT_URL approach
+# Reference: https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/vscode-sandbox
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: claude-code-sandbox
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        sandbox: claude-code-sandbox
+        app: claude-code-sandbox
+    spec:
+      containers:
+        - name: devcontainer-main
+          image: ghcr.io/coder/envbuilder
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+              ephemeral-storage: "8Gi"
+            limits:
+              ephemeral-storage: "8Gi"
+          env:
+            # Envbuilder configuration - Git-based approach
+            - name: ENVBUILDER_GIT_URL
+              value: "https://github.com/CloudbrokerAz/k8s-agent-sandbox.git"
+            - name: ENVBUILDER_DEVCONTAINER_DIR
+              value: "k8s/agent-sandbox/vscode-claude"
+            - name: ENVBUILDER_GIT_CLONE_SINGLE_BRANCH
+              value: "true"
+            - name: ENVBUILDER_INIT_SCRIPT
+              value: "k8s/agent-sandbox/vscode-claude/entrypoint.sh"
+            # Ignore paths that envbuilder should not remount
+            - name: ENVBUILDER_IGNORE_PATHS
+              value: "/var/run,/product_uuid,/product_name,/tokens,/var/run/secrets,/vault-ssh-ca,/vault-ca"
+
+            # GitHub token for private repo access
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: GITHUB_TOKEN
+                  optional: true
+
+            # Terraform Cloud token
+            - name: TFE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: TFE_TOKEN
+                  optional: true
+            - name: TF_TOKEN_app_terraform_io
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: TFE_TOKEN
+                  optional: true
+
+            # Langfuse observability
+            - name: LANGFUSE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_HOST
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+
+            # Vault integration
+            - name: VAULT_ADDR
+              value: "https://vault.vault.svc.cluster.local:8200"
+            - name: VAULT_CACERT
+              value: "/vault-ca/vault-ca.crt"
+
+            # Claude Code configuration
+            - name: PATH
+              value: "/usr/local/share/npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            - name: CLAUDE_CONFIG_DIR
+              value: "/workspaces/.claude-config"
+            - name: HISTFILE
+              value: "/workspaces/.bash_history/.bash_history"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=4096"
+            - name: POWERLEVEL9K_DISABLE_GITSTATUS
+              value: "true"
+            - name: CLAUDE_GITHUB_MCP_ENABLED
+              value: "true"
+
+          volumeMounts:
+            # Single PVC for all persistent data
+            - mountPath: /workspaces
+              name: workspaces-pvc
+            # Vault CA certificates (read-only)
+            - mountPath: /vault-ssh-ca
+              name: vault-ssh-ca
+              readOnly: true
+            - mountPath: /vault-ca
+              name: vault-ca
+              readOnly: true
+
+      volumes:
+        - name: vault-ssh-ca
+          secret:
+            secretName: vault-ssh-ca
+            optional: true
+        - name: vault-ca
+          secret:
+            secretName: vault-tls-ca
+            optional: true
+
+  # Single PVC for all persistent data (25Gi total)
+  volumeClaimTemplates:
+    - metadata:
+        name: workspaces-pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 25Gi
