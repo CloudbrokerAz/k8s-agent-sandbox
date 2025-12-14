@@ -13,7 +13,7 @@ set -euo pipefail
 # ENVIRONMENT VARIABLES:
 #   RESUME=auto|false     - Auto-detect and skip already-running components
 #   PARALLEL=true|false   - Run independent deployments concurrently (default: true)
-#   SKIP_DEVENV=true      - Skip Claude Code Agent Sandbox deployment
+#   SKIP_CLAUDE_CODE=true - Skip Claude Code Agent Sandbox deployment
 #   SKIP_GEMINI=true      - Skip Gemini Agent Sandbox deployment
 #   SKIP_VAULT=true       - Skip Vault deployment
 #   SKIP_BOUNDARY=true    - Skip Boundary deployment
@@ -63,7 +63,7 @@ DEBUG="${DEBUG:-false}"
 
 PARALLEL="${PARALLEL:-true}"
 RESUME="${RESUME:-false}"
-SKIP_DEVENV="${SKIP_DEVENV:-false}"
+SKIP_CLAUDE_CODE="${SKIP_CLAUDE_CODE:-false}"
 SKIP_GEMINI="${SKIP_GEMINI:-false}"
 SKIP_VAULT="${SKIP_VAULT:-false}"
 SKIP_BOUNDARY="${SKIP_BOUNDARY:-false}"
@@ -84,11 +84,11 @@ auto_detect_resume() {
     # Check for new Sandbox CRD or legacy StatefulSet
     if kubectl get sandbox claude-code-sandbox -n devenv &>/dev/null || \
        kubectl get pod -l app=claude-code-sandbox -n devenv -o jsonpath='{.items[0].status.phase}' 2>/dev/null | grep -q "Running"; then
-        SKIP_DEVENV="true"
+        SKIP_CLAUDE_CODE="true"
         echo "  - Claude Code Sandbox: running (skip)"
     elif kubectl get statefulset devenv -n devenv &>/dev/null && \
        kubectl get statefulset/devenv -n devenv -o jsonpath='{.status.readyReplicas}' 2>/dev/null | grep -q "1"; then
-        SKIP_DEVENV="true"
+        SKIP_CLAUDE_CODE="true"
         echo "  - DevEnv (legacy): running (skip)"
     fi
 }
@@ -407,7 +407,7 @@ load_base_image() {
 
 # Deploy Agent Sandbox in background (no dependencies on Vault/Boundary)
 deploy_agent_sandbox() {
-    if [[ "$SKIP_DEVENV" != "true" ]]; then
+    if [[ "$SKIP_CLAUDE_CODE" != "true" ]]; then
         # Use the new kubernetes-sigs/agent-sandbox pattern
         AGENT_SANDBOX_DIR="$K8S_DIR/agent-sandbox"
 
@@ -440,7 +440,7 @@ deploy_agent_sandbox() {
 
         echo "[AgentSandbox] ✅ Claude Code sandbox deployment initiated"
     else
-        echo "[AgentSandbox] Skipping (SKIP_DEVENV=true)"
+        echo "[AgentSandbox] Skipping (SKIP_CLAUDE_CODE=true)"
     fi
 }
 
