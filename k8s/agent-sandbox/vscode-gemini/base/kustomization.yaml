@@ -4,7 +4,7 @@ kind: Kustomization
 namespace: devenv
 
 resources:
-- vscode-sandbox.yaml
+- gemini-sandbox.yaml
 
 labels:
 - pairs:
