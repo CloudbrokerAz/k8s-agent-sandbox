@@ -3,12 +3,13 @@
 apiVersion: agents.x-k8s.io/v1alpha1
 kind: Sandbox
 metadata:
-  name: sandbox-example
+  name: gemini-sandbox
 spec:
   podTemplate:
     metadata:
       labels:
-        sandbox: sandbox-example
+        sandbox: gemini-sandbox
+        app: gemini-sandbox
     spec:
       containers:
         - name: devcontainer-main
@@ -17,9 +18,9 @@ spec:
             requests:
               cpu: "1000m"
               memory: "2Gi"
-              ephemeral-storage: "4Gi"
+              ephemeral-storage: "10Gi"
             limits:
-              ephemeral-storage: "4Gi"
+              ephemeral-storage: "10Gi"
           env:
             - name: ENVBUILDER_GIT_URL
               value: "https://github.com/CloudbrokerAz/k8s-agent-sandbox.git"

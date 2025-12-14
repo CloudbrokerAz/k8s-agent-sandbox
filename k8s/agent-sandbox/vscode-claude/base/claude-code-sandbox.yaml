@@ -18,9 +18,9 @@ spec:
             requests:
               cpu: "1000m"
               memory: "2Gi"
-              ephemeral-storage: "8Gi"
+              ephemeral-storage: "10Gi"
             limits:
-              ephemeral-storage: "8Gi"
+              ephemeral-storage: "10Gi"
           env:
             # Envbuilder configuration - Git-based approach
             - name: ENVBUILDER_GIT_URL
