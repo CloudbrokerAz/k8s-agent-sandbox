@@ -5,6 +5,7 @@ namespace: devenv
 
 resources:
 - claude-code-sandbox.yaml
+- service.yaml
 
 labels:
 - pairs:
