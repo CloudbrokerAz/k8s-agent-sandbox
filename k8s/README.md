@@ -77,7 +77,7 @@ Two AI agent development environments:
 
 Add to `/etc/hosts`:
 ```
-127.0.0.1 vault.local boundary.local keycloak.local
+127.0.0.1 vault.local boundary.local boundary-worker.local keycloak.local
 ```
 
 ### Deploy Complete Platform
