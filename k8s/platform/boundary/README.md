@@ -1,14 +1,14 @@
 # HashiCorp Boundary on Kubernetes
 
-Deploy HashiCorp Boundary Enterprise to provide secure access to your devenv pods with credential injection.
+Deploy HashiCorp Boundary Enterprise to provide secure access to your agent sandbox pods with credential injection.
 
 **Current Version:** 0.20.1-ent (Enterprise)
 
 ## Overview
 
-Boundary provides identity-based access management for dynamic infrastructure. This deployment integrates with the devenv StatefulSet to provide:
+Boundary provides identity-based access management for dynamic infrastructure. This deployment integrates with the agent sandboxes to provide:
 
-- **Secure SSH access** to devenv pods via Boundary proxy
+- **Secure SSH access** to sandbox pods via Boundary proxy
 - **Credential injection** - Vault SSH certificates automatically injected (Enterprise)
 - **OIDC authentication** via Keycloak
 - **Identity-based access control**
@@ -234,9 +234,9 @@ boundary/
 - 5Gi persistent volume
 - Credentials in Kubernetes secret
 
-## Connecting to DevEnv
+## Connecting to Agent Sandboxes
 
-After setup, connect to devenv pods via Boundary:
+After setup, connect to sandbox pods via Boundary:
 
 ### Via Ingress (Recommended)
 
