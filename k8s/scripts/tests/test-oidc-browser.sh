@@ -135,10 +135,17 @@ if [[ -z "$INGRESS_IP" ]]; then
 fi
 echo "  Ingress ClusterIP: $INGRESS_IP"
 
-# Test that boundary.local and keycloak.local are accessible
-if ! curl -sk --connect-timeout 5 "https://boundary.local" -o /dev/null 2>&1; then
-    echo -e "${BLUE}ℹ️  Info: boundary.local may not be accessible${NC}"
+# Test that boundary.local resolves and is accessible
+if ! getent hosts boundary.local &>/dev/null; then
+    echo -e "${YELLOW}⚠️  Warning: boundary.local does not resolve${NC}"
     echo "  Ensure /etc/hosts contains: 127.0.0.1 boundary.local keycloak.local"
+    exit 1
+fi
+
+# Check if Boundary Ingress is deployed
+if ! kubectl get ingress boundary -n boundary &>/dev/null; then
+    echo -e "${BLUE}ℹ️  Info: Boundary Ingress not ready yet${NC}"
+    echo "  Waiting for Boundary deployment to complete..."
 fi
 
 # Run the test using ingress URLs (default port 443)
