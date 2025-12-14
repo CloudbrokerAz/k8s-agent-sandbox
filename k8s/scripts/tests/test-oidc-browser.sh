@@ -106,7 +106,7 @@ echo ""
 # Check if playwright is available
 PLAYWRIGHT_VENV="/tmp/playwright_venv"
 if [[ ! -d "$PLAYWRIGHT_VENV" ]]; then
-    echo -e "${YELLOW}⚠️  Playwright venv not found, creating...${NC}"
+    echo -e "${BLUE}ℹ️  Playwright venv not found, creating...${NC}"
     python3 -m venv "$PLAYWRIGHT_VENV"
     source "$PLAYWRIGHT_VENV/bin/activate"
     pip install playwright --quiet
