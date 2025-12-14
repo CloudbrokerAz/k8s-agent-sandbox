@@ -17,7 +17,7 @@ set -euo pipefail
 #   SKIP_VAULT=true       - Skip Vault deployment
 #   SKIP_BOUNDARY=true    - Skip Boundary deployment
 #   SKIP_VSO=true         - Skip Vault Secrets Operator deployment
-#   BUILD_IMAGE=false     - Skip Docker image build
+#   BASE_IMAGE=<image>    - Override base image (default: srlynch1/terraform-ai-tools:latest)
 #   DEBUG=true            - Enable verbose output
 #
 # EXAMPLES:
@@ -55,10 +55,7 @@ DEPLOY_VAULT="${DEPLOY_VAULT:-true}"
 DEPLOY_VSO="${DEPLOY_VSO:-true}"
 DEPLOY_KEYCLOAK="${DEPLOY_KEYCLOAK:-true}"
 CONFIGURE_BOUNDARY_TARGETS="${CONFIGURE_BOUNDARY_TARGETS:-true}"
-BUILD_IMAGE="${BUILD_IMAGE:-true}"
-DOCKER_REGISTRY="${DOCKER_REGISTRY:-}"
-IMAGE_NAME="${IMAGE_NAME:-agent-sandbox}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
+BASE_IMAGE="${BASE_IMAGE:-srlynch1/terraform-ai-tools:latest}"
 DEBUG="${DEBUG:-false}"
 
 [[ "$DEBUG" == "true" ]] && set -x
@@ -99,7 +96,6 @@ echo "  Complete Platform Deployment"
 echo "=========================================="
 echo ""
 echo "This script will deploy:"
-echo "  0. Build Agent Sandbox image (optional)"
 echo "  1. Agent Sandbox - Multi-user development environment"
 echo "  2. Vault - Secrets management"
 echo "  3. Boundary - Secure access management"
@@ -381,79 +377,6 @@ if [[ -n "$EXISTING" ]]; then
     fi
 fi
 
-# ==========================================
-# Step 0: Build Agent Sandbox Image
-# ==========================================
-
-# Default to pre-built base image
-BASE_IMAGE="${BASE_IMAGE:-srlynch1/terraform-ai-tools:latest}"
-FULL_IMAGE="${BASE_IMAGE}"
-
-if [[ "$BUILD_IMAGE" == "true" ]]; then
-    echo ""
-    echo "=========================================="
-    echo "  Step 0: Build Agent Sandbox Image"
-    echo "=========================================="
-    echo ""
-
-    if ! command -v docker &> /dev/null; then
-        echo "Docker not found, using pre-built image: $BASE_IMAGE"
-        BUILD_IMAGE="false"
-        FULL_IMAGE="${BASE_IMAGE}"
-    else
-        # Use the claude-code Dockerfile which builds on the base image
-        DOCKERFILE="$K8S_DIR/../.devcontainer/claude-code/Dockerfile"
-        if [[ ! -f "$DOCKERFILE" ]]; then
-            echo "Dockerfile not found at $DOCKERFILE"
-            echo "Using pre-built image: $BASE_IMAGE"
-            BUILD_IMAGE="false"
-            FULL_IMAGE="${BASE_IMAGE}"
-        else
-            # Determine full image name for custom build
-            if [[ -n "$DOCKER_REGISTRY" ]]; then
-                CUSTOM_IMAGE="${DOCKER_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
-            else
-                CUSTOM_IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
-            fi
-
-            echo "Building image: $CUSTOM_IMAGE"
-            echo "Base image: $BASE_IMAGE"
-            echo "Dockerfile: $DOCKERFILE"
-            echo ""
-
-            # Build the image from .devcontainer/claude-code/Dockerfile
-            if docker build -t "$CUSTOM_IMAGE" -f "$DOCKERFILE" "$K8S_DIR/.." ; then
-                FULL_IMAGE="${CUSTOM_IMAGE}"
-                echo "✅ Image built successfully: $FULL_IMAGE"
-
-                # Load into Kind cluster if using Kind
-                if kind get clusters 2>/dev/null | grep -q "${KIND_CLUSTER_NAME:-sandbox}"; then
-                    echo "Loading image into Kind cluster..."
-                    kind load docker-image "$FULL_IMAGE" --name "${KIND_CLUSTER_NAME:-sandbox}"
-                    echo "✅ Image loaded into Kind"
-                elif [[ -n "$DOCKER_REGISTRY" ]]; then
-                    echo "Pushing image to registry..."
-                    if docker push "$FULL_IMAGE"; then
-                        echo "✅ Image pushed to registry"
-                    else
-                        echo "⚠️  Failed to push image, continuing with local image"
-                    fi
-                fi
-            else
-                echo "❌ Image build failed"
-                echo "Falling back to pre-built image: $BASE_IMAGE"
-                FULL_IMAGE="${BASE_IMAGE}"
-                BUILD_IMAGE="false"
-            fi
-        fi
-    fi
-else
-    echo ""
-    echo "Skipping image build (BUILD_IMAGE=false)"
-    echo "Using pre-built image: $BASE_IMAGE"
-    FULL_IMAGE="${BASE_IMAGE}"
-fi
-
 echo ""
 echo "=========================================="
 echo "  Step 1-3: Deploy All Base Components (Parallel)"
@@ -461,6 +384,23 @@ echo "=========================================="
 echo ""
 echo "Deploying Agent Sandbox, Vault, and Boundary in parallel..."
 echo ""
+
+# Load base image into Kind cluster (can run in parallel)
+load_base_image() {
+    echo "[Image] Using image: $BASE_IMAGE"
+
+    # Load into Kind cluster if using Kind
+    if kind get clusters 2>/dev/null | grep -q "${KIND_CLUSTER_NAME:-sandbox}"; then
+        echo "[Image] Loading into Kind cluster..."
+        if docker pull "$BASE_IMAGE" 2>/dev/null && kind load docker-image "$BASE_IMAGE" --name "${KIND_CLUSTER_NAME:-sandbox}"; then
+            echo "[Image] ✅ Loaded into Kind cluster"
+        else
+            echo "[Image] ⚠️  Failed to load, cluster will pull from registry"
+        fi
+    else
+        echo "[Image] Not using Kind cluster, skipping load"
+    fi
+}
 
 # Deploy Agent Sandbox in background (no dependencies on Vault/Boundary)
 deploy_agent_sandbox() {
@@ -541,7 +481,8 @@ setup_helm_repos() {
     echo "[Helm] ✅ Repositories ready"
 }
 
-# Run ALL initial deployments in parallel (Agent Sandbox has no dependencies)
+# Run ALL initial deployments in parallel (all independent tasks)
+run_parallel load_base_image
 run_parallel deploy_agent_sandbox
 run_parallel deploy_vault
 run_parallel deploy_boundary_base

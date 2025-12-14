@@ -1,6 +1,0 @@
-========================================
-  VAULT KEYS - SAVE SECURELY!
-========================================
-Unseal Key: TEtfBo1nQ8stJ3kHM3txijgEc1p80tgkmrE81SPMVhI=
-Root Token: hvs.ul89UoeZ8MdeDrE6eOv5IZE1
-========================================
