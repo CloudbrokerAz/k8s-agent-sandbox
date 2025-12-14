@@ -41,3 +41,4 @@ we need to ensure all fixes are captured maintain a fixes log and ensure these a
 
 Test driven improvements with determinstic results and reliability is priority, always fix issues related to failing tests
 Fix issues rather than applying workarounds
+public client integration between boundary and keycloak is preferred and more secure
