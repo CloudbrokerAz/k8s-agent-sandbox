@@ -1,34 +1,25 @@
 #!/bin/bash
-# Copyright 2025 The Kubernetes Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-
-
-export GEMINI_API_KEY=`cat /tokens/gemini`
-
 set -x
 
+# Setup persistent directories within single PVC
+mkdir -p /workspaces/.gemini-config /workspaces/.bash_history /workspaces/repos
 
-# protection against running gemini on an unpause
-# if gemini-promt.txt dont run gemini else create and run it
-if [ -f gemini-prompt.txt ]; then
-  echo "gemini-prompt.txt exists, skipping gemini generation"
-else
-  echo "gemini-prompt.txt does not exist, running gemini"
-  echo "$AGENT_PROMPT" > gemini-prompt.txt
-  gemini -y  -p  "$AGENT_PROMPT" > gemini-output.txt || true
+# Export environment
+export HISTFILE=/workspaces/.bash_history/.bash_history
+
+# Configure Vault TLS CA (if mounted)
+if [ -f /vault-ca/vault-ca.crt ]; then
+    sudo cp /vault-ca/vault-ca.crt /usr/local/share/ca-certificates/ 2>/dev/null && \
+    sudo update-ca-certificates 2>/dev/null || \
+    export NODE_EXTRA_CA_CERTS=/vault-ca/vault-ca.crt
 fi
 
-#/usr/local/bin/code-server-entrypoint
-/usr/bin/code-server --auth=none --bind-addr=0.0.0.0:13337
+# Configure shell profile for interactive logins
+cat >> /home/node/.bashrc << 'BASHRC'
+# Gemini Sandbox - PATH and environment
+export PATH="/usr/local/share/npm-global/bin:$PATH"
+export HISTFILE=/workspaces/.bash_history/.bash_history
+BASHRC
+
+# Start code-server
+/usr/bin/code-server --auth=none --bind-addr=0.0.0.0:13337 /workspaces/repos
