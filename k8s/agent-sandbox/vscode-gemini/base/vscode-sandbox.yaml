@@ -33,6 +33,49 @@ spec:
               value: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Dont make any code changes. Would you approve it ?"
             - name: ENVBUILDER_IGNORE_PATHS
               value: "/var/run,/product_uuid,/product_name,/tokens"
+
+            # GitHub token for private repo access
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: GITHUB_TOKEN
+                  optional: true
+
+            # Terraform Cloud token
+            - name: TFE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: TFE_TOKEN
+                  optional: true
+            - name: TF_TOKEN_app_terraform_io
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: TFE_TOKEN
+                  optional: true
+
+            # Langfuse observability
+            - name: LANGFUSE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_HOST
+                  optional: true
+            - name: LANGFUSE_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_PUBLIC_KEY
+                  optional: true
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devenv-vault-secrets
+                  key: LANGFUSE_SECRET_KEY
+                  optional: true
+
           volumeMounts:
             - mountPath: /workspaces
               name: workspaces-pvc
