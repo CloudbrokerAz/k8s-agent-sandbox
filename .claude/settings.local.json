@@ -99,7 +99,9 @@
       "Bash(export BOUNDARY_PASS='DdpoRz3WkfdR8TRbOue1')",
       "Bash(tee:*)",
       "WebFetch(domain:discuss.hashicorp.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(bash run-all-tests.sh:*)",
+      "Bash(timeout 300 bash:*)"
     ],
     "deny": [
       "Write(.gitignore)",
