@@ -41,7 +41,7 @@ Two AI agent development environments:
   - SSH access for VSCode Remote Development
   - Pre-installed: Terraform, AWS CLI, kubectl, etc.
 
-- **Gemini Sandbox** - Google AI agent environment
+- **Gemini Sandbox** - AI agent development environment
   - Google Gemini CLI for AI-assisted development
   - Similar tooling and features as Claude Code sandbox
   - Isolated workspace

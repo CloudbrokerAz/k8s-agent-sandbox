@@ -84,8 +84,8 @@ cd k8s/scripts
 │  ┌──────────────────────────────────────┐  │
 │  │   DevEnv Namespace                   │  │
 │  │  ┌────────────┐  ┌────────────────┐  │  │
-│  │  │ Claude Code│  │ Gemini Sandbox │  │  │
-│  │  │  Sandbox   │  │  (Google AI)   │  │  │
+│  │  │ Claude Code│  │     Gemini     │  │  │
+│  │  │  Sandbox   │  │    Sandbox     │  │  │
 │  │  └────────────┘  └────────────────┘  │  │
 │  └──────────────────────────────────────┘  │
 │                                             │
