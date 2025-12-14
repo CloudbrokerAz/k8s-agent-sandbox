@@ -1,491 +1,345 @@
 # Agent Sandbox Platform - Kubernetes Deployment
 
-This directory contains the complete platform for deploying AI agent development environments to Kubernetes, including secrets management, secure access, and secret synchronization.
+Kubernetes-based development platform for AI agents with integrated secrets management, secure access, and identity management.
 
 ## Directory Structure
 
 ```
 k8s/
-├── agent-sandbox/           # Core development environments
-│   ├── manifests/          # DevEnv Kubernetes manifests
-│   └── scripts/            # DevEnv deployment scripts
-├── platform/               # Supporting infrastructure
-│   ├── boundary/           # HashiCorp Boundary (secure access)
-│   ├── vault/              # HashiCorp Vault (secrets management)
-│   └── vault-secrets-operator/  # VSO (secret synchronization)
-├── scripts/                # Master deployment scripts
-│   ├── deploy-all.sh       # Deploy complete platform
-│   ├── teardown-all.sh     # Remove complete platform
-│   └── setup-kind.sh       # Create local Kind cluster
-└── docs/                   # Documentation
-    ├── README.md           # This file
-    ├── GETTING_STARTED.md  # Quick start guide
-    └── ARCHITECTURE.md     # Platform architecture
+├── agent-sandbox/               # AI agent development environments
+│   ├── vscode-claude/          # Claude Code sandbox configuration
+│   │   ├── base/               # Kubernetes manifests
+│   │   ├── devcontainer.json   # Dev container configuration
+│   │   └── entrypoint.sh       # Container startup script
+│   ├── vscode-gemini/          # Gemini sandbox configuration
+│   │   ├── base/               # Kubernetes manifests
+│   │   ├── devcontainer.json   # Dev container configuration
+│   │   └── entrypoint.sh       # Container startup script
+│   ├── deploy.sh               # Deployment script
+│   ├── teardown.sh             # Cleanup script
+│   └── cached-manifest.yaml    # Cached Agent-Sandbox CRD
+├── platform/                    # Supporting infrastructure
+│   ├── boundary/               # HashiCorp Boundary (secure access)
+│   ├── vault/                  # HashiCorp Vault (secrets)
+│   ├── keycloak/               # Keycloak (identity provider)
+│   └── vault-secrets-operator/ # VSO (secret sync)
+└── scripts/                     # Deployment automation
+    ├── deploy-all.sh           # Master deployment script
+    ├── teardown-all.sh         # Master cleanup script
+    ├── setup-kind.sh           # Create Kind cluster
+    └── platform.env.example    # Configuration template
 ```
 
 ## Architecture
 
-- **Agent Sandbox**: Multi-user isolated development environments (StatefulSet pods)
-  - Custom devcontainer with pre-installed tools (Terraform, AWS CLI, Claude Code, etc.)
+### Agent Sandboxes
+
+Two AI agent development environments:
+
+- **Claude Code Sandbox** - AI-powered development with Claude Code
+  - Browser-based IDE (code-server)
   - SSH access for VSCode Remote Development
-  - Persistent workspaces across restarts
-- **HashiCorp Vault**: Centralized secrets management with KV, SSH, and TFE engines
-- **HashiCorp Boundary**: Identity-based secure access to agent pods
-- **Vault Secrets Operator**: Automatic sync of secrets from Vault to Kubernetes
-- **Network isolation**: Controlled access via NetworkPolicies
+  - Pre-installed: Terraform, AWS CLI, kubectl, etc.
 
-## Prerequisites
+- **Gemini Sandbox** - Google AI agent environment
+  - Google Gemini CLI for AI-assisted development
+  - Similar tooling and features as Claude Code sandbox
+  - Isolated workspace
 
-1. **Kubernetes cluster** (Kind, K8s, OpenShift, etc.)
-2. **kubectl** installed and configured
-3. **Helm 3.x** installed (for VSO deployment)
-4. **Docker** installed (for building images)
+### Platform Services
 
-### Validate Prerequisites
+- **HashiCorp Vault** - Secrets management
+  - SSH CA for certificate-based authentication
+  - Dynamic Terraform Cloud/Enterprise tokens
+  - KV secrets (GitHub tokens, Langfuse credentials, etc.)
 
-Run the prerequisite check script before deployment:
+- **HashiCorp Boundary** - Zero-trust network access
+  - SSH targets for each sandbox
+  - OIDC integration with Keycloak
+  - Vault-signed SSH certificates
 
-```bash
-cd k8s/scripts
-./check-prereqs.sh
-```
+- **Keycloak** - Identity provider
+  - `agent-sandbox` realm
+  - Demo users (admin, developer, readonly)
+  - OIDC client for Boundary
 
-This validates:
-- kubectl installation and cluster connectivity
-- Helm installation
-- Docker availability
-- Required CLI tools (jq, openssl)
-
-### Configuration
-
-All platform settings are defined in `scripts/platform.env.example`. To customize:
-
-```bash
-# Copy to .env for local overrides
-cp scripts/platform.env.example scripts/.env
-
-# Edit configuration
-vi scripts/.env
-```
-
-Key configuration options:
-- `DEVENV_REPLICAS` - Number of agent sandbox pods
-- `DEPLOY_BOUNDARY` - Enable/disable Boundary deployment
-- `DEPLOY_VAULT` - Enable/disable Vault deployment
-- `DEPLOY_VSO` - Enable/disable VSO deployment
-- `DEBUG` - Enable verbose output
+- **Vault Secrets Operator** - Kubernetes integration
+  - Auto-sync Vault secrets to Kubernetes secrets
+  - Dynamic secret rotation
 
 ## Quick Start
 
-### Option 1: Full Platform Deployment (Recommended)
+### Prerequisites
 
-Deploy the complete platform including Vault, Boundary, and VSO:
+1. **Docker** - For Kind cluster
+2. **kubectl** - Kubernetes CLI
+3. **Boundary License** - Enterprise license at `k8s/scripts/license/boundary.hclic`
+
+Add to `/etc/hosts`:
+```
+127.0.0.1 vault.local boundary.local keycloak.local
+```
+
+### Deploy Complete Platform
 
 ```bash
 cd k8s/scripts
-
-# Create a local Kind cluster (if needed)
-./setup-kind.sh
-
-# Deploy all components
 ./deploy-all.sh
 ```
 
-This will deploy:
-1. **Agent Sandbox** - Multi-user development environments
-2. **Vault** - Secrets management (auto-initialized)
-3. **Boundary** - Secure access management
-4. **VSO** - Automatic secret synchronization
-5. **Keycloak** - Identity provider (optional)
+This deploys:
+1. Agent-Sandbox CRD + controller
+2. Claude Code sandbox
+3. Gemini sandbox
+4. Vault (auto-initialized)
+5. Boundary + PostgreSQL
+6. Keycloak + PostgreSQL
+7. Vault Secrets Operator
+8. Boundary targets + OIDC configuration
 
-#### Deployment Features
+### Access Sandboxes
 
-The deploy script supports advanced options:
+#### Browser IDE (Claude Code)
 
 ```bash
-# Resume a partial deployment (skips already-deployed components)
+kubectl port-forward -n devenv svc/claude-code-sandbox 13337:13337
+# Open http://localhost:13337
+```
+
+#### SSH Access (VSCode Remote)
+
+```bash
+# 1. Port-forward Boundary worker
+kubectl port-forward -n boundary svc/boundary-worker 9202:9202 &
+
+# 2. Get Vault-signed SSH certificate
+vault write -field=signed_key ssh/sign/devenv-access \
+  public_key=@~/.ssh/id_rsa.pub \
+  valid_principals=node > ~/.ssh/id_rsa-cert.pub
+
+# 3. Get target ID from credentials file
+cat k8s/platform/boundary/scripts/boundary-credentials.txt
+
+# 4. Connect
+export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_TLS_INSECURE=true
+boundary connect -target-id=<TARGET_ID> -exec ssh -- \
+  -i ~/.ssh/id_rsa \
+  -o CertificateFile=~/.ssh/id_rsa-cert.pub \
+  -l node -p '{{boundary.port}}' '{{boundary.ip}}'
+```
+
+## Configuration
+
+### Environment Variables
+
+Copy and customize:
+
+```bash
+cp k8s/scripts/platform.env.example k8s/scripts/.env
+```
+
+Key variables:
+
+```bash
+# Namespace configuration
+DEVENV_NAMESPACE="devenv"              # Sandboxes namespace
+VAULT_NAMESPACE="vault"                # Vault namespace
+BOUNDARY_NAMESPACE="boundary"          # Boundary namespace
+
+# Image configuration
+BASE_IMAGE="srlynch1/terraform-ai-tools:latest"
+
+# Deployment control
+SKIP_CLAUDE_CODE="false"               # Skip Claude Code sandbox
+SKIP_GEMINI="false"                    # Skip Gemini sandbox
+SKIP_VAULT="false"                     # Skip Vault
+SKIP_BOUNDARY="false"                  # Skip Boundary
+DEPLOY_KEYCLOAK="true"                 # Deploy Keycloak
+```
+
+### Selective Deployment
+
+```bash
+# Deploy only Vault and Boundary
+SKIP_CLAUDE_CODE=true SKIP_GEMINI=true ./deploy-all.sh
+
+# Skip Keycloak
+DEPLOY_KEYCLOAK=false ./deploy-all.sh
+
+# Resume partial deployment
 RESUME=auto ./deploy-all.sh
+```
 
-# Run deployments in parallel (faster but more resource-intensive)
+## Advanced Features
+
+### Parallel Deployment
+
+Enable parallel execution for faster deployment:
+
+```bash
 PARALLEL=true ./deploy-all.sh
-
-# Skip specific components
-SKIP_VAULT=true SKIP_BOUNDARY=true ./deploy-all.sh
-
-# Combined options
-RESUME=auto PARALLEL=true ./deploy-all.sh
 ```
 
-### Option 2: Agent Sandbox Only
+Components deploy concurrently:
+- Base image loading
+- Claude Code sandbox
+- Gemini sandbox
+- Vault
+- Boundary
+- Helm repository setup
 
-Deploy just the development environments:
+### Resume Mode
+
+Auto-detect and skip already-running components:
 
 ```bash
-cd k8s/agent-sandbox/scripts
-
-# Create secrets
-./create-secrets.sh
-
-# Deploy
-./deploy.sh
+RESUME=auto ./deploy-all.sh
 ```
 
-### Access Your Environment
+Detects:
+- Running Vault StatefulSet
+- Running Boundary controller
+- Deployed sandboxes
+- Running VSO
+
+## Testing
+
+### Health Check
 
 ```bash
-# Check pod status
-kubectl get pods -n devenv
-
-# Access the dev environment
-kubectl exec -it -n devenv devenv-0 -- /bin/bash
-
-# View logs
-kubectl logs -n devenv devenv-0 -f
+cd k8s/scripts/tests
+./healthcheck.sh
 ```
 
-### Configure Additional Services
+Checks:
+- Vault status and unsealing
+- Boundary controller and worker
+- Agent sandbox pods
+- Keycloak realm configuration
+- OIDC integration
+- VSO deployment
+
+### Individual Tests
 
 ```bash
-# Configure SSH secrets engine
-./platform/vault/scripts/configure-ssh-engine.sh
+cd k8s/scripts/tests
 
-# Configure TFE secrets engine (for Terraform Cloud)
-./platform/vault/scripts/configure-tfe-engine.sh
-```
-
-## Multi-User Setup
-
-### Scaling for Multiple Users
-
-Each replica in the StatefulSet is an isolated dev environment:
-
-```bash
-# Scale to 3 users
-./k8s/agent-sandbox/scripts/scale.sh 3
-
-# Access specific user environments
-kubectl exec -it -n devenv devenv-0 -- /bin/bash  # User 1
-kubectl exec -it -n devenv devenv-1 -- /bin/bash  # User 2
-kubectl exec -it -n devenv devenv-2 -- /bin/bash  # User 3
-```
-
-### Per-User Configuration
-
-Each pod gets:
-- **Unique persistent volumes**: `workspace-devenv-{0,1,2,...}`
-- **Stable network identity**: `devenv-{0,1,2,...}.devenv.devenv.svc.cluster.local`
-- **Isolated workspace**: No cross-contamination between users
-
-## Cluster-Specific Configuration
-
-### For kind (Docker Desktop)
-
-The default configuration works out of the box. Uses `standard` StorageClass.
-
-```bash
-# Verify storage class
-kubectl get storageclass
-
-# Should see 'standard' or 'hostpath'
-```
-
-### For Standard Kubernetes
-
-Update `k8s/agent-sandbox/manifests/05-statefulset.yaml` to use your cluster's StorageClass:
-
-```yaml
-storageClassName: your-storage-class  # e.g., gp2, ebs, nfs, etc.
-```
-
-### For OpenShift
-
-1. **Remove or update StorageClass** in manifests:
-   ```bash
-   # OpenShift typically auto-provisions storage
-   # Comment out storageClassName in 05-statefulset.yaml
-   ```
-
-2. **SecurityContextConstraints** may need adjustment:
-   ```bash
-   # Allow the service account to run with specific user ID
-   oc adm policy add-scc-to-user anyuid -z default -n devenv
-   ```
-
-3. **NetworkPolicy** enforcement:
-   OpenShift enforces NetworkPolicies by default. Review `07-networkpolicy.yaml`.
-
-## Advanced Configuration
-
-### Custom Storage Sizes
-
-Edit `k8s/agent-sandbox/manifests/05-statefulset.yaml`:
-
-```yaml
-volumeClaimTemplates:
-- metadata:
-    name: workspace
-  spec:
-    resources:
-      requests:
-        storage: 20Gi  # Increase from default 10Gi
-```
-
-### Resource Limits
-
-Adjust CPU/memory in `05-statefulset.yaml`:
-
-```yaml
-resources:
-  requests:
-    memory: "4Gi"   # Increase from 2Gi
-    cpu: "1000m"    # Increase from 500m
-  limits:
-    memory: "8Gi"   # Increase from 4Gi
-    cpu: "4000m"    # Increase from 2000m
-```
-
-### External Access
-
-#### Option 1: Port Forwarding (Development)
-
-```bash
-kubectl port-forward -n devenv devenv-0 8080:8080
-# Access at http://localhost:8080
-```
-
-#### Option 2: LoadBalancer (Cloud)
-
-Edit `k8s/agent-sandbox/manifests/06-service.yaml`:
-
-```yaml
-spec:
-  type: LoadBalancer  # Change from ClusterIP
-```
-
-#### Option 3: Ingress (Production)
-
-Create an Ingress resource (example for nginx-ingress):
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: devenv-ingress
-  namespace: devenv
-spec:
-  rules:
-  - host: devenv.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: devenv
-            port:
-              number: 8080
-```
-
-## Secrets Management
-
-### Using External Secret Managers
-
-Instead of `create-secrets.sh`, integrate with:
-
-- **HashiCorp Vault**: Use [Vault Secrets Operator](https://github.com/hashicorp/vault-secrets-operator)
-- **AWS Secrets Manager**: Use [External Secrets Operator](https://external-secrets.io/)
-- **Azure Key Vault**: Use [Secrets Store CSI Driver](https://secrets-store-csi-driver.sigs.k8s.io/)
-
-### Rotating Secrets
-
-```bash
-# Update secrets
-kubectl create secret generic devenv-secrets \
-  --from-literal=GITHUB_TOKEN="new-token" \
-  -n devenv \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Restart pods to pick up new secrets
-kubectl rollout restart statefulset/devenv -n devenv
+./test-secrets.sh          # Vault secrets sync via VSO
+./test-boundary.sh         # Boundary connectivity
+./test-keycloak.sh         # Keycloak realm
+./test-oidc-auth.sh        # OIDC authentication
+./test-oidc-browser.sh     # Browser-based OIDC flow
 ```
 
 ## Troubleshooting
 
-### Pods Not Starting
+### View Credentials
 
 ```bash
-# Check pod status
-kubectl describe pod devenv-0 -n devenv
+# Vault root token and unseal keys
+cat k8s/platform/vault/scripts/vault-keys.txt
 
-# Common issues:
-# - Image pull errors: Verify Docker Hub credentials
-# - PVC pending: Check StorageClass availability
-# - Secret missing: Run create-secrets.sh
+# Boundary admin credentials
+cat k8s/platform/boundary/scripts/boundary-credentials.txt
+
+# Keycloak admin credentials
+kubectl get secret keycloak-admin -n keycloak -o jsonpath='{.data.KEYCLOAK_ADMIN_PASSWORD}' | base64 -d
 ```
 
-### Storage Issues
+### Vault Sealed
 
 ```bash
-# Check PVCs
-kubectl get pvc -n devenv
-
-# Check PVs
-kubectl get pv
-
-# Force delete stuck PVC (CAUTION: data loss)
-kubectl patch pvc workspace-devenv-0 -n devenv -p '{"metadata":{"finalizers":null}}'
+# Get unseal key from vault-keys.txt
+kubectl exec -n vault vault-0 -- vault operator unseal <UNSEAL_KEY>
 ```
 
-### Network Issues
+### Boundary Targets Not Found
 
 ```bash
-# Test DNS resolution
-kubectl exec -it -n devenv devenv-0 -- nslookup google.com
-
-# Test internet connectivity
-kubectl exec -it -n devenv devenv-0 -- curl -I https://github.com
-
-# Check NetworkPolicy
-kubectl describe networkpolicy -n devenv
+# Manually configure targets
+k8s/platform/boundary/scripts/configure-targets.sh
 ```
 
-### Resource Constraints
+### Pod Issues
 
 ```bash
-# Check pod resource usage
-kubectl top pods -n devenv
+# Check sandbox status
+kubectl get pods -n devenv
+kubectl describe pod -n devenv claude-code-sandbox-<ID>
+kubectl logs -n devenv claude-code-sandbox-<ID> -f
 
-# Check node capacity
-kubectl describe nodes | grep -A 5 "Allocated resources"
-```
+# Check Vault
+kubectl get pods -n vault
+kubectl logs -n vault vault-0
 
-## Monitoring and Observability
-
-### Basic Monitoring
-
-```bash
-# Watch pod status
-kubectl get pods -n devenv -w
-
-# Stream logs
-kubectl logs -n devenv devenv-0 -f
-
-# Get events
-kubectl get events -n devenv --sort-by='.lastTimestamp'
-```
-
-### Metrics (if Prometheus is installed)
-
-```bash
-# Pod metrics
-kubectl top pods -n devenv
-
-# Container metrics
-kubectl top pods -n devenv --containers
-```
-
-## Backup and Disaster Recovery
-
-### Backup Workspace Data
-
-```bash
-# Create a backup of a user's workspace
-kubectl exec -n devenv devenv-0 -- tar czf /tmp/backup.tar.gz /workspace
-kubectl cp devenv/devenv-0:/tmp/backup.tar.gz ./backup-user0-$(date +%Y%m%d).tar.gz
-```
-
-### Restore Workspace Data
-
-```bash
-# Restore from backup
-kubectl cp ./backup-user0-20250101.tar.gz devenv/devenv-0:/tmp/backup.tar.gz
-kubectl exec -n devenv devenv-0 -- tar xzf /tmp/backup.tar.gz -C /
+# Check Boundary
+kubectl get pods -n boundary
+kubectl logs -n boundary -l app=boundary-controller
 ```
 
 ## Cleanup
 
-### Remove Everything
+### Complete Teardown
 
 ```bash
 cd k8s/scripts
-
-# Remove complete platform (Vault, Boundary, VSO, DevEnv)
 ./teardown-all.sh
-
-# Remove only agent sandbox
-./agent-sandbox/scripts/teardown.sh
 ```
 
-### Remove Specific Components
+Removes:
+- All sandboxes
+- Vault
+- Boundary
+- Keycloak
+- VSO
+- Agent-Sandbox CRD and controller
+
+### Selective Cleanup
 
 ```bash
-# Delete StatefulSet only (keeps data)
-kubectl delete statefulset devenv -n devenv
+# Teardown only Claude Code sandbox
+cd k8s/agent-sandbox
+./teardown.sh
 
-# Delete PVCs (CAUTION: data loss)
-kubectl delete pvc -n devenv --all
-
-# Delete secrets
-kubectl delete secret devenv-secrets -n devenv
+# Delete specific namespace
+kubectl delete namespace devenv
 ```
 
 ## Security Considerations
 
-1. **Secrets**: Never commit secrets to git. Use `.gitignore` for any files containing secrets.
+1. **Secrets Management**
+   - Never commit secrets to git
+   - Runtime credentials stored in `k8s/platform/*/scripts/` (gitignored)
+   - Use Vault for centralized secret management
 
-2. **RBAC**: Consider creating service accounts with limited permissions:
-   ```yaml
-   apiVersion: v1
-   kind: ServiceAccount
-   metadata:
-     name: devenv-sa
-     namespace: devenv
-   ```
+2. **Network Security**
+   - NetworkPolicies enforce isolation
+   - Boundary provides zero-trust access
+   - No direct SSH exposure
 
-3. **Network Isolation**: The default NetworkPolicy provides basic isolation. Review for your security requirements.
+3. **Authentication**
+   - Vault-signed SSH certificates (short-lived)
+   - Boundary OIDC with Keycloak
+   - No static passwords for sandbox access
 
-4. **Image Scanning**: Scan your Docker image for vulnerabilities:
-   ```bash
-   docker scan your-username/terraform-devenv:latest
-   ```
-
-5. **Pod Security**: The DevEnv StatefulSet uses a relaxed security context (runs as root) for development convenience. For production deployments, consider tightening the security context in `agent-sandbox/manifests/05-statefulset.yaml`.
-
-## Cost Optimization
-
-### For Cloud Clusters
-
-1. **Right-size resources**: Adjust requests/limits based on actual usage
-2. **Scale to zero**: When not in use: `./scale.sh 0`
-3. **Use node autoscaling**: Configure cluster autoscaler
-4. **Storage class**: Use cheaper storage tiers for non-critical data
-
-### For kind/Local
-
-1. **Limit replicas**: Don't over-provision locally
-2. **Resource limits**: Prevent OOM on your machine
-3. **Cleanup**: Use `./teardown.sh` when done
+4. **Image Security**
+   - Base image: `srlynch1/terraform-ai-tools:latest`
+   - Scan images for vulnerabilities
+   - Use specific version tags in production
 
 ## Next Steps
 
-1. **Add SSH access**: Configure SSH server in the container for remote access
-2. **Implement authentication**: Add OAuth/OIDC for user management
-3. **Setup ingress**: Expose via ingress controller for web access
-4. **Add monitoring**: Integrate Prometheus/Grafana for observability
-5. **Automate provisioning**: Use Terraform or Helm for deployment automation
-6. **User namespaces**: Isolate users in separate namespaces for stronger security
+1. **Customize sandboxes** - Modify devcontainer.json for your tools
+2. **Add users** - Configure Keycloak realm with your user directory
+3. **Integrate CI/CD** - Automate secret provisioning
+4. **Setup monitoring** - Add Prometheus/Grafana
+5. **Production hardening** - Review security contexts and policies
 
 ## References
 
-- [Kubernetes StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
-- [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
-- [kind Documentation](https://kind.sigs.k8s.io/)
-- [Agent Sandbox Project](https://github.com/kubernetes-sigs/agent-sandbox)
-- [DevContainer Spec](https://containers.dev/)
-
-## Support
-
-For issues or questions:
-- Review pod logs: `kubectl logs -n devenv devenv-0`
-- Check events: `kubectl get events -n devenv`
-- Describe resources: `kubectl describe pod devenv-0 -n devenv`
+- [Agent-Sandbox Project](https://github.com/kubernetes-sigs/agent-sandbox)
+- [HashiCorp Vault](https://www.vaultproject.io/)
+- [HashiCorp Boundary](https://www.boundaryproject.io/)
+- [Keycloak](https://www.keycloak.org/)
+- [Dev Containers](https://containers.dev/)
