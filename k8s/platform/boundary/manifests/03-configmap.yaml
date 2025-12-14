@@ -89,17 +89,18 @@ data:
       # Initial upstream controller addresses (0.20.1+)
       initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
 
-      # Public address for client connections (external users via ingress)
-      public_addr = "boundary-worker.local:443"
+      # Public address for client connections via nginx-ingress TCP passthrough
+      # Port 9202 is exposed via nginx-ingress tcp-services ConfigMap
+      public_addr = "localhost:9202"
     }
 
     # Proxy listener - session connections
-    # TLS enabled for external client connections via ingress
+    # TLS disabled for Kind dev environment
+    # For production, enable TLS with proper PKI-issued certificate
     listener "tcp" {
       address = "0.0.0.0:9202"
       purpose = "proxy"
-      tls_cert_file = "/tls/tls.crt"
-      tls_key_file = "/tls/tls.key"
+      tls_disable = true
     }
 
     # Ops listener - health checks

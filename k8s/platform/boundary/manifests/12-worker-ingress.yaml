@@ -9,9 +9,12 @@ metadata:
     app: boundary
     component: worker
   annotations:
-    # SSL passthrough - TLS terminates at worker, not ingress
-    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    # TLS terminates at ingress, HTTP to worker
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    # WebSocket support for Boundary proxy
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: nginx
   tls:
