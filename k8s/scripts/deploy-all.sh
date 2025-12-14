@@ -13,7 +13,8 @@ set -euo pipefail
 # ENVIRONMENT VARIABLES:
 #   RESUME=auto|false     - Auto-detect and skip already-running components
 #   PARALLEL=true|false   - Run independent deployments concurrently (default: true)
-#   SKIP_DEVENV=true      - Skip Agent Sandbox deployment
+#   SKIP_DEVENV=true      - Skip Claude Code Agent Sandbox deployment
+#   SKIP_GEMINI=true      - Skip Gemini Agent Sandbox deployment
 #   SKIP_VAULT=true       - Skip Vault deployment
 #   SKIP_BOUNDARY=true    - Skip Boundary deployment
 #   SKIP_VSO=true         - Skip Vault Secrets Operator deployment
@@ -63,6 +64,7 @@ DEBUG="${DEBUG:-false}"
 PARALLEL="${PARALLEL:-true}"
 RESUME="${RESUME:-false}"
 SKIP_DEVENV="${SKIP_DEVENV:-false}"
+SKIP_GEMINI="${SKIP_GEMINI:-false}"
 SKIP_VAULT="${SKIP_VAULT:-false}"
 SKIP_BOUNDARY="${SKIP_BOUNDARY:-false}"
 SKIP_VSO="${SKIP_VSO:-false}"
@@ -96,12 +98,13 @@ echo "  Complete Platform Deployment"
 echo "=========================================="
 echo ""
 echo "This script will deploy:"
-echo "  1. Agent Sandbox - Multi-user development environment"
-echo "  2. Vault - Secrets management"
-echo "  3. Boundary - Secure access management"
-echo "  4. Vault Secrets Operator - Secret synchronization"
-echo "  5. Keycloak - Identity Provider (optional)"
-echo "  6. Boundary Targets & OIDC - Access configuration"
+echo "  1. Claude Code Agent Sandbox - AI-powered development environment"
+echo "  2. Gemini Agent Sandbox - Code review agent environment"
+echo "  3. Vault - Secrets management"
+echo "  4. Boundary - Secure access management"
+echo "  5. Vault Secrets Operator - Secret synchronization"
+echo "  6. Keycloak - Identity Provider (optional)"
+echo "  7. Boundary Targets & OIDC - Access configuration"
 echo ""
 echo "Parallel mode: $PARALLEL"
 echo ""
@@ -410,7 +413,7 @@ deploy_agent_sandbox() {
 
         if [[ -f "$AGENT_SANDBOX_DIR/deploy.sh" ]]; then
             # Use the new deploy.sh which handles CRD installation
-            echo "[AgentSandbox] Deploying using kubernetes-sigs/agent-sandbox pattern..."
+            echo "[AgentSandbox] Deploying Claude Code sandbox..."
             NAMESPACE="$DEVENV_NAMESPACE" "$AGENT_SANDBOX_DIR/deploy.sh"
         else
             # Fallback: manual deployment
@@ -435,9 +438,31 @@ deploy_agent_sandbox() {
             fi
         fi
 
-        echo "[AgentSandbox] ✅ Deployment initiated"
+        echo "[AgentSandbox] ✅ Claude Code sandbox deployment initiated"
     else
         echo "[AgentSandbox] Skipping (SKIP_DEVENV=true)"
+    fi
+}
+
+# Deploy Gemini Sandbox in background (no dependencies on Vault/Boundary)
+deploy_gemini_sandbox() {
+    if [[ "$SKIP_GEMINI" != "true" ]]; then
+        GEMINI_SANDBOX_DIR="$K8S_DIR/agent-sandbox/vscode-gemini"
+
+        echo "[GeminiSandbox] Deploying Gemini sandbox..."
+
+        # Create devenv namespace if it doesn't exist
+        kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+
+        # Apply kustomize manifests
+        if [[ -d "$GEMINI_SANDBOX_DIR/base" ]]; then
+            kubectl apply -k "$GEMINI_SANDBOX_DIR/base"
+            echo "[GeminiSandbox] ✅ Gemini sandbox deployment initiated"
+        else
+            echo "[GeminiSandbox] ⚠️  Base directory not found at $GEMINI_SANDBOX_DIR/base"
+        fi
+    else
+        echo "[GeminiSandbox] Skipping (SKIP_GEMINI=true)"
     fi
 }
 
@@ -484,6 +509,7 @@ setup_helm_repos() {
 # Run ALL initial deployments in parallel (all independent tasks)
 run_parallel load_base_image
 run_parallel deploy_agent_sandbox
+run_parallel deploy_gemini_sandbox
 run_parallel deploy_vault
 run_parallel deploy_boundary_base
 run_parallel setup_helm_repos
