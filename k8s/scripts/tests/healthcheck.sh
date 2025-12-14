@@ -468,13 +468,13 @@ echo "Note: User login tests are optional - users must be created via configure-
 if [[ "$KEYCLOAK_STATUS" == "Running" ]] && [[ -n "${OIDC_RESPONSE:-}" ]]; then
     # Test user authentication using admin-cli (public client with direct access grants)
     # Uses the demo developer user created by configure-realm.sh
-    # Note: Passwords contain special chars that need URL encoding: ! = %21, @ = %40, # = %23
+    # Password: Developer123 (no special chars, no URL encoding needed)
     LOGIN_RESULT=$(kubectl run -n "$KEYCLOAK_NAMESPACE" login-test-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
         -- curl -sf -X POST "http://keycloak:8080/realms/agent-sandbox/protocol/openid-connect/token" \
             -d "grant_type=password" \
             -d "client_id=admin-cli" \
             -d "username=developer" \
-            -d "password=Dev123%21%40%23" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
+            -d "password=Developer123" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
     if [[ -n "$LOGIN_RESULT" ]]; then
         check_pass "User authentication (developer)"
     else
@@ -482,12 +482,13 @@ if [[ "$KEYCLOAK_STATUS" == "Running" ]] && [[ -n "${OIDC_RESPONSE:-}" ]]; then
     fi
 
     # Test admin user authentication (realm admin user created by configure-realm.sh)
+    # Password: Admin123 (no special chars, no URL encoding needed)
     ADMIN_LOGIN=$(kubectl run -n "$KEYCLOAK_NAMESPACE" admin-login-$RANDOM --rm -i --restart=Never --image=curlimages/curl:latest \
         -- curl -sf -X POST "http://keycloak:8080/realms/agent-sandbox/protocol/openid-connect/token" \
             -d "grant_type=password" \
             -d "client_id=admin-cli" \
             -d "username=admin" \
-            -d "password=Admin123%21%40%23" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
+            -d "password=Admin123" 2>&1 | grep -o '"access_token"' | head -1 || echo "")
     if [[ -n "$ADMIN_LOGIN" ]]; then
         check_pass "User authentication (admin)"
     else
