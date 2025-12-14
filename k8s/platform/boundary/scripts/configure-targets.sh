@@ -63,36 +63,49 @@ if [[ -z "$ADMIN_PASSWORD" ]] || [[ -z "$AUTH_METHOD_ID" ]]; then
 fi
 echo "✅ Found admin credentials (Auth Method: $AUTH_METHOD_ID)"
 
-# Get devenv service info - try known service names
-DEVENV_SVC_NAME=""
-DEVENV_SVC_IP=""
+# Discover all SSH-capable services in the devenv namespace
+# Support for multiple sandboxes (claude-code-sandbox, gemini-sandbox-ssh, etc.)
+declare -a SANDBOX_SERVICES
+declare -A SANDBOX_IPS
 
-# Try to find the service by common names
-for SVC_NAME in "claude-code-sandbox" "devenv" "sandbox"; do
-    DEVENV_SVC_IP=$(kubectl get svc "$SVC_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
-    if [[ -n "$DEVENV_SVC_IP" ]]; then
-        DEVENV_SVC_NAME="$SVC_NAME"
-        break
+echo "Discovering sandbox services..."
+
+# Known sandbox service names (in order of priority)
+KNOWN_SERVICES=("claude-code-sandbox" "gemini-sandbox-ssh")
+
+for SVC_NAME in "${KNOWN_SERVICES[@]}"; do
+    SVC_IP=$(kubectl get svc "$SVC_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    if [[ -n "$SVC_IP" ]] && [[ "$SVC_IP" != "None" ]]; then
+        SANDBOX_SERVICES+=("$SVC_NAME")
+        SANDBOX_IPS["$SVC_NAME"]="$SVC_IP"
+        echo "✅ Found service: $SVC_NAME ($SVC_IP)"
     fi
 done
 
-if [[ -z "$DEVENV_SVC_IP" ]]; then
-    # Fallback: find any SSH-capable service (port 22) in the namespace
-    DEVENV_SVC_NAME=$(kubectl get svc -n "$DEVENV_NAMESPACE" -o jsonpath='{.items[?(@.spec.ports[*].port==22)].metadata.name}' 2>/dev/null | awk '{print $1}' || echo "")
-    if [[ -n "$DEVENV_SVC_NAME" ]]; then
-        DEVENV_SVC_IP=$(kubectl get svc "$DEVENV_SVC_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+# Also discover any other SSH-capable services
+OTHER_SERVICES=$(kubectl get svc -n "$DEVENV_NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.spec.ports[]?.port == 22) | select(.spec.clusterIP != "None") | .metadata.name' || echo "")
+for SVC_NAME in $OTHER_SERVICES; do
+    # Skip if already in known services
+    if [[ " ${SANDBOX_SERVICES[*]} " =~ " ${SVC_NAME} " ]]; then
+        continue
     fi
+    SVC_IP=$(kubectl get svc "$SVC_NAME" -n "$DEVENV_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    if [[ -n "$SVC_IP" ]] && [[ "$SVC_IP" != "None" ]]; then
+        SANDBOX_SERVICES+=("$SVC_NAME")
+        SANDBOX_IPS["$SVC_NAME"]="$SVC_IP"
+        echo "✅ Found service: $SVC_NAME ($SVC_IP)"
+    fi
+done
+
+if [[ ${#SANDBOX_SERVICES[@]} -eq 0 ]]; then
+    echo "⚠️  No SSH services found in $DEVENV_NAMESPACE namespace"
+    echo "   Using DNS placeholder for claude-code-sandbox"
+    SANDBOX_SERVICES=("claude-code-sandbox")
+    SANDBOX_IPS["claude-code-sandbox"]="claude-code-sandbox.$DEVENV_NAMESPACE.svc.cluster.local"
 fi
 
-if [[ -z "$DEVENV_SVC_IP" ]]; then
-    echo "⚠️  No SSH service found in $DEVENV_NAMESPACE namespace"
-    echo "   Using DNS placeholder (will resolve if service is created later)"
-    DEVENV_SVC_IP="claude-code-sandbox.$DEVENV_NAMESPACE.svc.cluster.local"
-    DEVENV_SVC_NAME="claude-code-sandbox"
-else
-    echo "✅ Found service: $DEVENV_SVC_NAME"
-fi
-echo "DevEnv service address: $DEVENV_SVC_IP"
+echo ""
+echo "Found ${#SANDBOX_SERVICES[@]} sandbox service(s)"
 
 echo ""
 echo "Configuring Boundary resources..."
@@ -246,99 +259,149 @@ else
 fi
 
 echo ""
-echo "Step 5: Create Host"
-echo "-------------------"
+echo "Step 5: Create Hosts for Each Sandbox"
+echo "--------------------------------------"
 
-# Check for existing host
+# Get existing hosts
 HOSTS=$(run_boundary hosts list -host-catalog-id="$CATALOG_ID" -format=json 2>/dev/null || echo '{"items":[]}')
-HOST_ID=$(echo "$HOSTS" | jq -r '.items[] | select(.name=="devenv-service") | .id' 2>/dev/null | head -1 || echo "")
 
-if [[ -n "$HOST_ID" ]]; then
-    echo "✅ Host exists: devenv-service ($HOST_ID)"
-else
-    # Create host for devenv service
-    HOST_RESULT=$(run_boundary hosts create static \
-        -name="devenv-service" \
-        -description="DevEnv Kubernetes Service" \
-        -address="$DEVENV_SVC_IP" \
-        -host-catalog-id="$CATALOG_ID" \
-        -format=json \
-        2>/dev/null || echo "{}")
+# Create/update hosts for each discovered sandbox
+declare -A HOST_IDS
+for SVC_NAME in "${SANDBOX_SERVICES[@]}"; do
+    HOST_NAME="${SVC_NAME}"
+    SVC_IP="${SANDBOX_IPS[$SVC_NAME]}"
 
-    HOST_ID=$(echo "$HOST_RESULT" | jq -r '.item.id // empty')
-    if [[ -z "$HOST_ID" ]]; then
-        echo "❌ Failed to create host"
-        exit 1
+    HOST_ID=$(echo "$HOSTS" | jq -r ".items[] | select(.name==\"$HOST_NAME\") | .id" 2>/dev/null | head -1 || echo "")
+
+    if [[ -n "$HOST_ID" ]]; then
+        echo "✅ Host exists: $HOST_NAME ($HOST_ID)"
+    else
+        # Create host for sandbox service
+        HOST_RESULT=$(run_boundary hosts create static \
+            -name="$HOST_NAME" \
+            -description="$HOST_NAME Kubernetes Service" \
+            -address="$SVC_IP" \
+            -host-catalog-id="$CATALOG_ID" \
+            -format=json \
+            2>/dev/null || echo "{}")
+
+        HOST_ID=$(echo "$HOST_RESULT" | jq -r '.item.id // empty')
+        if [[ -z "$HOST_ID" ]]; then
+            echo "⚠️  Failed to create host: $HOST_NAME"
+            continue
+        fi
+        echo "✅ Created host: $HOST_NAME ($HOST_ID)"
     fi
-    echo "✅ Created host: devenv-service ($HOST_ID)"
-fi
+    HOST_IDS["$SVC_NAME"]="$HOST_ID"
+done
 
 echo ""
-echo "Step 6: Create Host Set"
-echo "-----------------------"
+echo "Step 6: Create Host Sets and Targets for Each Sandbox"
+echo "------------------------------------------------------"
 
-# Check for existing host set
+# Get existing host sets and targets
 HOSTSETS=$(run_boundary host-sets list -host-catalog-id="$CATALOG_ID" -format=json 2>/dev/null || echo '{"items":[]}')
-HOSTSET_ID=$(echo "$HOSTSETS" | jq -r '.items[] | select(.name=="devenv-set") | .id' 2>/dev/null | head -1 || echo "")
-
-if [[ -n "$HOSTSET_ID" ]]; then
-    echo "✅ Host set exists: devenv-set ($HOSTSET_ID)"
-else
-    # Create host set
-    HOSTSET_RESULT=$(run_boundary host-sets create static \
-        -name="devenv-set" \
-        -description="DevEnv Host Set" \
-        -host-catalog-id="$CATALOG_ID" \
-        -format=json \
-        2>/dev/null || echo "{}")
-
-    HOSTSET_ID=$(echo "$HOSTSET_RESULT" | jq -r '.item.id // empty')
-    if [[ -z "$HOSTSET_ID" ]]; then
-        echo "❌ Failed to create host set"
-        exit 1
-    fi
-    echo "✅ Created host set: devenv-set ($HOSTSET_ID)"
-fi
-
-# Add host to host set (idempotent)
-run_boundary host-sets add-hosts \
-    -id="$HOSTSET_ID" \
-    -host="$HOST_ID" \
-    2>/dev/null || true
-
-echo ""
-echo "Step 7: Create SSH Target"
-echo "-------------------------"
-
-# Check for existing target
 TARGETS=$(run_boundary targets list -scope-id="$PROJECT_ID" -format=json 2>/dev/null || echo '{"items":[]}')
-TARGET_ID=$(echo "$TARGETS" | jq -r '.items[] | select(.name=="devenv-ssh") | .id' 2>/dev/null | head -1 || echo "")
 
-if [[ -n "$TARGET_ID" ]]; then
-    echo "✅ Target exists: devenv-ssh ($TARGET_ID)"
-else
-    # Create SSH target
+declare -A TARGET_IDS
+for SVC_NAME in "${SANDBOX_SERVICES[@]}"; do
+    HOST_ID="${HOST_IDS[$SVC_NAME]}"
+    if [[ -z "$HOST_ID" ]]; then
+        continue
+    fi
+
+    # Derive names - convert service name to target name
+    # e.g., claude-code-sandbox -> claude-ssh, gemini-sandbox-ssh -> gemini-ssh
+    if [[ "$SVC_NAME" == "claude-code-sandbox" ]]; then
+        TARGET_NAME="claude-ssh"
+        HOSTSET_NAME="claude-set"
+    elif [[ "$SVC_NAME" == "gemini-sandbox-ssh" ]]; then
+        TARGET_NAME="gemini-ssh"
+        HOSTSET_NAME="gemini-set"
+    else
+        # Generic naming
+        TARGET_NAME="${SVC_NAME%-sandbox}-ssh"
+        TARGET_NAME="${TARGET_NAME%-ssh-ssh}-ssh"  # Avoid double -ssh
+        HOSTSET_NAME="${SVC_NAME%-sandbox}-set"
+    fi
+
+    # Create or get host set
+    HOSTSET_ID=$(echo "$HOSTSETS" | jq -r ".items[] | select(.name==\"$HOSTSET_NAME\") | .id" 2>/dev/null | head -1 || echo "")
+    if [[ -z "$HOSTSET_ID" ]]; then
+        HOSTSET_RESULT=$(run_boundary host-sets create static \
+            -name="$HOSTSET_NAME" \
+            -description="$SVC_NAME Host Set" \
+            -host-catalog-id="$CATALOG_ID" \
+            -format=json \
+            2>/dev/null || echo "{}")
+        HOSTSET_ID=$(echo "$HOSTSET_RESULT" | jq -r '.item.id // empty')
+        if [[ -n "$HOSTSET_ID" ]]; then
+            echo "✅ Created host set: $HOSTSET_NAME ($HOSTSET_ID)"
+        fi
+    else
+        echo "✅ Host set exists: $HOSTSET_NAME ($HOSTSET_ID)"
+    fi
+
+    # Add host to host set (idempotent)
+    if [[ -n "$HOSTSET_ID" ]]; then
+        run_boundary host-sets add-hosts -id="$HOSTSET_ID" -host="$HOST_ID" 2>/dev/null || true
+    fi
+
+    # Create or get target
+    TARGET_ID=$(echo "$TARGETS" | jq -r ".items[] | select(.name==\"$TARGET_NAME\") | .id" 2>/dev/null | head -1 || echo "")
+    if [[ -z "$TARGET_ID" ]]; then
+        TARGET_RESULT=$(run_boundary targets create tcp \
+            -name="$TARGET_NAME" \
+            -description="SSH access to $SVC_NAME" \
+            -default-port=22 \
+            -scope-id="$PROJECT_ID" \
+            -format=json \
+            2>/dev/null || echo "{}")
+        TARGET_ID=$(echo "$TARGET_RESULT" | jq -r '.item.id // empty')
+        if [[ -n "$TARGET_ID" ]]; then
+            echo "✅ Created target: $TARGET_NAME ($TARGET_ID)"
+        fi
+    else
+        echo "✅ Target exists: $TARGET_NAME ($TARGET_ID)"
+    fi
+
+    # Add host source to target (idempotent)
+    if [[ -n "$TARGET_ID" ]] && [[ -n "$HOSTSET_ID" ]]; then
+        run_boundary targets add-host-sources -id="$TARGET_ID" -host-source="$HOSTSET_ID" 2>/dev/null || true
+    fi
+
+    TARGET_IDS["$SVC_NAME"]="$TARGET_ID"
+done
+
+# For backward compatibility, also create the legacy devenv-ssh target
+# pointing to claude-code-sandbox if it exists
+echo ""
+echo "Step 7: Legacy devenv-ssh Target (backward compatibility)"
+echo "---------------------------------------------------------"
+
+DEVENV_TARGET_ID=$(echo "$TARGETS" | jq -r '.items[] | select(.name=="devenv-ssh") | .id' 2>/dev/null | head -1 || echo "")
+CLAUDE_HOSTSET_ID=$(echo "$HOSTSETS" | jq -r '.items[] | select(.name=="claude-set") | .id' 2>/dev/null | head -1 || echo "")
+
+if [[ -n "$DEVENV_TARGET_ID" ]]; then
+    echo "✅ Target exists: devenv-ssh ($DEVENV_TARGET_ID) - legacy target for claude-code-sandbox"
+    TARGET_ID="$DEVENV_TARGET_ID"
+elif [[ -n "$CLAUDE_HOSTSET_ID" ]]; then
     TARGET_RESULT=$(run_boundary targets create tcp \
         -name="devenv-ssh" \
-        -description="SSH access to Agent Sandbox DevEnv" \
+        -description="SSH access to Agent Sandbox DevEnv (legacy - use claude-ssh)" \
         -default-port=22 \
         -scope-id="$PROJECT_ID" \
         -format=json \
         2>/dev/null || echo "{}")
-
     TARGET_ID=$(echo "$TARGET_RESULT" | jq -r '.item.id // empty')
-    if [[ -z "$TARGET_ID" ]]; then
-        echo "❌ Failed to create target"
-        exit 1
+    if [[ -n "$TARGET_ID" ]]; then
+        run_boundary targets add-host-sources -id="$TARGET_ID" -host-source="$CLAUDE_HOSTSET_ID" 2>/dev/null || true
+        echo "✅ Created legacy target: devenv-ssh ($TARGET_ID)"
     fi
-    echo "✅ Created target: devenv-ssh ($TARGET_ID)"
+else
+    echo "⚠️  Skipping legacy devenv-ssh target (no claude-set found)"
+    TARGET_ID=""
 fi
-
-# Add host source to target (idempotent)
-run_boundary targets add-host-sources \
-    -id="$TARGET_ID" \
-    -host-source="$HOSTSET_ID" \
-    2>/dev/null || true
 
 echo ""
 echo "Step 8: TCP Target Configuration Complete"
@@ -398,6 +461,24 @@ else
     fi
 fi
 
+# Build targets list for credentials file
+TARGETS_LIST=""
+for SVC_NAME in "${SANDBOX_SERVICES[@]}"; do
+    TGT_ID="${TARGET_IDS[$SVC_NAME]:-}"
+    if [[ -n "$TGT_ID" ]]; then
+        if [[ "$SVC_NAME" == "claude-code-sandbox" ]]; then
+            TARGETS_LIST+="  claude-ssh:        $TGT_ID\n"
+        elif [[ "$SVC_NAME" == "gemini-sandbox-ssh" ]]; then
+            TARGETS_LIST+="  gemini-ssh:        $TGT_ID\n"
+        else
+            TARGETS_LIST+="  ${SVC_NAME}:       $TGT_ID\n"
+        fi
+    fi
+done
+if [[ -n "$TARGET_ID" ]]; then
+    TARGETS_LIST+="  devenv-ssh:        $TARGET_ID (legacy)\n"
+fi
+
 # Save credentials
 CREDS_FILE="$SCRIPT_DIR/boundary-credentials.txt"
 cat > "$CREDS_FILE" << EOF
@@ -416,46 +497,43 @@ Password:       $ADMIN_PASSWORD
 Organization:       $ORG_ID
 Project:            $PROJECT_ID
 Host Catalog:       $CATALOG_ID
-Host:               $HOST_ID
-Host Set:           $HOSTSET_ID
-Target (SSH):       $TARGET_ID
-Credential Store:   ${CRED_STORE_ID:-not configured}
-Credential Library: ${CRED_LIB_ID:-not configured}
-Vault SSH:          ${VAULT_SSH_CONFIGURED:-false}
+
+Targets:
+$(echo -e "$TARGETS_LIST")
 
 ==========================================
-  Usage (VSCode Remote SSH Compatible)
+  Usage (Port-Forward + Vault SSH CA)
 ==========================================
 
-1. Authenticate with Boundary:
+1. Start port-forward for Boundary worker:
+   kubectl port-forward -n boundary svc/boundary-worker 9202:9202 &
+
+2. Generate and sign SSH key with Vault:
+   ssh-keygen -t ed25519 -f /tmp/ssh-key -N ""
+   vault write -field=signed_key ssh/sign/devenv-access \\
+     public_key=@/tmp/ssh-key.pub \\
+     valid_principals=node > /tmp/ssh-key-cert.pub
+
+3. Connect to sandbox via Boundary:
+
+   # Claude Code Sandbox:
    export BOUNDARY_ADDR=https://boundary.local
    export BOUNDARY_TLS_INSECURE=true
-   boundary authenticate password \\
-     -auth-method-id=$AUTH_METHOD_ID \\
-     -login-name=admin \\
-     -password='$ADMIN_PASSWORD'
+   boundary connect -target-id=${TARGET_IDS["claude-code-sandbox"]:-$TARGET_ID} -exec ssh -- \\
+     -i /tmp/ssh-key \\
+     -o CertificateFile=/tmp/ssh-key-cert.pub \\
+     -o StrictHostKeyChecking=no \\
+     -l node -p '{{boundary.port}}' '{{boundary.ip}}' 'hostname'
 
-2. Create a TCP tunnel (keep this running):
-   boundary connect -target-id=$TARGET_ID -listen-port=2222
+   # Gemini Sandbox:
+   boundary connect -target-id=${TARGET_IDS["gemini-sandbox-ssh"]:-not_configured} -exec ssh -- \\
+     -i /tmp/ssh-key \\
+     -o CertificateFile=/tmp/ssh-key-cert.pub \\
+     -o StrictHostKeyChecking=no \\
+     -l node -p '{{boundary.port}}' '{{boundary.ip}}' 'hostname'
 
-3. VSCode Remote SSH Configuration:
-   Add to ~/.ssh/config:
-
-   Host devenv-boundary
-     HostName localhost
-     Port 2222
-     User node
-     IdentityFile ~/.ssh/id_rsa
-     StrictHostKeyChecking no
-     UserKnownHostsFile /dev/null
-
-4. Connect via VSCode:
-   - Open VSCode
-   - Use Remote-SSH: Connect to Host
-   - Select "devenv-boundary"
-
-Note: Your SSH key must be authorized on the target host.
-      Credential injection is disabled for VSCode compatibility.
+Note: SSH authentication uses Vault-signed certificates.
+      No password required - certificates are trusted by the sandbox sshd.
 
 EOF
 chmod 600 "$CREDS_FILE"
@@ -485,12 +563,28 @@ echo "=========================================="
 echo ""
 echo "Credentials saved to: $CREDS_FILE"
 echo ""
-echo "Quick start (VSCode Remote SSH):"
-echo "  1. export BOUNDARY_ADDR=https://boundary.local"
-echo "  2. export BOUNDARY_TLS_INSECURE=true"
-echo "  3. boundary authenticate password -auth-method-id=$AUTH_METHOD_ID -login-name=admin -password='$ADMIN_PASSWORD'"
-echo "  4. boundary connect -target-id=$TARGET_ID -listen-port=2222"
-echo "  5. Configure VSCode Remote SSH to connect to localhost:2222 with user 'node'"
+echo "Configured targets:"
+for SVC_NAME in "${SANDBOX_SERVICES[@]}"; do
+    TGT_ID="${TARGET_IDS[$SVC_NAME]:-}"
+    if [[ -n "$TGT_ID" ]]; then
+        if [[ "$SVC_NAME" == "claude-code-sandbox" ]]; then
+            echo "  - claude-ssh:  $TGT_ID"
+        elif [[ "$SVC_NAME" == "gemini-sandbox-ssh" ]]; then
+            echo "  - gemini-ssh:  $TGT_ID"
+        else
+            echo "  - $SVC_NAME:   $TGT_ID"
+        fi
+    fi
+done
+if [[ -n "$TARGET_ID" ]]; then
+    echo "  - devenv-ssh:  $TARGET_ID (legacy)"
+fi
 echo ""
-echo "See $CREDS_FILE for detailed VSCode setup instructions."
+echo "Quick start (Port-Forward + Vault SSH CA):"
+echo "  1. kubectl port-forward -n boundary svc/boundary-worker 9202:9202 &"
+echo "  2. vault write -field=signed_key ssh/sign/devenv-access public_key=@~/.ssh/id_ed25519.pub valid_principals=node > /tmp/cert.pub"
+echo "  3. export BOUNDARY_ADDR=https://boundary.local BOUNDARY_TLS_INSECURE=true"
+echo "  4. boundary connect -target-id=<TARGET_ID> -exec ssh -- -i ~/.ssh/id_ed25519 -o CertificateFile=/tmp/cert.pub -l node -p '{{boundary.port}}' '{{boundary.ip}}'"
+echo ""
+echo "See $CREDS_FILE for detailed instructions."
 echo ""
