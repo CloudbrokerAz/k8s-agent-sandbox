@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Configure Boundary with scopes, host catalogs, and targets for agent-sandbox
