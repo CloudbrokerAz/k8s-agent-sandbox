@@ -32,7 +32,13 @@ spec:
             - name: AGENT_PROMPT
               value: "You are an expert kubernetes developer who is helping with code reviews. Please look at the most recent commit and provide a review feedback. Dont make any code changes. Would you approve it ?"
             - name: ENVBUILDER_IGNORE_PATHS
-              value: "/var/run,/product_uuid,/product_name,/tokens"
+              value: "/var/run,/product_uuid,/product_name,/tokens,/var/run/secrets,/vault-ssh-ca,/vault-ca"
+
+            # Vault integration
+            - name: VAULT_ADDR
+              value: "https://vault.vault.svc.cluster.local:8200"
+            - name: VAULT_CACERT
+              value: "/vault-ca/vault-ca.crt"
 
             # GitHub token for private repo access
             - name: GITHUB_TOKEN
@@ -79,6 +85,24 @@ spec:
           volumeMounts:
             - mountPath: /workspaces
               name: workspaces-pvc
+            # Vault CA certificates (read-only)
+            - mountPath: /vault-ssh-ca
+              name: vault-ssh-ca
+              readOnly: true
+            - mountPath: /vault-ca
+              name: vault-ca
+              readOnly: true
+
+      volumes:
+        - name: vault-ssh-ca
+          secret:
+            secretName: vault-ssh-ca
+            optional: true
+        - name: vault-ca
+          secret:
+            secretName: vault-tls-ca
+            optional: true
+
   volumeClaimTemplates:
     - metadata:
         name: workspaces-pvc
