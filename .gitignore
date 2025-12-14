@@ -50,3 +50,10 @@ sandbox.backend.tf
 # HashiCorp license files
 *.hclic
 k8s/scripts/license/
+
+# Runtime-generated credentials and secrets (do not commit!)
+k8s/platform/boundary/scripts/boundary-credentials.txt
+k8s/platform/boundary/scripts/boundary-oidc-config.txt
+k8s/platform/vault/scripts/vault-keys.txt
+k8s/platform/vault/scripts/vault-ssh-ca.pub
+k8s/platform/vault/scripts/vault-ca.crt
