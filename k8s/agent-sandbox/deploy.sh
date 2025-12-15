@@ -1,12 +1,32 @@
 #!/bin/bash
-# deploy.sh - End-to-end deployment script for Claude Code Sandbox
+# deploy.sh - End-to-end deployment script for Agent Sandboxes
 # Follows kubernetes-sigs/agent-sandbox pattern
+# Supports both Claude Code and Gemini sandboxes
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-devenv}"
 AGENT_SANDBOX_VERSION="${AGENT_SANDBOX_VERSION:-v0.1.0}"
 MANIFEST_URL="https://github.com/kubernetes-sigs/agent-sandbox/releases/download/${AGENT_SANDBOX_VERSION}/manifest.yaml"
+
+# SANDBOX_TYPE: claude (default) or gemini
+SANDBOX_TYPE="${SANDBOX_TYPE:-claude}"
+
+# Set sandbox-specific variables
+case "$SANDBOX_TYPE" in
+    claude)
+        SANDBOX_NAME="claude-code-sandbox"
+        KUSTOMIZE_SUBDIR="vscode-claude"
+        ;;
+    gemini)
+        SANDBOX_NAME="gemini-sandbox"
+        KUSTOMIZE_SUBDIR="vscode-gemini"
+        ;;
+    *)
+        echo "ERROR: Invalid SANDBOX_TYPE='$SANDBOX_TYPE'. Must be 'claude' or 'gemini'"
+        exit 1
+        ;;
+esac
 
 # Colors for output
 RED='\033[0;31m'
@@ -122,13 +142,13 @@ create_namespace() {
 # Phase 4: Apply Kustomize Manifests
 # -----------------------------------------------------------------------------
 apply_manifests() {
-    log_info "Applying Claude Code Sandbox manifests..."
+    log_info "Applying ${SANDBOX_NAME} manifests..."
 
     # Check if we should use base or an overlay
-    local kustomize_dir="${SCRIPT_DIR}/vscode-claude/base"
+    local kustomize_dir="${SCRIPT_DIR}/${KUSTOMIZE_SUBDIR}/base"
 
-    if [[ -n "${OVERLAY}" ]] && [[ -d "${SCRIPT_DIR}/vscode-claude/overlays/${OVERLAY}" ]]; then
-        kustomize_dir="${SCRIPT_DIR}/vscode-claude/overlays/${OVERLAY}"
+    if [[ -n "${OVERLAY}" ]] && [[ -d "${SCRIPT_DIR}/${KUSTOMIZE_SUBDIR}/overlays/${OVERLAY}" ]]; then
+        kustomize_dir="${SCRIPT_DIR}/${KUSTOMIZE_SUBDIR}/overlays/${OVERLAY}"
         log_info "Using overlay: ${OVERLAY}"
     fi
 
@@ -145,16 +165,15 @@ apply_manifests() {
 # Phase 5: Wait for Sandbox Pod to be Ready
 # -----------------------------------------------------------------------------
 wait_for_sandbox() {
-    log_info "Waiting for Claude Code Sandbox to be ready..."
+    log_info "Waiting for ${SANDBOX_NAME} to be ready..."
     log_warn "This may take 5-10 minutes on first run (envbuilder builds the devcontainer)"
 
-    local sandbox_name="claude-code-sandbox"
     local max_wait=600  # 10 minutes
     local waited=0
 
     # Wait for the pod to exist
     while [[ $waited -lt 60 ]]; do
-        if kubectl get pod -n "${NAMESPACE}" -l sandbox="${sandbox_name}" &> /dev/null; then
+        if kubectl get pod -n "${NAMESPACE}" -l sandbox="${SANDBOX_NAME}" &> /dev/null; then
             break
         fi
         echo -n "."
@@ -164,11 +183,11 @@ wait_for_sandbox() {
     echo ""
 
     # Get the pod name
-    local pod_name=$(kubectl get pod -n "${NAMESPACE}" -l sandbox="${sandbox_name}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    local pod_name=$(kubectl get pod -n "${NAMESPACE}" -l sandbox="${SANDBOX_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [[ -z "$pod_name" ]]; then
         # Fallback: try to find by app label
-        pod_name=$(kubectl get pod -n "${NAMESPACE}" -l app="${sandbox_name}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        pod_name=$(kubectl get pod -n "${NAMESPACE}" -l app="${SANDBOX_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     fi
 
     if [[ -z "$pod_name" ]]; then
@@ -215,8 +234,7 @@ wait_for_sandbox() {
 # Phase 6: Capture Sandbox Configuration
 # -----------------------------------------------------------------------------
 capture_sandbox_config() {
-    local sandbox_name="claude-code-sandbox"
-    local pod_name=$(kubectl get pod -n "${NAMESPACE}" -l app="${sandbox_name}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    local pod_name=$(kubectl get pod -n "${NAMESPACE}" -l app="${SANDBOX_NAME}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     echo ""
     echo "========================================="
@@ -226,7 +244,7 @@ capture_sandbox_config() {
 
     # Sandbox resource
     echo "--- Sandbox Resource ---"
-    kubectl get sandbox "${sandbox_name}" -n "${NAMESPACE}" -o wide 2>/dev/null || echo "  (not available)"
+    kubectl get sandbox "${SANDBOX_NAME}" -n "${NAMESPACE}" -o wide 2>/dev/null || echo "  (not available)"
     echo ""
 
     # Pod details
@@ -244,12 +262,12 @@ capture_sandbox_config() {
 
     # PVCs
     echo "--- Persistent Volume Claims ---"
-    kubectl get pvc -n "${NAMESPACE}" 2>/dev/null | grep -E "NAME|${sandbox_name}" || echo "  (none found)"
+    kubectl get pvc -n "${NAMESPACE}" 2>/dev/null | grep -E "NAME|${SANDBOX_NAME}" || echo "  (none found)"
     echo ""
 
     # Services
     echo "--- Services ---"
-    kubectl get svc "${sandbox_name}" -n "${NAMESPACE}" -o wide 2>/dev/null || echo "  (not found)"
+    kubectl get svc "${SANDBOX_NAME}" -n "${NAMESPACE}" -o wide 2>/dev/null || echo "  (not found)"
     echo ""
 
     # Environment variables (non-sensitive)
@@ -291,17 +309,15 @@ capture_sandbox_config() {
 # Phase 7: Print Access Instructions
 # -----------------------------------------------------------------------------
 print_access_instructions() {
-    local sandbox_name="claude-code-sandbox"
-
     echo "========================================="
     echo "  Access Methods"
     echo "========================================="
     echo ""
     echo "1. kubectl exec (direct shell):"
-    echo "   kubectl exec -it -n ${NAMESPACE} \$(kubectl get pod -n ${NAMESPACE} -l app=${sandbox_name} -o jsonpath='{.items[0].metadata.name}') -- /bin/bash"
+    echo "   kubectl exec -it -n ${NAMESPACE} \$(kubectl get pod -n ${NAMESPACE} -l app=${SANDBOX_NAME} -o jsonpath='{.items[0].metadata.name}') -- /bin/bash"
     echo ""
     echo "2. code-server (browser IDE):"
-    echo "   kubectl port-forward -n ${NAMESPACE} svc/${sandbox_name} 13337:13337"
+    echo "   kubectl port-forward -n ${NAMESPACE} svc/${SANDBOX_NAME} 13337:13337"
     echo "   Then open: http://localhost:13337"
     echo ""
     echo "3. SSH via Boundary (if configured):"
@@ -310,7 +326,7 @@ print_access_instructions() {
     echo "Useful Commands:"
     echo "  kubectl get sandbox -n ${NAMESPACE}"
     echo "  kubectl get pods -n ${NAMESPACE}"
-    echo "  kubectl logs -f -n ${NAMESPACE} -l app=${sandbox_name}"
+    echo "  kubectl logs -f -n ${NAMESPACE} -l app=${SANDBOX_NAME}"
     echo ""
     echo "========================================="
 }
@@ -320,7 +336,7 @@ print_access_instructions() {
 # -----------------------------------------------------------------------------
 main() {
     echo "========================================="
-    echo "  Claude Code Sandbox Deployment"
+    echo "  ${SANDBOX_NAME} Deployment"
     echo "  Using kubernetes-sigs/agent-sandbox"
     echo "========================================="
     echo ""

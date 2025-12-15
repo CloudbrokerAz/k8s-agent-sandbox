@@ -539,20 +539,31 @@ deploy_agent_sandbox() {
 # Deploy Gemini Sandbox in background (no dependencies on Vault/Boundary)
 deploy_gemini_sandbox() {
     if [[ "$SKIP_GEMINI" != "true" ]]; then
-        GEMINI_SANDBOX_DIR="$K8S_DIR/agent-sandbox/vscode-gemini"
+        # Use the new kubernetes-sigs/agent-sandbox pattern
+        AGENT_SANDBOX_DIR="$K8S_DIR/agent-sandbox"
 
-        echo "[GeminiSandbox] Deploying Gemini sandbox..."
-
-        # Create devenv namespace if it doesn't exist
-        kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
-
-        # Apply kustomize manifests
-        if [[ -d "$GEMINI_SANDBOX_DIR/base" ]]; then
-            kubectl apply -k "$GEMINI_SANDBOX_DIR/base"
-            echo "[GeminiSandbox] ✅ Gemini sandbox deployment initiated"
+        if [[ -f "$AGENT_SANDBOX_DIR/deploy.sh" ]]; then
+            # Use the deploy.sh which handles CRD installation and applies manifests
+            echo "[GeminiSandbox] Deploying Gemini sandbox..."
+            NAMESPACE="$DEVENV_NAMESPACE" SANDBOX_TYPE=gemini "$AGENT_SANDBOX_DIR/deploy.sh"
         else
-            echo "[GeminiSandbox] ⚠️  Base directory not found at $GEMINI_SANDBOX_DIR/base"
+            # Fallback: manual deployment (should not happen if deploy.sh exists)
+            echo "[GeminiSandbox] ⚠️  deploy.sh not found, using manual deployment..."
+            GEMINI_SANDBOX_DIR="$K8S_DIR/agent-sandbox/vscode-gemini"
+
+            # Create devenv namespace if it doesn't exist
+            kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
+
+            # Apply kustomize manifests
+            if [[ -d "$GEMINI_SANDBOX_DIR/base" ]]; then
+                kubectl apply -k "$GEMINI_SANDBOX_DIR/base"
+                echo "[GeminiSandbox] ✅ Gemini sandbox deployment initiated"
+            else
+                echo "[GeminiSandbox] ⚠️  Base directory not found at $GEMINI_SANDBOX_DIR/base"
+            fi
         fi
+
+        echo "[GeminiSandbox] ✅ Gemini sandbox deployment initiated"
     else
         echo "[GeminiSandbox] Skipping (SKIP_GEMINI=true)"
     fi
