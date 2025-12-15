@@ -50,9 +50,15 @@ The main deployment script (`deploy-all.sh`) handles this order automatically.
 
 | Keycloak Group | Boundary Managed Group | Access Level |
 |----------------|----------------------|--------------|
-| admins | keycloak-admins | Full access |
-| developers | keycloak-developers | Connect access |
-| readonly | keycloak-readonly | List access |
+| admins | keycloak-admins | Full access (`ids=*;type=*;actions=*`) |
+| developers | keycloak-developers | Connect access (`ids=*;type=target;actions=list,read,authorize-session`) |
+| readonly | keycloak-readonly | List access (`ids=*;type=*;actions=read,list`) |
+
+**Important**: The `configure-oidc-auth.sh` script now idempotently syncs:
+
+- Managed group filters (ensures `/token/groups` claim matching is set)
+- Role grants (uses `set-grants` to ensure correct permissions)
+- Role principals (ensures managed group is assigned)
 
 ## Critical Configuration Details
 

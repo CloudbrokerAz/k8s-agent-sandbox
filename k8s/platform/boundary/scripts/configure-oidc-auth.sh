@@ -565,15 +565,16 @@ EOHCL
     echo "✅ Created OIDC auth method: keycloak ($AUTH_METHOD_ID)"
 
     # Configure claims scopes
-    # Note: "groups" is NOT a standard OIDC scope - groups are included via Keycloak mapper
-    # Only request standard scopes that Keycloak supports
+    # Note: "groups" scope is required for managed group membership matching
+    # Keycloak must have a groups mapper configured to include groups in the token
     echo "Configuring claims scopes..."
     run_boundary auth-methods update oidc \
         -id="$AUTH_METHOD_ID" \
         -claims-scopes="profile" \
         -claims-scopes="email" \
+        -claims-scopes="groups" \
         2>/dev/null || true
-    echo "✅ Configured claims scopes (profile, email)"
+    echo "✅ Configured claims scopes (profile, email, groups)"
 
     # Activate the OIDC auth method (make it public)
     echo "Activating OIDC auth method..."
@@ -644,6 +645,11 @@ create_managed_group() {
 
     if [[ -n "$EXISTING_GROUP" ]]; then
         echo "  ✅ Managed group '$GROUP_NAME' already exists ($EXISTING_GROUP)"
+        # Ensure filter is set correctly (may have been null from previous runs)
+        run_boundary managed-groups update oidc \
+            -id="$EXISTING_GROUP" \
+            -filter="$GROUP_FILTER" \
+            2>/dev/null || true
         echo "$EXISTING_GROUP"
     else
         GROUP_RESULT=$(run_boundary managed-groups create oidc \
@@ -705,6 +711,22 @@ create_role() {
     if [[ -n "$EXISTING_ROLE" ]]; then
         echo "  ✅ Role '$ROLE_NAME' already exists ($EXISTING_ROLE)"
         ROLE_ID="$EXISTING_ROLE"
+        # Ensure grants are set correctly (use set-grants to replace any existing grants)
+        if [[ -n "$GRANT_STRING" ]]; then
+            run_boundary roles set-grants \
+                -id="$ROLE_ID" \
+                -grant="$GRANT_STRING" \
+                2>/dev/null || true
+            echo "    - Synced grant: $GRANT_STRING"
+        fi
+        # Ensure managed group is added as principal
+        if [[ -n "$MANAGED_GROUP_ID" ]]; then
+            run_boundary roles add-principals \
+                -id="$ROLE_ID" \
+                -principal="$MANAGED_GROUP_ID" \
+                2>/dev/null || true
+            echo "    - Synced managed group as principal"
+        fi
     else
         ROLE_RESULT=$(run_boundary roles create \
             -name="$ROLE_NAME" \
@@ -719,24 +741,24 @@ create_role() {
             return
         fi
         echo "  ✅ Created role: $ROLE_NAME ($ROLE_ID)"
-    fi
 
-    # Add grants
-    if [[ -n "$GRANT_STRING" ]]; then
-        run_boundary roles add-grants \
-            -id="$ROLE_ID" \
-            -grant="$GRANT_STRING" \
-            2>/dev/null || true
-        echo "    - Added grant: $GRANT_STRING"
-    fi
+        # Add grants
+        if [[ -n "$GRANT_STRING" ]]; then
+            run_boundary roles add-grants \
+                -id="$ROLE_ID" \
+                -grant="$GRANT_STRING" \
+                2>/dev/null || true
+            echo "    - Added grant: $GRANT_STRING"
+        fi
 
-    # Add managed group as principal
-    if [[ -n "$MANAGED_GROUP_ID" ]]; then
-        run_boundary roles add-principals \
-            -id="$ROLE_ID" \
-            -principal="$MANAGED_GROUP_ID" \
-            2>/dev/null || true
-        echo "    - Added managed group as principal"
+        # Add managed group as principal
+        if [[ -n "$MANAGED_GROUP_ID" ]]; then
+            run_boundary roles add-principals \
+                -id="$ROLE_ID" \
+                -principal="$MANAGED_GROUP_ID" \
+                2>/dev/null || true
+            echo "    - Added managed group as principal"
+        fi
     fi
 }
 
@@ -758,7 +780,7 @@ if [[ -n "$DEVELOPERS_GROUP_ID" ]]; then
     create_role \
         "oidc-developers" \
         "OIDC Developers - Connect access" \
-        "ids=*;type=target;actions=read,authorize-session" \
+        "ids=*;type=target;actions=list,read,authorize-session" \
         "$DEVELOPERS_GROUP_ID" \
         "$PROJECT_ID"
 fi
@@ -799,7 +821,7 @@ Readonly Group:     $READONLY_GROUP_ID
 Keycloak Group      → Boundary Access
 -----------------------------------------
 admins              → Full access (all operations)
-developers          → Connect access (read + authorize-session on targets)
+developers          → Connect access (list + read + authorize-session on targets)
 readonly            → List access (read + list on all resources)
 
 ==========================================
