@@ -82,9 +82,26 @@ if [[ ! -d "$PLAYWRIGHT_VENV" ]]; then
     python3 -m venv "$PLAYWRIGHT_VENV"
     source "$PLAYWRIGHT_VENV/bin/activate"
     pip install playwright --quiet
-    playwright install chromium --quiet 2>/dev/null || true
+    echo "Installing Playwright browsers..."
+    if ! playwright install chromium 2>&1; then
+        echo -e "${YELLOW}⚠️  Warning: Playwright browser installation failed${NC}"
+        echo "  This test requires Playwright browsers. Skipping..."
+        deactivate
+        exit 2  # Exit with warning code
+    fi
     deactivate
+    echo -e "${GREEN}✓${NC} Playwright browsers installed"
 fi
+
+# Verify playwright can run before attempting test
+source "$PLAYWRIGHT_VENV/bin/activate"
+if ! python3 -c "from playwright.sync_api import sync_playwright" 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  Warning: Playwright not properly installed${NC}"
+    echo "  Skipping browser test..."
+    deactivate
+    exit 2  # Exit with warning code
+fi
+deactivate
 
 # Check test script
 TEST_SCRIPT="$SCRIPT_DIR/test-ssh-oidc-browser.py"
