@@ -1,6 +1,44 @@
 #!/bin/bash
 set -euo pipefail
 
+# Cleanup function for interrupt handling
+cleanup_on_interrupt() {
+    echo ""
+    echo "⚠️  Deployment interrupted. Cleaning up..."
+    # Kill any background jobs
+    for pid in "${PARALLEL_PIDS[@]:-}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    # Remove temp files
+    rm -f /tmp/boundary-config-*.txt /tmp/oidc-output-*.txt 2>/dev/null || true
+    echo "Cleanup complete. Some resources may be in partial state."
+    echo "Run with RESUME=auto to continue or teardown-all.sh to clean up."
+    exit 130
+}
+trap cleanup_on_interrupt INT TERM
+
+# Retry function with exponential backoff for transient failures
+# Usage: retry_with_backoff <max_attempts> <initial_delay> <command...>
+retry_with_backoff() {
+    local max_attempts="$1"
+    local delay="$2"
+    shift 2
+    local attempt=1
+
+    while [[ $attempt -le $max_attempts ]]; do
+        if "$@"; then
+            return 0
+        fi
+        if [[ $attempt -lt $max_attempts ]]; then
+            echo "  ⚠️  Attempt $attempt failed, retrying in ${delay}s..."
+            sleep "$delay"
+            delay=$((delay * 2))  # Exponential backoff
+        fi
+        ((attempt++))
+    done
+    return 1
+}
+
 # Master deployment script for the complete K8s platform
 # Deploys: DevEnv, Boundary, Vault, Vault Secrets Operator, and Keycloak
 #
@@ -335,26 +373,16 @@ fi
 # ==========================================
 echo "Verifying node readiness..."
 NODE_READY_TIMEOUT=60
-NODE_READY_INTERVAL=2
-NODE_READY_ATTEMPTS=$((NODE_READY_TIMEOUT / NODE_READY_INTERVAL))
-
-for attempt in $(seq 1 $NODE_READY_ATTEMPTS); do
-    NODE_STATUS=$(kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
-    if [[ "$NODE_STATUS" == *"True"* ]]; then
-        echo "✅ Node(s) ready"
-        break
-    fi
-    if [[ $attempt -eq $NODE_READY_ATTEMPTS ]]; then
-        echo "❌ Node(s) not ready after ${NODE_READY_TIMEOUT}s"
-        echo "   Node status: $NODE_STATUS"
-        kubectl get nodes -o wide
-        echo ""
-        echo "   Check for taints: kubectl describe nodes | grep -A5 Taints"
-        exit 1
-    fi
-    echo "  ⏳ Waiting for node(s) to be ready (attempt $attempt/$NODE_READY_ATTEMPTS)..."
-    sleep $NODE_READY_INTERVAL
-done
+# Use kubectl wait for deterministic node readiness check
+if kubectl wait --for=condition=Ready nodes --all --timeout="${NODE_READY_TIMEOUT}s" 2>/dev/null; then
+    echo "✅ Node(s) ready"
+else
+    echo "❌ Node(s) not ready after ${NODE_READY_TIMEOUT}s"
+    kubectl get nodes -o wide
+    echo ""
+    echo "   Check for taints: kubectl describe nodes | grep -A5 Taints"
+    exit 1
+fi
 
 echo "✅ Prerequisites met"
 echo ""
@@ -480,6 +508,11 @@ echo ""
 echo "Deploying Agent Sandbox, Vault, and Boundary in parallel..."
 echo ""
 
+# Pre-create shared namespaces to avoid race conditions in parallel deployments
+echo "Pre-creating namespaces..."
+kubectl create namespace "$DEVENV_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+echo "✅ Namespace $DEVENV_NAMESPACE ready"
+
 # Load base image into Kind cluster (can run in parallel)
 load_base_image() {
     echo "[Image] Using image: $BASE_IMAGE"
@@ -524,9 +557,9 @@ deploy_agent_sandbox() {
                     --dry-run=client -o yaml | kubectl apply -f -
             fi
 
-            # Apply kustomize manifests
+            # Apply kustomize manifests (use server-side apply for idempotency)
             if [[ -d "$AGENT_SANDBOX_DIR/base" ]]; then
-                kubectl apply -k "$AGENT_SANDBOX_DIR/base"
+                kubectl apply --server-side --force-conflicts -k "$AGENT_SANDBOX_DIR/base"
             fi
         fi
 
@@ -554,9 +587,9 @@ deploy_gemini_sandbox() {
             # Create devenv namespace if it doesn't exist
             kubectl create namespace devenv --dry-run=client -o yaml | kubectl apply -f -
 
-            # Apply kustomize manifests
+            # Apply kustomize manifests (use server-side apply for idempotency)
             if [[ -d "$GEMINI_SANDBOX_DIR/base" ]]; then
-                kubectl apply -k "$GEMINI_SANDBOX_DIR/base"
+                kubectl apply --server-side --force-conflicts -k "$GEMINI_SANDBOX_DIR/base"
                 echo "[GeminiSandbox] ✅ Gemini sandbox deployment initiated"
             else
                 echo "[GeminiSandbox] ⚠️  Base directory not found at $GEMINI_SANDBOX_DIR/base"
@@ -1235,12 +1268,20 @@ POLICY
 
     # Wait for VSO to sync the secret (poll instead of sleep)
     echo "⏳ Waiting for VSO to sync secrets..."
-    for i in {1..30}; do
+    # Use kubectl wait with custom condition polling (more deterministic than fixed sleep)
+    vso_attempt=0
+    for i in 1 2 3 5 8 13; do  # Fibonacci-style backoff intervals
         if kubectl get secret devenv-vault-secrets -n devenv &>/dev/null; then
+            echo "  ✅ VSO secrets synced"
             break
         fi
-        sleep 1
+        vso_attempt=$((vso_attempt + 1))
+        echo "  ⏳ Waiting ${i}s for VSO secret sync (attempt ${vso_attempt})..."
+        sleep "$i"
     done
+    if ! kubectl get secret devenv-vault-secrets -n devenv &>/dev/null; then
+        echo "  ⚠️  VSO secret sync may still be in progress - continuing deployment"
+    fi
 
     # Restart devenv sandboxes to pick up the newly synced secrets (SSH CA + VSO secrets)
     # This single restart replaces the earlier SSH CA restart to avoid double restart
@@ -1440,14 +1481,17 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
     # Wait for Boundary API to be ready (rollout status doesn't guarantee API readiness)
     echo "⏳ Waiting for Boundary API to be ready..."
     BOUNDARY_READY=false
-    for i in {1..30}; do
+    boundary_wait=2
+    for attempt in {1..15}; do
         if kubectl exec -n boundary deployment/boundary-controller -c boundary-controller -- \
             boundary auth-methods list -scope-id=global -format=json >/dev/null 2>&1; then
             BOUNDARY_READY=true
             break
         fi
-        echo "   Attempt $i/30: Boundary API not ready yet..."
-        sleep 2
+        echo "   Attempt $attempt/15: Boundary API not ready (waiting ${boundary_wait}s)..."
+        sleep "$boundary_wait"
+        # Exponential backoff with cap at 10s
+        boundary_wait=$((boundary_wait < 10 ? boundary_wait + 2 : 10))
     done
 
     if [[ "$BOUNDARY_READY" != "true" ]]; then

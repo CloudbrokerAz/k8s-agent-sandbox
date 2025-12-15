@@ -63,20 +63,35 @@ check_prerequisites() {
 # Phase 1: Install Agent-Sandbox CRD and Controller
 # -----------------------------------------------------------------------------
 install_agent_sandbox_crd() {
-    log_info "Checking for Agent-Sandbox CRD..."
+    log_info "Checking for Agent-Sandbox CRD and controller..."
+
+    local crd_exists=false
+    local controller_running=false
 
     if kubectl get crd sandboxes.agents.x-k8s.io &> /dev/null; then
+        crd_exists=true
         log_info "Agent-Sandbox CRD already installed"
+    fi
+
+    # Also check if controller is running (CRD may exist without controller)
+    if kubectl get pods -n agent-sandbox-system -l control-plane=controller-manager --no-headers 2>/dev/null | grep -q Running; then
+        controller_running=true
+        log_info "Agent-Sandbox controller is running"
+    fi
+
+    # If both CRD and controller are ready, skip installation
+    if [[ "$crd_exists" == "true" ]] && [[ "$controller_running" == "true" ]]; then
         return 0
     fi
 
-    log_info "Installing Agent-Sandbox CRD and controller (${AGENT_SANDBOX_VERSION})..."
+    log_info "Installing/updating Agent-Sandbox CRD and controller (${AGENT_SANDBOX_VERSION})..."
 
     # Try cached manifest first for faster/more reliable deployment
+    # Use server-side apply with force-conflicts to handle idempotent re-deployments
     local cached_manifest="${SCRIPT_DIR}/cached-manifest.yaml"
     if [[ -f "$cached_manifest" ]]; then
         log_info "Using cached manifest: ${cached_manifest}"
-        if kubectl apply -f "$cached_manifest"; then
+        if kubectl apply --server-side --force-conflicts -f "$cached_manifest"; then
             log_info "Waiting for CRD to be established..."
             kubectl wait --for=condition=established --timeout=60s crd/sandboxes.agents.x-k8s.io
             log_info "Agent-Sandbox CRD installed successfully"
@@ -86,7 +101,7 @@ install_agent_sandbox_crd() {
     fi
 
     log_info "Downloading from: ${MANIFEST_URL}"
-    if ! kubectl apply -f "${MANIFEST_URL}"; then
+    if ! kubectl apply --server-side --force-conflicts -f "${MANIFEST_URL}"; then
         log_error "Failed to install Agent-Sandbox CRD"
         exit 1
     fi
