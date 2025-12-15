@@ -3,37 +3,37 @@
 # This script configures sshd to trust Vault-signed certificates
 set -e
 
-echo "Configuring Vault SSH CA..."
+echo "Configuring SSH server..."
 
-# Check if SSH CA public key is mounted
-if [ ! -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
-    echo "  Vault SSH CA not mounted at /vault-ssh-ca/vault-ssh-ca.pub, skipping..."
-    exit 0
-fi
-
-# Copy CA public key to SSH config directory
-sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
-sudo chmod 644 /etc/ssh/vault-ssh-ca.pub
-echo "  Copied vault-ssh-ca.pub to /etc/ssh/"
-
-# Configure sshd to trust Vault CA certificates
 SSHD_CONFIG="/etc/ssh/sshd_config"
 
-# Change sshd port from 2222 to 22 (devcontainer default is 2222)
+# ALWAYS change sshd port from 2222 to 22 (devcontainer sshd feature defaults to 2222)
+# This must happen before the Vault CA check to ensure SSH is always on port 22
 if grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
     sudo sed -i 's/^Port 2222/Port 22/' "$SSHD_CONFIG"
     echo "  Changed sshd port from 2222 to 22"
 fi
 
-if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" "$SSHD_CONFIG" 2>/dev/null; then
-    echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "PubkeyAuthentication yes" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "  Added TrustedUserCAKeys to sshd_config"
+# Configure Vault SSH CA if mounted
+if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
+    echo "  Configuring Vault SSH CA..."
+    # Copy CA public key to SSH config directory
+    sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
+    sudo chmod 644 /etc/ssh/vault-ssh-ca.pub
+    echo "  Copied vault-ssh-ca.pub to /etc/ssh/"
+
+    if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" "$SSHD_CONFIG" 2>/dev/null; then
+        echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+        echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+        echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+        echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+        echo "PubkeyAuthentication yes" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+        echo "  Added TrustedUserCAKeys to sshd_config"
+    else
+        echo "  TrustedUserCAKeys already configured in sshd_config"
+    fi
 else
-    echo "  TrustedUserCAKeys already configured in sshd_config"
+    echo "  Vault SSH CA not mounted, skipping CA configuration"
 fi
 
 # Ensure SSH server directories exist
@@ -53,4 +53,4 @@ fi
 echo "  Starting SSH server on port 22..."
 sudo /usr/sbin/sshd 2>/dev/null || true
 
-echo "  Vault SSH CA configuration complete"
+echo "  SSH server configuration complete"
