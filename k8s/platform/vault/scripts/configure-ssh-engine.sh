@@ -43,8 +43,8 @@ kubectl exec -n "$NAMESPACE" vault-0 -i -- sh -c "
   "allowed_users": "node,root",
   "default_user": "node",
   "allow_user_certificates": true,
-  "ttl": "1h",
-  "max_ttl": "24h",
+  "ttl": "8h",
+  "max_ttl": "720h",
   "allowed_extensions": "permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding",
   "default_extensions": {
     "permit-pty": "",

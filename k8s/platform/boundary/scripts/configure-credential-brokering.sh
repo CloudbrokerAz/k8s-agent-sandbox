@@ -85,14 +85,15 @@ SSH_PUBLIC_KEY=$(cat "$TEMP_DIR/boundary-ssh.pub")
 
 # Sign the public key with Vault SSH CA
 echo "  Signing key with Vault SSH CA..."
-# Sign with default TTL (role maximum is 24h)
-SIGNED_CERT=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -i -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault write -field=signed_key ssh/sign/devenv-access public_key='$SSH_PUBLIC_KEY' valid_principals=node" 2>/dev/null || echo "")
+# Sign with extended TTL (720h = 30 days)
+CERT_TTL="${CERT_TTL:-720h}"
+SIGNED_CERT=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -i -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault write -field=signed_key ssh/sign/devenv-access public_key='$SSH_PUBLIC_KEY' valid_principals=node ttl=$CERT_TTL" 2>/dev/null || echo "")
 
 if [[ -z "$SIGNED_CERT" ]]; then
     echo "❌ Failed to sign SSH key with Vault CA"
     exit 1
 fi
-echo "✅ Key signed by Vault SSH CA (valid for 24h - role default)"
+echo "✅ Key signed by Vault SSH CA (valid for $CERT_TTL)"
 
 # ==========================================
 # Step 3: Store Credentials in Vault KV
