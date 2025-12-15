@@ -92,6 +92,24 @@ else
     FAILED=1
 fi
 
+# Test 9: Verify SSH CA matches between Vault and mounted secret
+echo ""
+echo "Test 9: Verifying SSH CA key consistency..."
+VAULT_CA=$(kubectl get secret vault-ssh-ca -n devenv -o jsonpath='{.data.vault-ssh-ca\.pub}' 2>/dev/null | base64 -d | head -c 100)
+MOUNTED_CA=$(kubectl exec -n devenv gemini-sandbox -- head -c 100 /vault-ssh-ca/vault-ssh-ca.pub 2>/dev/null)
+
+if [[ "$VAULT_CA" == "$MOUNTED_CA" ]] && [[ -n "$VAULT_CA" ]]; then
+    echo "  ✅ SSH CA key is consistent between secret and mount"
+else
+    echo "  ❌ SSH CA key mismatch or missing"
+    FAILED=1
+fi
+
+# Note: Actual SSH connectivity via OIDC flow is tested by:
+#   - test-oidc-browser.sh (browser-based OIDC auth)
+#   - test-boundary.sh (Boundary target connectivity)
+# To test manually: boundary connect ssh -target-id=<target> -- -l node
+
 echo ""
 echo "========================================"
 if [ $FAILED -eq 0 ]; then
