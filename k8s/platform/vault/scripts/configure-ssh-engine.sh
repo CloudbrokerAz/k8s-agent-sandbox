@@ -32,17 +32,29 @@ kubectl exec -n "$NAMESPACE" vault-0 -- sh -c "
 "
 
 echo "🔧 Creating devenv-access role..."
-# Vault SSH role creation - default_extensions must be a map
-kubectl exec -n "$NAMESPACE" vault-0 -- sh -c "
+# Vault SSH role creation - default_extensions must be a map passed via JSON stdin
+# Extensions include permit-port-forwarding for VS Code Remote SSH TCP forwarding
+kubectl exec -n "$NAMESPACE" vault-0 -i -- sh -c "
     export VAULT_TOKEN='$VAULT_TOKEN'
-    vault write ssh/roles/devenv-access \
-        key_type=ca \
-        ttl=1h \
-        max_ttl=24h \
-        allow_user_certificates=true \
-        allowed_users='node,root' \
-        default_user=node
-" 2>/dev/null || echo "  (role may already exist)"
+    vault write ssh/roles/devenv-access -
+" << 'ROLE_EOF'
+{
+  "key_type": "ca",
+  "allowed_users": "node,root",
+  "default_user": "node",
+  "allow_user_certificates": true,
+  "ttl": "1h",
+  "max_ttl": "24h",
+  "allowed_extensions": "permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding",
+  "default_extensions": {
+    "permit-pty": "",
+    "permit-port-forwarding": "",
+    "permit-agent-forwarding": "",
+    "permit-X11-forwarding": ""
+  }
+}
+ROLE_EOF
+echo "  Role created with port-forwarding extensions"
 
 echo ""
 echo "📋 SSH CA Public Key:"
