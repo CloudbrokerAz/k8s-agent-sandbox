@@ -69,12 +69,15 @@ kubectl create secret generic vault-ssh-ca \
     --dry-run=client -o yaml | kubectl apply -f -
 echo "✅ Secret 'vault-ssh-ca' created in devenv namespace"
 
-# Restart devenv pod to pick up the new SSH CA secret
-if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null 2>&1; then
-    echo "🔄 Restarting devenv sandbox to pick up SSH CA secret..."
-    kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
-    echo "   Pod will restart automatically. Wait for it to be Ready before connecting."
-fi
+# Restart all devenv sandbox pods to pick up the new SSH CA secret
+echo "🔄 Restarting devenv sandboxes to pick up SSH CA secret..."
+for sandbox in claude-code-sandbox gemini-sandbox; do
+    if kubectl get pod -n devenv -l app=$sandbox &>/dev/null 2>&1; then
+        kubectl delete pod -n devenv -l app=$sandbox --wait=false 2>/dev/null || true
+        echo "   Restarted $sandbox"
+    fi
+done
+echo "   Pods will restart automatically. Wait for them to be Ready before connecting."
 
 echo ""
 echo "To use with devenv:"

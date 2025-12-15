@@ -20,26 +20,25 @@ if grep -q "^#PubkeyAuthentication yes" "$SSHD_CONFIG" 2>/dev/null; then
     echo "  Enabled public key authentication"
 fi
 
-# Configure Vault SSH CA if mounted
-if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
-    echo "  Configuring Vault SSH CA..."
-    # Copy CA public key to SSH config directory
-    sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
-    sudo chmod 644 /etc/ssh/vault-ssh-ca.pub
-    echo "  Copied vault-ssh-ca.pub to /etc/ssh/"
+# Configure Vault SSH CA - point directly to mount path
+# VSO will sync the secret and rolloutRestartTargets will restart the pod
+VAULT_CA_MOUNT="/vault-ssh-ca/vault-ssh-ca.pub"
 
-    if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" "$SSHD_CONFIG" 2>/dev/null; then
-        echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-        echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-        echo "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-        echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-        echo "PubkeyAuthentication yes" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-        echo "  Added TrustedUserCAKeys to sshd_config"
-    else
-        echo "  TrustedUserCAKeys already configured in sshd_config"
-    fi
+if ! grep -q "TrustedUserCAKeys $VAULT_CA_MOUNT" "$SSHD_CONFIG" 2>/dev/null; then
+    echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+    echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+    echo "# Points directly to mounted secret path (synced by VSO)" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+    echo "TrustedUserCAKeys $VAULT_CA_MOUNT" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+    echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+    echo "  Configured TrustedUserCAKeys to use mount path: $VAULT_CA_MOUNT"
 else
-    echo "  Vault SSH CA not mounted, skipping CA configuration"
+    echo "  TrustedUserCAKeys already configured"
+fi
+
+if [ -f "$VAULT_CA_MOUNT" ]; then
+    echo "  Vault SSH CA is available at mount path"
+else
+    echo "  Vault SSH CA not yet mounted (will be available after VSO sync)"
 fi
 
 # Ensure SSH server directories exist
