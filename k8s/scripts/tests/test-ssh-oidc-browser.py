@@ -21,6 +21,24 @@ TARGET_SCOPE = "DevOps"
 TARGET_PROJECT = "Agent-Sandbox"
 SSH_USER = "node"
 
+# Target IDs are discovered dynamically from boundary-credentials.txt
+CREDS_FILE = os.path.join(os.path.dirname(__file__), "../../platform/boundary/scripts/boundary-credentials.txt")
+
+def get_target_ids():
+    """Read target IDs from boundary-credentials.txt"""
+    targets = {}
+    try:
+        if os.path.exists(CREDS_FILE):
+            with open(CREDS_FILE, 'r') as f:
+                for line in f:
+                    if 'claude-ssh:' in line:
+                        targets['claude'] = line.split(':')[-1].strip().split()[0]
+                    elif 'gemini-ssh:' in line:
+                        targets['gemini'] = line.split(':')[-1].strip().split()[0]
+    except Exception as e:
+        print(f"  Warning: Could not read credentials file: {e}")
+    return targets
+
 def test_oidc_ssh_flow():
     """Test the complete OIDC authentication and SSH connectivity flow."""
     print("=" * 70)
@@ -192,10 +210,10 @@ def test_oidc_ssh_flow():
                 # Note: Would need to make API call here
 
             # ==========================================
-            # Phase 3: Test SSH Connectivity
+            # Phase 3: Test SSH Connectivity with Brokered Credentials
             # ==========================================
             print("\n" + "=" * 50)
-            print("  Phase 3: Test SSH Connectivity")
+            print("  Phase 3: Test SSH with Brokered Credentials")
             print("=" * 50)
 
             # Extract auth token from browser storage/cookies for CLI use
@@ -220,54 +238,139 @@ def test_oidc_ssh_flow():
                 except:
                     print("  ⚠️  Could not parse session token")
 
-            # Step 3.2: Test SSH via Boundary connect (if we have target ID)
-            if ssh_target_id:
-                print(f"\nStep 3.2: Testing SSH to target {ssh_target_id}...")
+            # Discover target IDs dynamically
+            targets = get_target_ids()
+            print(f"\nStep 3.2: Discovered targets: {targets}")
 
-                # Create a temp directory for SSH keys
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    # Write auth token to boundary token file if available
-                    if auth_token:
-                        token_file = os.path.join(temp_dir, 'token')
-                        with open(token_file, 'w') as f:
-                            f.write(auth_token)
-                        os.environ['BOUNDARY_TOKEN'] = auth_token
+            # Use gemini target for testing (or claude if gemini not found)
+            ssh_target_id = targets.get('gemini') or targets.get('claude') or ssh_target_id
+            if not ssh_target_id:
+                print("  ⚠️  No target IDs found in credentials file")
+            else:
+                print(f"  Using target ID: {ssh_target_id}")
 
-                    # Set Boundary environment
-                    os.environ['BOUNDARY_ADDR'] = BOUNDARY_URL
-                    os.environ['BOUNDARY_TLS_INSECURE'] = 'true'
+            # Step 3.3: Authorize session to get brokered credentials
+            if auth_token:
+                print("\nStep 3.3: Authorizing session to get brokered credentials...")
+                os.environ['BOUNDARY_TOKEN'] = auth_token
+                os.environ['BOUNDARY_ADDR'] = BOUNDARY_URL
+                os.environ['BOUNDARY_TLS_INSECURE'] = 'true'
 
-                    # Try to connect via boundary CLI
-                    try:
-                        result = subprocess.run(
-                            [
-                                'boundary', 'connect', 'ssh',
-                                '-target-id', ssh_target_id,
-                                '--',
-                                '-l', SSH_USER,
-                                '-o', 'StrictHostKeyChecking=no',
-                                '-o', 'BatchMode=yes',
-                                '-o', 'ConnectTimeout=10',
-                                'echo', 'SSH_OIDC_SUCCESS'
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=30
-                        )
+                try:
+                    auth_result = subprocess.run(
+                        ['boundary', 'targets', 'authorize-session',
+                         '-id', ssh_target_id, '-format=json'],
+                        capture_output=True, text=True, timeout=30
+                    )
 
-                        if 'SSH_OIDC_SUCCESS' in result.stdout:
-                            print("  ✅ SSH connectivity via OIDC successful!")
-                            return True
+                    if auth_result.returncode == 0:
+                        import json
+                        auth_data = json.loads(auth_result.stdout)
+                        credentials = auth_data.get('item', {}).get('credentials', [])
+                        session_id = auth_data.get('item', {}).get('session_id', '')
+
+                        print(f"  Session ID: {session_id}")
+                        print(f"  Credentials returned: {len(credentials)}")
+
+                        if credentials:
+                            # Extract SSH credentials from brokered response
+                            # vault-generic returns data in 'decoded' or 'raw' format
+                            cred = credentials[0]
+                            secret = cred.get('secret', {})
+
+                            # Try different paths to find the data
+                            # KV v2: data.data, or decoded (base64 decoded), or raw
+                            if 'decoded' in secret:
+                                secret_data = secret.get('decoded', {}).get('data', {}) or secret.get('decoded', {})
+                            elif 'data' in secret and 'data' in secret.get('data', {}):
+                                secret_data = secret.get('data', {}).get('data', {})
+                            elif 'data' in secret:
+                                secret_data = secret.get('data', {})
+                            else:
+                                secret_data = secret
+
+                            print(f"  Secret structure: {list(secret.keys())}")
+                            if 'decoded' in secret:
+                                print(f"  Decoded keys: {list(secret.get('decoded', {}).keys())}")
+
+                            private_key = secret_data.get('private_key', '')
+                            certificate = secret_data.get('certificate', '')
+                            username = secret_data.get('username', SSH_USER)
+
+                            if private_key:
+                                print("  ✅ Got brokered SSH credentials")
+                                print(f"  Username: {username}")
+                                print(f"  Certificate present: {bool(certificate)}")
+
+                                # Write credentials to temp files
+                                # SSH requires cert file to be named {keyfile}-cert.pub
+                                with tempfile.TemporaryDirectory() as temp_dir:
+                                    key_file = os.path.join(temp_dir, 'id_ed25519')
+                                    cert_file = os.path.join(temp_dir, 'id_ed25519-cert.pub')
+
+                                    with open(key_file, 'w') as f:
+                                        f.write(private_key)
+                                    os.chmod(key_file, 0o600)
+
+                                    if certificate:
+                                        with open(cert_file, 'w') as f:
+                                            f.write(certificate)
+                                        os.chmod(cert_file, 0o644)
+
+                                    # Step 3.4: Test SSH using boundary connect -exec
+                                    print("\nStep 3.4: Testing SSH with brokered credentials...")
+
+                                    # Use boundary connect -exec with credentials
+                                    # Note: SSH auto-loads {keyfile}-cert.pub when using -i {keyfile}
+                                    ssh_cmd = [
+                                        'boundary', 'connect',
+                                        '-target-id', ssh_target_id,
+                                        '-token', f'env://BOUNDARY_TOKEN',
+                                        '-exec', 'ssh', '--',
+                                        '-i', key_file,
+                                        '-o', 'StrictHostKeyChecking=no',
+                                        '-o', 'UserKnownHostsFile=/dev/null',
+                                        '-o', 'LogLevel=ERROR',
+                                        '-l', username,
+                                        '-p', '{{boundary.port}}',
+                                        '{{boundary.ip}}',
+                                        'hostname'
+                                    ]
+
+                                    print(f"  Command: {' '.join(ssh_cmd[:8])}...")
+                                    result = subprocess.run(
+                                        ssh_cmd,
+                                        capture_output=True, text=True, timeout=60
+                                    )
+
+                                    # Check if hostname is in output (success)
+                                    output = result.stdout.strip()
+                                    # Filter out boundary proxy info
+                                    lines = [l for l in output.split('\n') if l and not l.startswith('Proxy') and not l.startswith(' ') and ':' not in l]
+                                    hostname_output = lines[-1] if lines else ''
+
+                                    if result.returncode == 0 or (hostname_output and 'sandbox' in hostname_output.lower()):
+                                        print(f"  ✅ SSH SUCCESSFUL! Host: {hostname_output}")
+                                        page.screenshot(path='/tmp/ssh-oidc-test-final-success.png')
+                                        return True
+                                    else:
+                                        print(f"  ⚠️  SSH returned: {result.returncode}")
+                                        print(f"  stdout: {result.stdout[:300] if result.stdout else 'empty'}")
+                                        print(f"  stderr: {result.stderr[:300] if result.stderr else 'empty'}")
+                            else:
+                                print("  ⚠️  No private key in brokered credentials")
+                                print(f"  Secret keys: {list(secret.keys())}")
                         else:
-                            print(f"  ⚠️  SSH output: {result.stdout}")
-                            print(f"  ⚠️  SSH stderr: {result.stderr}")
+                            print("  ⚠️  No credentials returned (check role permissions)")
+                    else:
+                        print(f"  ⚠️  Authorization failed: {auth_result.stderr[:200]}")
 
-                    except subprocess.TimeoutExpired:
-                        print("  ❌ SSH connection timed out")
-                    except FileNotFoundError:
-                        print("  ⚠️  boundary CLI not found, skipping CLI test")
-                    except Exception as e:
-                        print(f"  ⚠️  SSH test error: {e}")
+                except subprocess.TimeoutExpired:
+                    print("  ❌ Authorization timed out")
+                except Exception as e:
+                    print(f"  ⚠️  Error: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             # Step 3.3: Test SSH with extracted token via Boundary CLI
             if auth_token and not ssh_target_id:

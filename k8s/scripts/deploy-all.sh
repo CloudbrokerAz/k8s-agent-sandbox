@@ -1424,6 +1424,19 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
         BOUNDARY_OIDC_FAILED="skipped"
     fi
 
+    # Configure credential brokering for SSH (Community Edition feature)
+    # This enables external users to get brokered SSH credentials without Enterprise license
+    if [[ -z "$BOUNDARY_TARGETS_FAILED" ]] && [[ -f "$K8S_DIR/platform/boundary/scripts/configure-credential-brokering.sh" ]]; then
+        echo ""
+        echo "Configuring credential brokering for SSH..."
+        if ! "$K8S_DIR/platform/boundary/scripts/configure-credential-brokering.sh" 2>&1; then
+            echo "⚠️  Credential brokering configuration failed (non-fatal)"
+            echo "   To retry: $K8S_DIR/platform/boundary/scripts/configure-credential-brokering.sh"
+        else
+            echo "✅ Credential brokering configured"
+        fi
+    fi
+
     # Report configuration status
     if [[ -n "$BOUNDARY_TARGETS_FAILED" ]] || [[ -n "$BOUNDARY_OIDC_FAILED" ]]; then
         echo ""

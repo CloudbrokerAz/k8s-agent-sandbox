@@ -226,6 +226,20 @@ if [[ "${RUN_BROWSER_TESTS:-true}" == "true" ]]; then
     fi
 fi
 
+# SSH with OIDC + Brokered Credentials test
+if [[ "${RUN_BROWSER_TESTS:-true}" == "true" ]]; then
+    run_test_suite "SSH OIDC + Brokered Credentials" "$SCRIPT_DIR/test-ssh-oidc-browser.sh"
+    result=$?
+    TOTAL_SUITES=$((TOTAL_SUITES + 1))
+    if [[ $result -eq 0 ]]; then
+        PASSED_SUITES=$((PASSED_SUITES + 1))
+    elif [[ $result -eq 1 ]]; then
+        FAILED_SUITES=$((FAILED_SUITES + 1))
+    else
+        WARNED_SUITES=$((WARNED_SUITES + 1))
+    fi
+fi
+
 # ==========================================
 # Summary
 # ==========================================
