@@ -133,7 +133,10 @@ kms "aead" {
   key_id = "global_recovery"
 }
 EOF
-boundary database init -config=/tmp/init.hcl || echo "Database may already be initialized"
+boundary database init -config=/tmp/init.hcl \
+  -skip-scopes-creation \
+  -skip-host-resources-creation \
+  -skip-target-creation || echo "Database may already be initialized"
 ' 2>/dev/null || true
 
 # Wait for init job to complete
