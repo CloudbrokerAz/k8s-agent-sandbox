@@ -305,7 +305,7 @@ if [[ $TESTS_FAILED -eq 0 ]]; then
     echo "     ssh-keygen -t rsa -f ~/.ssh/id_rsa_vault"
     echo ""
     echo "  2. Sign it with Vault:"
-    echo "     VAULT_ADDR=https://vault.local vault write -field=signed_key \\"
+    echo "     VAULT_ADDR=https://vault.hashicorp.lab vault write -field=signed_key \\"
     echo "       ssh/sign/$VAULT_ROLE public_key=@~/.ssh/id_rsa_vault.pub > ~/.ssh/id_rsa_vault-cert.pub"
     echo ""
     echo "  3. Port-forward and SSH:"

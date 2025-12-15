@@ -21,9 +21,9 @@ data:
         echo "WARNING: KEYCLOAK_CLIENT_SECRET not set, using fallback"
         CLIENT_SECRET="boundary-client-secret-change-me"
     fi
-    BOUNDARY_URL="${BOUNDARY_URL:-https://boundary.local}"
+    BOUNDARY_URL="${BOUNDARY_URL:-https://boundary.hashicorp.lab}"
     # External URL for OIDC issuer - MUST be resolvable by external users
-    KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://keycloak.local}"
+    KEYCLOAK_EXTERNAL_URL="${KEYCLOAK_EXTERNAL_URL:-https://keycloak.hashicorp.lab}"
 
     echo "========================================="
     echo "  Keycloak Realm Initialization"
@@ -280,9 +280,9 @@ spec:
                   name: keycloak-admin
                   key: KEYCLOAK_ADMIN_PASSWORD
             - name: BOUNDARY_URL
-              value: "https://boundary.local"
+              value: "https://boundary.hashicorp.lab"
             - name: KEYCLOAK_EXTERNAL_URL
-              value: "https://keycloak.local"
+              value: "https://keycloak.hashicorp.lab"
             # Shared OIDC client secret - ensures Boundary uses the same secret as Keycloak
             # Created by deploy-all.sh before Keycloak deployment
             - name: KEYCLOAK_CLIENT_SECRET

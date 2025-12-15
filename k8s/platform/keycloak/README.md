@@ -86,17 +86,17 @@ Use these values when configuring Boundary OIDC auth method:
 
 ```bash
 # OIDC Issuer
-http://localhost:8080/realms/agent-sandbox
+https://keycloak.hashicorp.lab/realms/agent-sandbox
 
 # Client Credentials
 Client ID: boundary
 Client Secret: boundary-client-secret-change-me
 
 # OIDC Endpoints
-Authorization: http://localhost:8080/realms/agent-sandbox/protocol/openid-connect/auth
-Token: http://localhost:8080/realms/agent-sandbox/protocol/openid-connect/token
-UserInfo: http://localhost:8080/realms/agent-sandbox/protocol/openid-connect/userinfo
-JWKS: http://localhost:8080/realms/agent-sandbox/protocol/openid-connect/certs
+Authorization: https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/auth
+Token: https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token
+UserInfo: https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/userinfo
+JWKS: https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/certs
 ```
 
 ## Boundary OIDC Integration
@@ -116,11 +116,11 @@ boundary authenticate password \
 boundary auth-methods create oidc \
   -name "Keycloak SSO" \
   -description "Keycloak OIDC authentication" \
-  -issuer "http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox" \
+  -issuer "https://keycloak.hashicorp.lab/realms/agent-sandbox" \
   -client-id "boundary" \
   -client-secret "boundary-client-secret-change-me" \
   -signing-algorithm "RS256" \
-  -api-url-prefix "http://localhost:9200" \
+  -api-url-prefix "https://boundary.hashicorp.lab" \
   -max-age 0
 ```
 

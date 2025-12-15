@@ -121,7 +121,7 @@ if [[ ! -f "$TEST_SCRIPT" ]]; then
     exit 1
 fi
 
-# Use ingress directly (boundary.local and keycloak.local must resolve to ingress)
+# Use ingress directly (boundary.hashicorp.lab and keycloak.hashicorp.lab must resolve to ingress)
 # Verify /etc/hosts entries or external DNS are configured correctly
 
 echo "Verifying ingress accessibility..."
@@ -132,13 +132,13 @@ if [[ -z "$INGRESS_IP" ]]; then
 fi
 echo "  Ingress ClusterIP: $INGRESS_IP"
 
-# Test that boundary.local is configured in /etc/hosts
-if ! grep -q "boundary.local" /etc/hosts 2>/dev/null; then
-    echo -e "${YELLOW}⚠️  Warning: boundary.local not found in /etc/hosts${NC}"
-    echo "  Add to /etc/hosts: 127.0.0.1 boundary.local keycloak.local"
+# Test that boundary.hashicorp.lab is configured in /etc/hosts
+if ! grep -q "boundary.hashicorp.lab" /etc/hosts 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  Warning: boundary.hashicorp.lab not found in /etc/hosts${NC}"
+    echo "  Add to /etc/hosts: 127.0.0.1 boundary.hashicorp.lab keycloak.hashicorp.lab"
     exit 1
 fi
-echo -e "${GREEN}✓${NC} boundary.local configured in /etc/hosts"
+echo -e "${GREEN}✓${NC} boundary.hashicorp.lab configured in /etc/hosts"
 
 # Check if Boundary Ingress is deployed
 if ! kubectl get ingress boundary -n boundary &>/dev/null; then
@@ -152,8 +152,8 @@ source "$PLAYWRIGHT_VENV/bin/activate"
 # Run the test using ingress URLs (default port 443)
 export BOUNDARY_PORT=443
 export KEYCLOAK_PORT=443
-export BOUNDARY_HOST="boundary.local"
-export KEYCLOAK_HOST="keycloak.local"
+export BOUNDARY_HOST="boundary.hashicorp.lab"
+export KEYCLOAK_HOST="keycloak.hashicorp.lab"
 
 echo ""
 echo "Running browser OIDC flow test via ingress..."
@@ -183,7 +183,7 @@ else
     echo -e "${RED}RESULT: FAILED${NC}"
     echo ""
     echo "Troubleshooting:"
-    echo "  1. Ensure boundary.local and keycloak.local resolve correctly"
+    echo "  1. Ensure boundary.hashicorp.lab and keycloak.hashicorp.lab resolve correctly"
     echo "  2. Check Keycloak users are configured: ./platform/keycloak/scripts/configure-realm.sh"
     echo "  3. Check OIDC auth method: boundary auth-methods list"
     exit 1

@@ -7,8 +7,8 @@ This guide explains how to access platform services (Vault, Boundary, etc.) from
 ```
 ┌─────────────────────────────────────────────────┐
 │  Mac (localhost)                                │
-│  - /etc/hosts: *.local → 127.0.0.1              │
-│  - Browser/curl → https://*.local:443           │
+│  - /etc/hosts: *.hashicorp.lab → 127.0.0.1      │
+│  - Browser/curl → https://*.hashicorp.lab:443   │
 └────────────────┬────────────────────────────────┘
                  │
                  ▼
@@ -16,9 +16,9 @@ This guide explains how to access platform services (Vault, Boundary, etc.) from
 │  KIND Cluster                                   │
 │  - Host ports: 80→80, 443→443                   │
 │  - NGINX Ingress Controller (TLS termination)   │
-│    ├─ vault.local → vault:8200                  │
-│    ├─ boundary.local → boundary:9200            │
-│    └─ keycloak.local → keycloak:8080            │
+│    ├─ vault.hashicorp.lab → vault:8200         │
+│    ├─ boundary.hashicorp.lab → boundary:9200    │
+│    └─ keycloak.hashicorp.lab → keycloak:8080    │
 └─────────────────────────────────────────────────┘
                  │
                  ▼
@@ -108,11 +108,11 @@ sudo ./scripts/update-hosts.sh remove
 
 This adds entries like:
 ```
-127.0.0.1    vault.local
-127.0.0.1    boundary.local
-127.0.0.1    boundary-worker.local
-127.0.0.1    code-server.local
-127.0.0.1    keycloak.local
+127.0.0.1    vault.hashicorp.lab
+127.0.0.1    boundary.hashicorp.lab
+127.0.0.1    boundary-worker.hashicorp.lab
+127.0.0.1    code-server.hashicorp.lab
+127.0.0.1    keycloak.hashicorp.lab
 ```
 
 ### 4. Test Connectivity
@@ -134,13 +134,13 @@ VERBOSE=true ./test-platform-access.sh
 
 ```bash
 # UI (HTTPS with self-signed cert)
-open https://vault.local
+open https://vault.hashicorp.lab
 
 # API (use -k to skip cert verification for self-signed)
-curl -k https://vault.local/v1/sys/health
+curl -k https://vault.hashicorp.lab/v1/sys/health
 
 # Seal status
-curl -k https://vault.local/v1/sys/seal-status | jq
+curl -k https://vault.hashicorp.lab/v1/sys/seal-status | jq
 
 # Get token
 grep "Root Token" k8s/platform/vault/scripts/vault-keys.txt
@@ -150,10 +150,10 @@ grep "Root Token" k8s/platform/vault/scripts/vault-keys.txt
 
 ```bash
 # UI (HTTPS with self-signed cert)
-open https://boundary.local
+open https://boundary.hashicorp.lab
 
 # CLI
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 boundary authenticate
 ```
 
@@ -161,7 +161,7 @@ boundary authenticate
 
 ```bash
 # Admin Console (HTTPS with self-signed cert)
-open https://keycloak.local
+open https://keycloak.hashicorp.lab
 
 # Default credentials: admin / admin123!@#
 ```
@@ -170,7 +170,7 @@ open https://keycloak.local
 
 ```bash
 # UI (once ingress is created)
-open http://code-server.local
+open http://code-server.hashicorp.lab
 ```
 
 ## Troubleshooting
@@ -377,12 +377,12 @@ spec:
 4. Add hostname to `scripts/update-hosts.sh`:
 ```bash
 SERVICES=(
-    "vault.local"
-    "boundary.local"
-    "boundary-worker.local"
-    "code-server.local"
-    "keycloak.local"
-    "myservice.local"  # Add this
+    "vault.hashicorp.lab"
+    "boundary.hashicorp.lab"
+    "boundary-worker.hashicorp.lab"
+    "code-server.hashicorp.lab"
+    "keycloak.hashicorp.lab"
+    "myservice.hashicorp.lab"  # Add this
 )
 ```
 
@@ -391,7 +391,7 @@ SERVICES=(
 kubectl apply -f platform/myservice/manifests/XX-tls-secret.yaml
 kubectl apply -f platform/myservice/manifests/XX-ingress.yaml
 sudo ./scripts/update-hosts.sh add
-curl -k https://myservice.local
+curl -k https://myservice.hashicorp.lab
 ```
 
 ## CI/CD Integration

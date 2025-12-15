@@ -10,8 +10,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 # Test configuration - defaults to ingress hostnames on standard HTTPS port 443
 # For port-forward testing, set BOUNDARY_URL and KEYCLOAK_URL environment variables
-BOUNDARY_URL = os.environ.get("BOUNDARY_URL", "https://boundary.local")
-KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "https://keycloak.local")
+BOUNDARY_URL = os.environ.get("BOUNDARY_URL", "https://boundary.hashicorp.lab")
+KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "https://keycloak.hashicorp.lab")
 TEST_USER = "developer@example.com"
 TEST_PASSWORD = "Developer123"
 OIDC_AUTH_METHOD_ID = os.environ.get("OIDC_AUTH_METHOD_ID", "")  # Auto-detected if empty

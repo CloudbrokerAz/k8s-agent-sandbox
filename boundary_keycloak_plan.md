@@ -65,11 +65,11 @@ curl -X POST "http://localhost:18080/admin/realms/agent-sandbox/clients/${CLIENT
 boundary auth-methods create oidc \
   -name='keycloak' \
   -scope-id='o_Q27rf0A0wa' \
-  -issuer='http://keycloak.local/realms/agent-sandbox' \
+  -issuer='http://keycloak.hashicorp.lab/realms/agent-sandbox' \
   -client-id='boundary' \
   -client-secret='file:///tmp/client_secret.txt' \
   -signing-algorithm=RS256 \
-  -api-url-prefix='https://boundary.local' \
+  -api-url-prefix='https://boundary.hashicorp.lab' \
   -claims-scopes='profile' \
   -claims-scopes='email' \
   -claims-scopes='groups'
@@ -92,8 +92,8 @@ boundary auth-methods change-state oidc -id=<new_id> -state=active-public
 | OIDC Auth Method | `amoidc_IB7qfa5BPS` |
 | Organization | `o_Q27rf0A0wa` (DevOps) |
 | Project | `p_8R6bKLKbhT` (Agent-Sandbox) |
-| Issuer | `http://keycloak.local/realms/agent-sandbox` |
-| api_url_prefix | `https://boundary.local` |
+| Issuer | `http://keycloak.hashicorp.lab/realms/agent-sandbox` |
+| api_url_prefix | `https://boundary.hashicorp.lab` |
 | Client ID | `boundary` |
 | Client Secret HMAC | `2wggp0oNWVB3bi5BbMepFqjv8t1ugxjWBCxwA2axzHs` |
 | State | `active-public` |
@@ -126,12 +126,12 @@ From Keycloak documentation:
 - **Default**: Keycloak accepts both methods unless explicitly restricted
 
 ### Critical Insight: External Ingress Access
-When users access via external ingress (https://boundary.local):
-1. **Browser redirects to Keycloak** via external URL (https://keycloak.local)
-2. **Keycloak redirects back to Boundary** via callback URL (https://boundary.local/v1/auth-methods/oidc:authenticate:callback)
-3. **Boundary makes server-side token exchange** to Keycloak via internal URL (http://keycloak.local)
+When users access via external ingress (https://boundary.hashicorp.lab):
+1. **Browser redirects to Keycloak** via external URL (https://keycloak.hashicorp.lab)
+2. **Keycloak redirects back to Boundary** via callback URL (https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback)
+3. **Boundary makes server-side token exchange** to Keycloak via internal URL (http://keycloak.hashicorp.lab)
 
-**Important**: The `api_url_prefix` MUST match the external URL users access (https://boundary.local), but the `issuer` should use the internal URL that Boundary can reach (http://keycloak.local/realms/agent-sandbox)
+**Important**: The `api_url_prefix` MUST match the external URL users access (https://boundary.hashicorp.lab), but the `issuer` should use the internal URL that Boundary can reach (http://keycloak.hashicorp.lab/realms/agent-sandbox)
 
 ## Architecture Overview
 
@@ -145,9 +145,9 @@ When users access via external ingress (https://boundary.local):
 │  │   Browser   │ ─────────────────────────────────────────────────────────┐      │
 │  └──────┬──────┘                                                           │      │
 │         │                                                                  │      │
-│    1. HTTPS ──► https://boundary.local (Initial access)                    │      │
-│    2. HTTPS ──► https://keycloak.local/realms/agent-sandbox/auth (Redirect)│      │
-│    5. HTTPS ──► https://boundary.local/v1/.../callback (After KC login)    │      │
+│    1. HTTPS ──► https://boundary.hashicorp.lab (Initial access)            │      │
+│    2. HTTPS ──► https://keycloak.hashicorp.lab/realms/agent-sandbox/auth (Redirect)│      │
+│    5. HTTPS ──► https://boundary.hashicorp.lab/v1/.../callback (After KC login)    │      │
 │                                                                            │      │
 └────────┼───────────────────────────────────────────────────────────────────┼──────┘
          │                                                                   │
@@ -157,7 +157,7 @@ When users access via external ingress (https://boundary.local):
 │                                                                                     │
 │  ┌─────────────────────┐                    ┌─────────────────────────┐            │
 │  │   Boundary Ingress  │                    │   Keycloak Ingress      │            │
-│  │ (boundary.local:443)│                    │ (keycloak.local:443)    │            │
+│  │ (boundary.hashicorp.lab:443)│            │ (keycloak.hashicorp.lab:443)    │            │
 │  └──────────┬──────────┘                    └───────────┬─────────────┘            │
 │             │                                           │                          │
 │             ▼                                           ▼                          │
@@ -167,14 +167,14 @@ When users access via external ingress (https://boundary.local):
 │  │                          │ Internal   │                                  │      │
 │  │ - OIDC Auth Method       │  :8080     │ - agent-sandbox realm           │      │
 │  │ - api_url_prefix:        │            │ - boundary client               │      │
-│  │   https://boundary.local │   Step 6:  │ - clientAuthenticatorType:      │      │
+│  │   https://boundary.hashicorp.lab │   Step 6:  │ - clientAuthenticatorType:      │      │
 │  │ - issuer:                │  Token     │   client-secret                 │      │
-│  │   http://keycloak.local  │  Exchange  │ - groups scope & mapper         │      │
+│  │   http://keycloak.hashicorp.lab  │  Exchange  │ - groups scope & mapper         │      │
 │  │   /realms/agent-sandbox  │            │                                  │      │
 │  └──────────────────────────┘            └─────────────────────────────────┘      │
 │             │                                                                      │
 │             │ hostAliases:                                                         │
-│             │   keycloak.local -> keycloak.keycloak.svc:8080                       │
+│             │   keycloak.hashicorp.lab -> keycloak.keycloak.svc:8080               │
 │             │                                                                      │
 │  ┌──────────▼──────────────┐                                                       │
 │  │   Boundary Worker       │                                                       │
@@ -187,40 +187,40 @@ When users access via external ingress (https://boundary.local):
 
 | Component | External URL (Browser) | Internal URL (Pod-to-Pod) |
 |-----------|------------------------|---------------------------|
-| Boundary API | https://boundary.local | http://127.0.0.1:9200 |
-| Keycloak | https://keycloak.local | http://keycloak.local:8080 |
-| OIDC Discovery | https://keycloak.local/realms/agent-sandbox/.well-known/openid-configuration | http://keycloak.local/realms/agent-sandbox/.well-known/openid-configuration |
-| Callback URL | https://boundary.local/v1/auth-methods/oidc:authenticate:callback | N/A (browser redirect) |
+| Boundary API | https://boundary.hashicorp.lab | http://127.0.0.1:9200 |
+| Keycloak | https://keycloak.hashicorp.lab | http://keycloak.hashicorp.lab:8080 |
+| OIDC Discovery | https://keycloak.hashicorp.lab/realms/agent-sandbox/.well-known/openid-configuration | http://keycloak.hashicorp.lab/realms/agent-sandbox/.well-known/openid-configuration |
+| Callback URL | https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback | N/A (browser redirect) |
 
 **Critical Configuration Points**:
-1. `api_url_prefix` = `https://boundary.local` (external - for browser redirects)
-2. `issuer` = `http://keycloak.local/realms/agent-sandbox` (internal - for token exchange)
+1. `api_url_prefix` = `https://boundary.hashicorp.lab` (external - for browser redirects)
+2. `issuer` = `http://keycloak.hashicorp.lab/realms/agent-sandbox` (internal - for token exchange)
 3. Keycloak must advertise the issuer that Boundary will use internally
-4. Boundary needs `hostAliases` to resolve `keycloak.local` to the internal service
+4. Boundary needs `hostAliases` to resolve `keycloak.hashicorp.lab` to the internal service
 
 ## OIDC Authentication Flow
 
 ```
-1. User visits https://boundary.local
+1. User visits https://boundary.hashicorp.lab
    │
 2. User clicks "Sign in with Keycloak"
    │
 3. Boundary redirects to Keycloak:
-   │  GET https://keycloak.local/realms/agent-sandbox/protocol/openid-connect/auth
+   │  GET https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/auth
    │      ?client_id=boundary
-   │      &redirect_uri=https://boundary.local/v1/auth-methods/oidc:authenticate:callback
+   │      &redirect_uri=https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback
    │      &response_type=code
    │      &scope=openid+profile+email+groups
    │
 4. User authenticates with Keycloak credentials
    │
 5. Keycloak redirects back to Boundary with authorization code:
-   │  GET https://boundary.local/v1/auth-methods/oidc:authenticate:callback
+   │  GET https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback
    │      ?code=<authorization_code>
    │      &state=<state>
    │
 6. Boundary exchanges code for tokens: ◄─── THIS IS WHERE IT FAILS
-   │  POST http://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token
+   │  POST http://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token
    │      client_id=boundary
    │      client_secret=<MUST MATCH KEYCLOAK>
    │      grant_type=authorization_code
@@ -299,11 +299,11 @@ kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- /bin/ash -c "
     -name='keycloak' \
     -description='Keycloak OIDC Authentication' \
     -scope-id='o_Q27rf0A0wa' \
-    -issuer='http://keycloak.local/realms/agent-sandbox' \
+    -issuer='http://keycloak.hashicorp.lab/realms/agent-sandbox' \
     -client-id='boundary' \
     -client-secret='file:///tmp/client_secret.txt' \
     -signing-algorithm=RS256 \
-    -api-url-prefix='https://boundary.local' \
+    -api-url-prefix='https://boundary.hashicorp.lab' \
     -format=json
   rm -f /tmp/client_secret.txt
 "
@@ -336,10 +336,10 @@ kubectl get pods -n keycloak -l app=keycloak
 kubectl get svc -n keycloak keycloak-http
 
 # Test OIDC discovery endpoint
-curl -sk https://keycloak.local/realms/agent-sandbox/.well-known/openid-configuration | jq '.issuer'
+curl -sk https://keycloak.hashicorp.lab/realms/agent-sandbox/.well-known/openid-configuration | jq '.issuer'
 ```
 
-**Expected**: Keycloak running, service exists, issuer is `https://keycloak.local/realms/agent-sandbox`
+**Expected**: Keycloak running, service exists, issuer is `https://keycloak.hashicorp.lab/realms/agent-sandbox`
 
 #### Task 1.2: Verify Boundary Deployment
 ```bash
@@ -347,20 +347,20 @@ curl -sk https://keycloak.local/realms/agent-sandbox/.well-known/openid-configur
 kubectl get pods -n boundary -l app=boundary-controller
 
 # Verify ingress is working
-curl -sk https://boundary.local/v1/auth-methods -H "Content-Type: application/json"
+curl -sk https://boundary.hashicorp.lab/v1/auth-methods -H "Content-Type: application/json"
 
-# Verify hostAliases for keycloak.local resolution
+# Verify hostAliases for keycloak.hashicorp.lab resolution
 kubectl get deployment boundary-controller -n boundary -o jsonpath='{.spec.template.spec.hostAliases}'
 ```
 
-**Expected**: Controller running, API responds, hostAliases configured for keycloak.local
+**Expected**: Controller running, API responds, hostAliases configured for keycloak.hashicorp.lab
 
 ### Phase 2: Keycloak Configuration
 
 #### Task 2.1: Verify/Create agent-sandbox Realm
 ```bash
 # Via Keycloak Admin API
-curl -sk -X GET "https://keycloak.local/admin/realms/agent-sandbox" \
+curl -sk -X GET "https://keycloak.hashicorp.lab/admin/realms/agent-sandbox" \
   -H "Authorization: Bearer $KC_TOKEN" | jq '.realm'
 ```
 
@@ -379,7 +379,7 @@ If not exists, run: `./k8s/platform/keycloak/scripts/configure-realm.sh`
 | serviceAccountsEnabled | false | Not needed for user auth |
 
 **Required Redirect URIs**:
-- `https://boundary.local/v1/auth-methods/oidc:authenticate:callback`
+- `https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback`
 - `http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback`
 - `http://boundary-controller-api.boundary.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback`
 
@@ -389,11 +389,11 @@ If not exists, run: `./k8s/platform/keycloak/scripts/configure-realm.sh`
 
 ```bash
 # Check groups scope exists
-curl -sk "https://keycloak.local/admin/realms/agent-sandbox/client-scopes" \
+curl -sk "https://keycloak.hashicorp.lab/admin/realms/agent-sandbox/client-scopes" \
   -H "Authorization: Bearer $KC_TOKEN" | jq '.[] | select(.name=="groups")'
 
 # Check mapper configuration
-curl -sk "https://keycloak.local/admin/realms/agent-sandbox/client-scopes/$(SCOPE_ID)/protocol-mappers/models" \
+curl -sk "https://keycloak.hashicorp.lab/admin/realms/agent-sandbox/client-scopes/$(SCOPE_ID)/protocol-mappers/models" \
   -H "Authorization: Bearer $KC_TOKEN" | jq '.'
 ```
 
@@ -495,11 +495,11 @@ kubectl exec -n $BOUNDARY_NS $CONTROLLER_POD -c boundary-controller -- /bin/ash 
 |---------|-------|
 | name | keycloak |
 | scope_id | DevOps org ID |
-| issuer | `http://keycloak.local/realms/agent-sandbox` |
+| issuer | `http://keycloak.hashicorp.lab/realms/agent-sandbox` |
 | client_id | boundary |
 | client_secret | (from Keycloak) |
 | signing_algorithm | RS256 |
-| api_url_prefix | `https://boundary.local` |
+| api_url_prefix | `https://boundary.hashicorp.lab` |
 | claims_scopes | profile, email, groups |
 | state | active-public |
 
@@ -533,7 +533,7 @@ kubectl exec -n $BOUNDARY_NS $CONTROLLER_POD -c boundary-controller -- /bin/ash 
 kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- /bin/ash -c "
   # Test introspection endpoint (should return {active:false} for fake token, NOT invalid_client_credentials)
   wget -q -O - --post-data='client_id=boundary&client_secret=$CLIENT_SECRET&token=fake' \
-    'http://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token/introspect'
+    'http://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token/introspect'
 "
 ```
 
@@ -545,8 +545,8 @@ kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- /bin/ash -c "
 ```bash
 # Test token endpoint with fake code (should fail with invalid_code, NOT invalid_client_credentials)
 kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- /bin/ash -c "
-  wget -q -O - --post-data='client_id=boundary&client_secret=$CLIENT_SECRET&grant_type=authorization_code&code=fake&redirect_uri=https://boundary.local/v1/auth-methods/oidc:authenticate:callback' \
-    'http://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token'
+  wget -q -O - --post-data='client_id=boundary&client_secret=$CLIENT_SECRET&grant_type=authorization_code&code=fake&redirect_uri=https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback' \
+    'http://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token'
 "
 ```
 
@@ -560,7 +560,7 @@ kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- /bin/ash -c "
 kubectl logs -f -n keycloak deployment/keycloak &
 
 # Attempt OIDC login
-open https://boundary.local
+open https://boundary.hashicorp.lab
 # Click "Sign in with Keycloak"
 # Login as: developer / Dev123!@#
 ```
@@ -642,7 +642,7 @@ Create a new script `sync-oidc-secrets.sh` that:
    # Test from Boundary pod
    kubectl exec -n boundary <pod> -c boundary-controller -- wget -q -O - \
      --post-data="client_id=boundary&client_secret=$SECRET&token=fake" \
-     'http://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token/introspect'
+     'http://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token/introspect'
    ```
    - If returns `{"active":false}` → Manual test passes (proves network + credentials work)
    - If returns error → Network or credential issue
@@ -681,7 +681,7 @@ kubectl rollout restart deployment/boundary-controller -n boundary
 1. Create groups client scope with oidc-group-membership-mapper
 2. Assign scope to boundary client as optional scope
 
-### Error: Connection timeout to keycloak.local
+### Error: Connection timeout to keycloak.hashicorp.lab
 
 **Cause**: Boundary cannot reach Keycloak internally
 
@@ -694,7 +694,7 @@ kubectl rollout restart deployment/boundary-controller -n boundary
 
 **Cause**: Issuer URL mismatch between Boundary config and Keycloak's advertised issuer
 
-**Fix**: Ensure Boundary uses `http://keycloak.local/realms/agent-sandbox` (HTTP, not HTTPS)
+**Fix**: Ensure Boundary uses `http://keycloak.hashicorp.lab/realms/agent-sandbox` (HTTP, not HTTPS)
 
 ## Files Modified in This Plan
 
@@ -787,13 +787,13 @@ kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- boundary auth
 SECRET="<current_keycloak_secret>"
 kubectl exec -n boundary $CONTROLLER_POD -c boundary-controller -- wget -q -O - \
   --post-data="client_id=boundary&client_secret=$SECRET&token=fake" \
-  'http://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token/introspect'
+  'http://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token/introspect'
 
 # 3. Monitor Keycloak logs during test
 kubectl logs -f -n keycloak deployment/keycloak --tail=5 | grep -E "CODE_TO_TOKEN|client_auth"
 
 # 4. Browser test
-open https://boundary.local  # Click "Sign in with Keycloak"
+open https://boundary.hashicorp.lab  # Click "Sign in with Keycloak"
 ```
 
 **Total Estimated Effort**: ~1 hour (recommended path) or ~2.5 hours (full path)

@@ -32,12 +32,12 @@ User Login Flow:
 
 ```bash
 # Boundary configuration
-export BOUNDARY_ADDR=http://localhost:9200
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_ADMIN_USER=admin
 export BOUNDARY_ADMIN_PASSWORD=password
 
 # Keycloak configuration (from configure-realm.sh output)
-export KEYCLOAK_URL=http://localhost:8080
+export KEYCLOAK_URL=https://keycloak.hashicorp.lab
 export KEYCLOAK_REALM=agent-sandbox
 export KEYCLOAK_CLIENT_ID=boundary
 export KEYCLOAK_CLIENT_SECRET=boundary-client-secret-change-me
@@ -64,11 +64,11 @@ boundary auth-methods create oidc \
   -scope-id $SCOPE_ID \
   -name "keycloak-oidc" \
   -description "Keycloak OIDC authentication for Agent Sandbox Platform" \
-  -issuer "${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}" \
+  -issuer "https://keycloak.hashicorp.lab/realms/${KEYCLOAK_REALM}" \
   -client-id "${KEYCLOAK_CLIENT_ID}" \
   -client-secret env://KEYCLOAK_CLIENT_SECRET \
   -signing-algorithm "RS256" \
-  -api-url-prefix "${BOUNDARY_ADDR}" \
+  -api-url-prefix "https://boundary.hashicorp.lab" \
   -max-age 0 \
   -format json | tee oidc-auth-method.json
 
@@ -273,7 +273,7 @@ If Boundary is behind a proxy or load balancer:
 # In Keycloak Admin Console:
 # Clients → boundary → Settings
 # Add to Valid Redirect URIs:
-# - https://boundary.example.com/v1/auth-methods/oidc:authenticate:callback
+# - https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback
 # - http://localhost:9200/v1/auth-methods/oidc:authenticate:callback
 ```
 
@@ -319,14 +319,14 @@ boundary managed-groups update oidc \
 
 **Solution:**
 ```bash
-# If Boundary is in Kubernetes, use cluster DNS
-# Update issuer to use service name:
+# If Boundary is in Kubernetes, use ingress
+# Update issuer to use external URL:
 boundary auth-methods update oidc \
   -id $AUTH_METHOD_ID \
-  -issuer "http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox"
+  -issuer "https://keycloak.hashicorp.lab/realms/agent-sandbox"
 
 # Verify connectivity from Boundary pod
-kubectl exec -n boundary <boundary-pod> -- curl http://keycloak.keycloak.svc.cluster.local:8080/health
+kubectl exec -n boundary <boundary-pod> -- curl -k https://keycloak.hashicorp.lab/health
 ```
 
 ## Security Best Practices
@@ -338,7 +338,7 @@ kubectl exec -n boundary <boundary-pod> -- curl http://keycloak.keycloak.svc.clu
 # Update issuer to use https://
 boundary auth-methods update oidc \
   -id $AUTH_METHOD_ID \
-  -issuer "https://keycloak.example.com/realms/agent-sandbox"
+  -issuer "https://keycloak.hashicorp.lab/realms/agent-sandbox"
 ```
 
 ### 2. Rotate Client Secrets

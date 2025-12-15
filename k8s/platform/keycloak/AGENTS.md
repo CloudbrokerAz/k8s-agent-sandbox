@@ -13,14 +13,14 @@ Keycloak is deployed as the Identity Provider (IdP) for OIDC authentication with
 
 ### HTTPS Issuer URL (KC_HOSTNAME_URL)
 
-**CRITICAL**: Keycloak must be configured with `KC_HOSTNAME_URL=https://keycloak.local` (NOT `KC_HOSTNAME`) when running behind an ingress with TLS termination.
+**CRITICAL**: Keycloak must be configured with `KC_HOSTNAME_URL=https://keycloak.hashicorp.lab` (NOT `KC_HOSTNAME`) when running behind an ingress with TLS termination.
 
 This ensures Keycloak advertises HTTPS URLs in its OIDC discovery document:
-- Authorization endpoint: `https://keycloak.local/realms/agent-sandbox/protocol/openid-connect/auth`
-- Token endpoint: `https://keycloak.local/realms/agent-sandbox/protocol/openid-connect/token`
-- Issuer: `https://keycloak.local/realms/agent-sandbox`
+- Authorization endpoint: `https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/auth`
+- Token endpoint: `https://keycloak.hashicorp.lab/realms/agent-sandbox/protocol/openid-connect/token`
+- Issuer: `https://keycloak.hashicorp.lab/realms/agent-sandbox`
 
-**Common Issue**: Using `KC_HOSTNAME=keycloak.local` (without `_URL`) causes Keycloak to advertise `http://` URLs, which breaks browser-based OIDC flows where users access via `https://boundary.local`.
+**Common Issue**: Using `KC_HOSTNAME=keycloak.hashicorp.lab` (without `_URL`) causes Keycloak to advertise `http://` URLs, which breaks browser-based OIDC flows where users access via `https://boundary.hashicorp.lab`.
 
 **Important**: Do NOT set both `KC_HOSTNAME` and `KC_HOSTNAME_URL` - Keycloak will fail to start with error: `You can not set both 'hostname' and 'hostname-url' options`.
 
@@ -33,10 +33,10 @@ The Boundary OIDC client must have multiple redirect URIs configured for differe
 | Access Method | Redirect URI |
 |--------------|--------------|
 | Internal (cluster) | `http://boundary-controller-api.boundary.svc.cluster.local:9200/v1/auth-methods/oidc:authenticate:callback` |
-| External (ingress) | `https://boundary.local/v1/auth-methods/oidc:authenticate:callback` |
+| External (ingress) | `https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback` |
 | Port-forward | `http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback` |
 
-**Common Issue**: If only the internal URI is configured, users accessing via `https://boundary.local` will get `Invalid parameter: redirect_uri` error.
+**Common Issue**: If only the internal URI is configured, users accessing via `https://boundary.hashicorp.lab` will get `Invalid parameter: redirect_uri` error.
 
 ### Groups Client Scope
 
@@ -52,7 +52,7 @@ The `configure-realm.sh` script creates this automatically (step 6).
 
 ### Port Mapping (keycloak-http Service)
 
-Keycloak advertises its OIDC issuer URL without a port (e.g., `http://keycloak.local/realms/agent-sandbox`), but the Keycloak pod listens on port 8080.
+Keycloak advertises its OIDC issuer URL without a port (e.g., `http://keycloak.hashicorp.lab/realms/agent-sandbox`), but the Keycloak pod listens on port 8080.
 
 The `deploy-all.sh` script creates a `keycloak-http` service that maps port 80 to 8080:
 
@@ -70,7 +70,7 @@ spec:
       targetPort: 8080
 ```
 
-**Common Issue**: Without this service, OIDC token exchange fails with connection timeout to `keycloak.local:80`.
+**Common Issue**: Without this service, OIDC token exchange fails with connection timeout to `keycloak.hashicorp.lab:80`.
 
 ### Client Secret Synchronization
 
@@ -112,7 +112,7 @@ Created by `configure-realm.sh`:
    - Re-run `configure-oidc-auth.sh` to sync the client secret
    - Or manually update Boundary's auth method with the correct secret
 
-4. **Connection timeout to keycloak.local**
+4. **Connection timeout to keycloak.hashicorp.lab**
    - Ensure `keycloak-http` service exists
    - Verify Boundary controller has correct `hostAliases`
 
@@ -120,7 +120,7 @@ Created by `configure-realm.sh`:
 
 ```bash
 # Get admin token (URL-encode special characters in password)
-TOKEN=$(curl -s -X POST 'https://keycloak.local/realms/master/protocol/openid-connect/token' \
+TOKEN=$(curl -s -X POST 'https://keycloak.hashicorp.lab/realms/master/protocol/openid-connect/token' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -d 'username=admin' \
   -d 'password=admin123%21%40%23' \
@@ -129,10 +129,10 @@ TOKEN=$(curl -s -X POST 'https://keycloak.local/realms/master/protocol/openid-co
   --insecure | jq -r '.access_token')
 
 # List client scopes
-curl -s 'https://keycloak.local/admin/realms/agent-sandbox/client-scopes' \
+curl -s 'https://keycloak.hashicorp.lab/admin/realms/agent-sandbox/client-scopes' \
   -H "Authorization: Bearer $TOKEN" --insecure | jq '.[].name'
 
 # Get boundary client config
-curl -s 'https://keycloak.local/admin/realms/agent-sandbox/clients?clientId=boundary' \
+curl -s 'https://keycloak.hashicorp.lab/admin/realms/agent-sandbox/clients?clientId=boundary' \
   -H "Authorization: Bearer $TOKEN" --insecure | jq '.[0] | {redirectUris, webOrigins}'
 ```

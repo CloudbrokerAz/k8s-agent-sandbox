@@ -13,8 +13,8 @@ import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 # Test configuration
-BOUNDARY_URL = os.environ.get("BOUNDARY_URL", "https://boundary.local")
-KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "https://keycloak.local")
+BOUNDARY_URL = os.environ.get("BOUNDARY_URL", "https://boundary.hashicorp.lab")
+KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "https://keycloak.hashicorp.lab")
 TEST_USER = os.environ.get("TEST_USER", "developer@example.com")
 TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "Developer123")
 TARGET_SCOPE = "DevOps"

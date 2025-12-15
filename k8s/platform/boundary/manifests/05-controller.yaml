@@ -15,14 +15,14 @@ spec:
       labels:
         app: boundary-controller
     spec:
-      # OIDC requires Boundary controller to resolve keycloak.local and boundary.local
+      # OIDC requires Boundary controller to resolve keycloak.hashicorp.lab and boundary.hashicorp.lab
       # The ingress IP is dynamically set by deploy-boundary.sh using envsubst
       # Placeholder ${INGRESS_NGINX_IP} is replaced at deployment time with actual ingress ClusterIP
       hostAliases:
         - ip: "${INGRESS_NGINX_IP}"
           hostnames:
-            - "keycloak.local"
-            - "boundary.local"
+            - "keycloak.hashicorp.lab"
+            - "boundary.hashicorp.lab"
       securityContext:
         runAsNonRoot: false
         runAsUser: 0

@@ -74,10 +74,10 @@ boundary
 boundary-client-secret-change-me
 
 # Issuer URL (from within cluster)
-http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox
+https://keycloak.hashicorp.lab/realms/agent-sandbox
 
-# Issuer URL (from localhost)
-http://localhost:8080/realms/agent-sandbox
+# Issuer URL (from external)
+https://keycloak.hashicorp.lab/realms/agent-sandbox
 ```
 
 ### Create OIDC Auth Method
@@ -85,10 +85,10 @@ http://localhost:8080/realms/agent-sandbox
 ```bash
 boundary auth-methods create oidc \
   -name "Keycloak SSO" \
-  -issuer "http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox" \
+  -issuer "https://keycloak.hashicorp.lab/realms/agent-sandbox" \
   -client-id "boundary" \
   -client-secret "boundary-client-secret-change-me" \
-  -api-url-prefix "http://localhost:9200"
+  -api-url-prefix "https://boundary.hashicorp.lab"
 ```
 
 ## Verify Installation

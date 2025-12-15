@@ -10,8 +10,8 @@
 │  │                         Nginx Ingress Controller                            │ │
 │  │                         (ingress-nginx namespace)                           │ │
 │  │                                                                            │ │
-│  │  vault.local ────────► :8200    boundary.local ────────► :9200            │ │
-│  │  keycloak.local ─────► :8080    boundary-worker.local ──► :9202           │ │
+│  │  vault.hashicorp.lab ────────► :8200    boundary.hashicorp.lab ────────► :9200            │ │
+│  │  keycloak.hashicorp.lab ─────► :8080    boundary-worker.hashicorp.lab ──► :9202           │ │
 │  │                                                                            │ │
 │  └────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                  │
@@ -278,10 +278,10 @@ User → Port Forward → API Server → Pod Port
 User → Ingress → Nginx Ingress Controller → Service → Pod
 
 Ingress URLs (with /etc/hosts entries):
-  - https://vault.local → Vault API (:8200)
-  - https://boundary.local → Boundary Controller API (:9200)
-  - https://boundary-worker.local → Boundary Worker Proxy (:9202)
-  - https://keycloak.local → Keycloak (:8080)
+  - https://vault.hashicorp.lab → Vault API (:8200)
+  - https://boundary.hashicorp.lab → Boundary Controller API (:9200)
+  - https://boundary-worker.hashicorp.lab → Boundary Worker Proxy (:9202)
+  - https://keycloak.hashicorp.lab → Keycloak (:8080)
 ```
 
 ### Security Layers

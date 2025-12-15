@@ -61,9 +61,9 @@ spec:
         # KC_HOSTNAME_URL (not KC_HOSTNAME) required to advertise HTTPS URLs
         # when Keycloak runs behind an ingress with TLS termination
         - name: KC_HOSTNAME_URL
-          value: "https://keycloak.local"
+          value: "https://keycloak.hashicorp.lab"
         - name: KC_HOSTNAME_ADMIN_URL
-          value: "https://keycloak.local"
+          value: "https://keycloak.hashicorp.lab"
         - name: KC_HOSTNAME_STRICT
           value: "true"
         - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC

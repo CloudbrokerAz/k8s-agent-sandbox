@@ -2,7 +2,7 @@
 # Source this file: source /Users/simon.lynch/git/k8s-agent-sandbox/k8s/platform/boundary/scripts/boundary-env.sh
 
 # Boundary controller address
-export BOUNDARY_ADDR="https://boundary.local"
+export BOUNDARY_ADDR="https://boundary.hashicorp.lab"
 
 # Skip TLS verification (for self-signed certs)
 export BOUNDARY_TLS_INSECURE=true

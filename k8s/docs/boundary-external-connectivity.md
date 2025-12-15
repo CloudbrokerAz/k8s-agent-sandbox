@@ -8,13 +8,13 @@ This document explains how external clients (Boundary CLI on your laptop) connec
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          External Client (Laptop)                            │
 │                                                                              │
-│  /etc/hosts: 127.0.0.1 boundary.local boundary-worker.local                 │
-│  BOUNDARY_ADDR=https://boundary.local                                        │
+│  /etc/hosts: 127.0.0.1 boundary.hashicorp.lab boundary-worker.hashicorp.lab │
+│  BOUNDARY_ADDR=https://boundary.hashicorp.lab                               │
 │  BOUNDARY_TLS_INSECURE=true                                                  │
 └──────────────────────────┬──────────────────────────┬────────────────────────┘
                            │                          │
                     (1) API/Auth               (4) SSH Session Proxy
-                  HTTPS to boundary.local   HTTPS to boundary-worker.local
+                  HTTPS to boundary.hashicorp.lab   HTTPS to boundary-worker.hashicorp.lab
                            │                          │
                            ▼                          ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -22,7 +22,7 @@ This document explains how external clients (Boundary CLI on your laptop) connec
 │                                                                              │
 │  ┌──────────────────────────────────┐   ┌──────────────────────────────────┐│
 │  │  Controller Ingress              │   │  Worker Ingress                  ││
-│  │  Host: boundary.local            │   │  Host: boundary-worker.local     ││
+│  │  Host: boundary.hashicorp.lab    │   │  Host: boundary-worker.hashicorp.lab ││
 │  │  TLS: Termination at Ingress     │   │  TLS: SSL Passthrough            ││
 │  │  Backend: HTTP to :9200          │   │  Backend: TLS to :9202           ││
 │  └──────────────┬───────────────────┘   └───────────────┬──────────────────┘│
@@ -38,7 +38,7 @@ This document explains how external clients (Boundary CLI on your laptop) connec
 │  │  Boundary Controller             │   │  Boundary Worker                 ││
 │  │  - API Listener: 9200 (HTTP)     │◄──┤  - Proxy Listener: 9202 (TLS)    ││
 │  │  - Cluster Listener: 9201        │   │  - public_addr: boundary-worker  ││
-│  │  - OIDC Auth via Keycloak        │   │    .local:443                    ││
+│  │  - OIDC Auth via Keycloak        │   │    .hashicorp.lab:443            ││
 │  │  - Returns worker address        │   │  - Multiplexed protocol          ││
 │  └──────────────────────────────────┘   └────────────┬─────────────────────┘│
 └──────────────────────────────────────────────────────┼───────────────────────┘
@@ -56,15 +56,15 @@ This document explains how external clients (Boundary CLI on your laptop) connec
 
 ## Connection Flow
 
-### Step 1: Client Authenticates (via boundary.local)
+### Step 1: Client Authenticates (via boundary.hashicorp.lab)
 
 ```bash
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 boundary authenticate oidc -auth-method-id <auth-method-id>
 ```
 
-**Flow:** Client → `boundary.local` → NGINX (TLS termination) → Controller API → Keycloak OIDC → Token returned
+**Flow:** Client → `boundary.hashicorp.lab` → NGINX (TLS termination) → Controller API → Keycloak OIDC → Token returned
 
 ### Step 2: Client Requests SSH Session
 
@@ -72,13 +72,13 @@ boundary authenticate oidc -auth-method-id <auth-method-id>
 boundary connect ssh -target-id tssh_xxxxxxxxxx
 ```
 
-**Flow:** Client → Controller API → Authorization check → Returns worker address: `boundary-worker.local:443`
+**Flow:** Client → Controller API → Authorization check → Returns worker address: `boundary-worker.hashicorp.lab:443`
 
-### Step 3: Client Connects to Worker (via boundary-worker.local)
+### Step 3: Client Connects to Worker (via boundary-worker.hashicorp.lab)
 
 **Flow:**
-- Client resolves `boundary-worker.local` → `127.0.0.1` (via /etc/hosts)
-- Client initiates TLS to `boundary-worker.local:443`
+- Client resolves `boundary-worker.hashicorp.lab` → `127.0.0.1` (via /etc/hosts)
+- Client initiates TLS to `boundary-worker.hashicorp.lab:443`
 - NGINX forwards encrypted stream (SSL passthrough - no termination)
 - Worker terminates TLS using its certificate
 - Boundary's multiplexed protocol runs over TLS
@@ -124,15 +124,15 @@ Both certificates must have Subject Alternative Names (SANs) to avoid:
 x509: certificate relies on legacy Common Name field, use SANs instead
 ```
 
-**Controller cert SANs:** `DNS:boundary.local,DNS:localhost,IP:127.0.0.1`
-**Worker cert SANs:** `DNS:boundary-worker.local,DNS:localhost,IP:127.0.0.1`
+**Controller cert SANs:** `DNS:boundary.hashicorp.lab,DNS:localhost,IP:127.0.0.1`
+**Worker cert SANs:** `DNS:boundary-worker.hashicorp.lab,DNS:localhost,IP:127.0.0.1`
 
 Regenerate with:
 ```bash
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout boundary.key -out boundary.crt \
-  -subj "/CN=boundary.local" \
-  -addext "subjectAltName=DNS:boundary.local,DNS:localhost,IP:127.0.0.1"
+  -subj "/CN=boundary.hashicorp.lab" \
+  -addext "subjectAltName=DNS:boundary.hashicorp.lab,DNS:localhost,IP:127.0.0.1"
 ```
 
 ## Client Setup
@@ -140,13 +140,13 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 ### 1. Configure /etc/hosts
 
 ```bash
-sudo sh -c 'echo "127.0.0.1 boundary.local boundary-worker.local" >> /etc/hosts'
+sudo sh -c 'echo "127.0.0.1 boundary.hashicorp.lab boundary-worker.hashicorp.lab" >> /etc/hosts'
 ```
 
 ### 2. Set Environment
 
 ```bash
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true  # For self-signed certs
 ```
 
@@ -189,11 +189,11 @@ boundary connect ssh -target-id ttcp_xxxxxxxxxx -- -l node
 
 ## Troubleshooting
 
-### Cannot resolve boundary.local
+### Cannot resolve boundary.hashicorp.lab
 
 ```bash
 grep boundary /etc/hosts
-# Add if missing: 127.0.0.1 boundary.local boundary-worker.local
+# Add if missing: 127.0.0.1 boundary.hashicorp.lab boundary-worker.hashicorp.lab
 ```
 
 ### TLS certificate verification failed
@@ -220,14 +220,14 @@ kubectl get pods -n boundary -l app=boundary-worker
 kubectl logs -n boundary -l app=boundary-worker
 
 # Verify worker public_addr matches ingress
-# Should be: boundary-worker.local:443
+# Should be: boundary-worker.hashicorp.lab:443
 ```
 
 ## Environment Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `BOUNDARY_ADDR` | Controller API URL | `https://boundary.local` |
+| `BOUNDARY_ADDR` | Controller API URL | `https://boundary.hashicorp.lab` |
 | `BOUNDARY_TLS_INSECURE` | Skip TLS verify | `true` |
 | `BOUNDARY_CACERT` | CA cert path | `/path/to/ca.crt` |
 | `BOUNDARY_TOKEN` | Auth token | Set by authenticate |

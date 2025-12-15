@@ -79,7 +79,7 @@
       "Bash(kubectl run:*)",
       "WebFetch(domain:developer.hashicorp.com)",
       "Bash(grep:*)",
-      "Bash(export BOUNDARY_ADDR=https://boundary.local)",
+      "Bash(export BOUNDARY_ADDR=https://boundary.hashicorp.lab)",
       "Bash(boundary scopes list:*)",
       "Bash(boundary targets list:*)",
       "Bash(export BOUNDARY_TLS_INSECURE=true)",
@@ -101,7 +101,17 @@
       "WebFetch(domain:discuss.hashicorp.com)",
       "WebSearch",
       "Bash(bash run-all-tests.sh:*)",
-      "Bash(timeout 300 bash:*)"
+      "Bash(timeout 300 bash:*)",
+      "Bash(export BOUNDARY_PASS='DevAdmin123!')",
+      "Bash(BOUNDARY_ADDR=https://boundary.hashicorp.lab BOUNDARY_TLS_INSECURE=true boundary connect ssh:*)",
+      "Bash(BOUNDARY_ADDR=https://boundary.hashicorp.lab BOUNDARY_TLS_INSECURE=true boundary connect:*)",
+      "Bash(bash -x:*)",
+      "Bash(bash:*)",
+      "Bash(pkill:*)",
+      "Bash(./k8s/platform/boundary/scripts/configure-credential-brokering.sh:*)",
+      "Bash(kubectl top:*)",
+      "Bash(time curl:*)",
+      "Bash(./k8s/scripts/deploy-all.sh:*)"
     ],
     "deny": [
       "Write(.gitignore)",

@@ -155,10 +155,10 @@ All early returns now properly clean up the port-forward and reset the trap.
 
 | Component | External URL | Internal Service | Status |
 |-----------|--------------|------------------|--------|
-| Boundary API | `https://boundary.local` | `boundary-controller-api:9200` | Aligned |
-| Boundary Worker | `https://boundary-worker.local:443` | `boundary-worker:9202` | Aligned |
-| Keycloak | `https://keycloak.local` | `keycloak:8080` | Aligned |
-| OIDC Issuer | `https://keycloak.local/realms/agent-sandbox` | N/A | Aligned |
+| Boundary API | `https://boundary.hashicorp.lab` | `boundary-controller-api:9200` | Aligned |
+| Boundary Worker | `https://boundary-worker.hashicorp.lab:443` | `boundary-worker:9202` | Aligned |
+| Keycloak | `https://keycloak.hashicorp.lab` | `keycloak:8080` | Aligned |
+| OIDC Issuer | `https://keycloak.hashicorp.lab/realms/agent-sandbox` | N/A | Aligned |
 | Callback URLs | Multiple (ingress + localhost) | N/A | Fixed |
 | Group Filters | `/token/groups` | N/A | Standardized |
 
@@ -191,7 +191,7 @@ export BOUNDARY_ADDR=http://127.0.0.1:9200
 boundary authenticate oidc -auth-method-id=amoidc_xxx
 
 # Via ingress
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 boundary authenticate oidc -auth-method-id=amoidc_xxx
 ```
@@ -306,7 +306,7 @@ done
 **Fix**: Updated to show correct redirect URIs including ingress URL:
 ```
 Valid Redirect URIs:
-  * https://boundary.local/v1/auth-methods/oidc:authenticate:callback (via ingress)
+  * https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback (via ingress)
   * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
   * http://localhost:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
 ```
@@ -366,11 +366,11 @@ sed "s/\${INGRESS_NGINX_IP}/${INGRESS_NGINX_IP}/g" "$K8S_DIR/platform/boundary/m
 
 | Component | External URL | Backend | TLS | Status |
 |-----------|--------------|---------|-----|--------|
-| Boundary API | `https://boundary.local` | `controller:9200` | Ingress terminates | ✅ |
-| Boundary Worker | `https://boundary-worker.local:443` | `worker:9202` | Passthrough to worker | ✅ |
-| Keycloak | `https://keycloak.local` | `keycloak:8080` | Ingress terminates | ✅ |
-| OIDC Issuer | `https://keycloak.local/realms/agent-sandbox` | N/A | N/A | ✅ |
-| KC_HOSTNAME_URL | `https://keycloak.local` | N/A | Advertises HTTPS | ✅ |
+| Boundary API | `https://boundary.hashicorp.lab` | `controller:9200` | Ingress terminates | ✅ |
+| Boundary Worker | `https://boundary-worker.hashicorp.lab:443` | `worker:9202` | Passthrough to worker | ✅ |
+| Keycloak | `https://keycloak.hashicorp.lab` | `keycloak:8080` | Ingress terminates | ✅ |
+| OIDC Issuer | `https://keycloak.hashicorp.lab/realms/agent-sandbox` | N/A | N/A | ✅ |
+| KC_HOSTNAME_URL | `https://keycloak.hashicorp.lab` | N/A | Advertises HTTPS | ✅ |
 | Callback URLs | 3 variants (ingress + localhost) | N/A | N/A | ✅ |
 | Groups Mapper | Auto-created | N/A | N/A | ✅ |
 | Managed Groups | `/token/groups` filter | N/A | N/A | ✅ |
@@ -452,11 +452,11 @@ sed "s/\${INGRESS_NGINX_IP}/${INGRESS_NGINX_IP}/g" "$K8S_DIR/platform/boundary/m
 
 | Component | External URL | Backend | TLS | Status |
 |-----------|--------------|---------|-----|--------|
-| Boundary API | `https://boundary.local` | `controller:9200` | Ingress terminates | ✅ |
-| Boundary Worker | `https://boundary-worker.local:443` | `worker:9202` | Passthrough to worker | ✅ |
-| Keycloak | `https://keycloak.local` | `keycloak:8080` | Ingress terminates | ✅ |
-| OIDC Issuer | `https://keycloak.local/realms/agent-sandbox` | N/A | N/A | ✅ |
-| KC_HOSTNAME_URL | `https://keycloak.local` | N/A | Advertises HTTPS | ✅ |
+| Boundary API | `https://boundary.hashicorp.lab` | `controller:9200` | Ingress terminates | ✅ |
+| Boundary Worker | `https://boundary-worker.hashicorp.lab:443` | `worker:9202` | Passthrough to worker | ✅ |
+| Keycloak | `https://keycloak.hashicorp.lab` | `keycloak:8080` | Ingress terminates | ✅ |
+| OIDC Issuer | `https://keycloak.hashicorp.lab/realms/agent-sandbox` | N/A | N/A | ✅ |
+| KC_HOSTNAME_URL | `https://keycloak.hashicorp.lab` | N/A | Advertises HTTPS | ✅ |
 | Callback URLs | 3 variants (ingress + localhost) | N/A | N/A | ✅ |
 | Groups Mapper | Auto-created | N/A | N/A | ✅ |
 | Managed Groups | `/token/groups` filter | N/A | N/A | ✅ |
@@ -553,11 +553,11 @@ python3 -m venv .venv
 
 | Component | External URL | Backend | TLS | Status |
 |-----------|--------------|---------|-----|--------|
-| Boundary API | `https://boundary.local` | `controller:9200` | Ingress terminates | ✅ |
-| Boundary Worker | `https://boundary-worker.local:443` | `worker:9202` | Passthrough to worker | ✅ |
-| Keycloak | `https://keycloak.local` | `keycloak:8080` | Ingress terminates | ✅ |
-| OIDC Issuer | `https://keycloak.local/realms/agent-sandbox` | N/A | N/A | ✅ |
-| KC_HOSTNAME_URL | `https://keycloak.local` | N/A | Advertises HTTPS | ✅ |
+| Boundary API | `https://boundary.hashicorp.lab` | `controller:9200` | Ingress terminates | ✅ |
+| Boundary Worker | `https://boundary-worker.hashicorp.lab:443` | `worker:9202` | Passthrough to worker | ✅ |
+| Keycloak | `https://keycloak.hashicorp.lab` | `keycloak:8080` | Ingress terminates | ✅ |
+| OIDC Issuer | `https://keycloak.hashicorp.lab/realms/agent-sandbox` | N/A | N/A | ✅ |
+| KC_HOSTNAME_URL | `https://keycloak.hashicorp.lab` | N/A | Advertises HTTPS | ✅ |
 | Callback URLs | 3 variants (ingress + localhost) | N/A | N/A | ✅ |
 | Groups Mapper | Auto-created | N/A | N/A | ✅ |
 | Managed Groups | `/token/groups` filter | N/A | N/A | ✅ |

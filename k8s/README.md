@@ -77,7 +77,7 @@ Two AI agent development environments:
 
 Add to `/etc/hosts`:
 ```
-127.0.0.1 vault.local boundary.local boundary-worker.local keycloak.local
+127.0.0.1 vault.hashicorp.lab boundary.hashicorp.lab boundary-worker.hashicorp.lab keycloak.hashicorp.lab
 ```
 
 ### Deploy Complete Platform
@@ -121,7 +121,7 @@ vault write -field=signed_key ssh/sign/devenv-access \
 cat k8s/platform/boundary/scripts/boundary-credentials.txt
 
 # 4. Connect
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 boundary connect -target-id=<TARGET_ID> -exec ssh -- \
   -i ~/.ssh/id_rsa \

@@ -40,7 +40,7 @@ vault write -field=signed_key ssh/sign/devenv-access \
   valid_principals=node > /tmp/ssh-key-cert.pub
 
 # 3. Connect via Boundary
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 boundary connect -target-id=ttcp_w20V4jZhpw -exec ssh -- \
   -i /tmp/ssh-key \
@@ -91,7 +91,7 @@ The `configure-credential-brokering.sh` script:
 
 ```bash
 # 1. Authenticate via OIDC
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 boundary authenticate oidc -auth-method-id=amoidc_IwjPNziUka
 
@@ -109,7 +109,7 @@ boundary targets authorize-session -id=ttcp_i8JZfSe0Vd -format=json | \
 
 This uses a shared pre-signed SSH key (valid for 24h). For per-user certificates:
 - Use Enterprise credential injection, or
-- Have users sign their own keys via vault.local
+- Have users sign their own keys via vault.hashicorp.lab
 
 ### Key Files
 
