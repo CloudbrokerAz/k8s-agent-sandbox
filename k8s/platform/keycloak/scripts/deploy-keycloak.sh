@@ -32,14 +32,18 @@ kubectl apply -f "${MANIFESTS_DIR}/03-postgres.yaml"
 
 echo ""
 echo "4. Waiting for PostgreSQL to be ready..."
-kubectl wait --for=condition=ready pod \
+if ! kubectl wait --for=condition=ready pod \
     -l app=keycloak-postgres \
     -n keycloak \
-    --timeout=300s || {
-    echo "Warning: PostgreSQL pod did not become ready in time"
+    --timeout=300s; then
+    echo "❌ ERROR: PostgreSQL pod did not become ready in time"
     echo "Checking pod status:"
     kubectl get pods -n keycloak -l app=keycloak-postgres
-}
+    kubectl describe pods -n keycloak -l app=keycloak-postgres | tail -30
+    echo ""
+    echo "Check logs: kubectl logs -n keycloak -l app=keycloak-postgres"
+    exit 1
+fi
 
 echo ""
 echo "5. Deploying Keycloak..."
@@ -56,14 +60,18 @@ kubectl apply -f "${MANIFESTS_DIR}/08-ingress.yaml"
 
 echo ""
 echo "8. Waiting for Keycloak to be ready..."
-kubectl wait --for=condition=ready pod \
+if ! kubectl wait --for=condition=ready pod \
     -l app=keycloak \
     -n keycloak \
-    --timeout=300s || {
-    echo "Warning: Keycloak pod did not become ready in time"
+    --timeout=300s; then
+    echo "❌ ERROR: Keycloak pod did not become ready in time"
     echo "Checking pod status:"
     kubectl get pods -n keycloak -l app=keycloak
-}
+    kubectl describe pods -n keycloak -l app=keycloak | tail -30
+    echo ""
+    echo "Check logs: kubectl logs -n keycloak -l app=keycloak"
+    exit 1
+fi
 
 echo ""
 echo "========================================="
@@ -80,12 +88,12 @@ echo "========================================="
 echo "Access Information"
 echo "========================================="
 echo "Keycloak Admin Console:"
-echo "  URL: https://keycloak.local"
+echo "  URL: https://keycloak.hashicorp.lab"
 echo "  Username: admin"
 echo "  Password: Admin123"
 echo ""
 echo "To access Keycloak via Ingress:"
-echo "  Add '127.0.0.1 keycloak.local' to /etc/hosts if needed"
+echo "  Add '127.0.0.1 keycloak.hashicorp.lab' to /etc/hosts if needed"
 echo ""
 echo "Or port-forward to access Keycloak:"
 echo "  kubectl port-forward -n keycloak svc/keycloak 8080:8080"

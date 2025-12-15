@@ -136,19 +136,55 @@ EOF
 boundary database init -config=/tmp/init.hcl \
   -skip-scopes-creation \
   -skip-host-resources-creation \
-  -skip-target-creation || echo "Database may already be initialized"
-' 2>/dev/null || true
+  -skip-target-creation 2>&1 || {
+    echo "Database init returned non-zero (may already be initialized)"
+    exit 0
+  }
+'
 
-# Wait for init job to complete
+# Verify db-init pod was created
+if ! kubectl get pod boundary-db-init -n "$NAMESPACE" &>/dev/null; then
+    echo "❌ ERROR: Failed to create database init pod"
+    echo "Check secrets exist: kubectl get secrets -n $NAMESPACE"
+    exit 1
+fi
+
+# Wait for init pod to complete
 echo "  → Waiting for database initialization..."
-kubectl wait --for=condition=complete job/boundary-db-init -n "$NAMESPACE" --timeout=120s 2>/dev/null || \
-    kubectl wait --for=condition=Ready pod/boundary-db-init -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
+DB_INIT_TIMEOUT=120
+for i in $(seq 1 $DB_INIT_TIMEOUT); do
+    POD_PHASE=$(kubectl get pod boundary-db-init -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+    case "$POD_PHASE" in
+        Succeeded)
+            echo "  ✅ Database initialization completed"
+            break
+            ;;
+        Failed)
+            echo "❌ ERROR: Database init pod failed"
+            kubectl logs boundary-db-init -n "$NAMESPACE" 2>/dev/null | tail -30
+            exit 1
+            ;;
+        *)
+            if [[ $i -eq $DB_INIT_TIMEOUT ]]; then
+                echo "❌ ERROR: Database init timed out after ${DB_INIT_TIMEOUT}s (phase: $POD_PHASE)"
+                kubectl describe pod boundary-db-init -n "$NAMESPACE" | tail -30
+                exit 1
+            fi
+            sleep 1
+            ;;
+    esac
+done
 
 # Get init output and save credentials
 echo ""
 echo "  → Capturing admin credentials..."
-INIT_OUTPUT=$(kubectl logs boundary-db-init -n "$NAMESPACE" 2>/dev/null || echo "")
-echo "$INIT_OUTPUT" | tail -20
+INIT_OUTPUT=$(kubectl logs boundary-db-init -n "$NAMESPACE" 2>/dev/null)
+if [[ -z "$INIT_OUTPUT" ]]; then
+    echo "  ⚠️  Warning: Could not retrieve init pod logs"
+    echo "      This may indicate the database was already initialized"
+else
+    echo "$INIT_OUTPUT" | tail -20
+fi
 
 # Extract and save credentials
 AUTH_METHOD_ID=$(echo "$INIT_OUTPUT" | grep -E "Auth Method ID:" | head -1 | awk -F': ' '{print $2}' | tr -d ' ')
@@ -169,6 +205,13 @@ Password:       $PASSWORD
 EOF
     chmod 600 "$SCRIPT_DIR/boundary-credentials.txt"
     echo "  ✅ Credentials saved to boundary-credentials.txt"
+elif [[ -f "$SCRIPT_DIR/boundary-credentials.txt" ]]; then
+    echo "  ℹ️  Using existing credentials from boundary-credentials.txt"
+else
+    echo "  ⚠️  Warning: Could not extract credentials from init output"
+    echo "      If this is a fresh install, check the init pod logs:"
+    echo "      kubectl logs boundary-db-init -n $NAMESPACE"
+    echo "      If database was already initialized, credentials may be in boundary-credentials.txt"
 fi
 
 # Cleanup init pod
@@ -214,8 +257,8 @@ kubectl apply -f "$MANIFESTS_DIR/10-ingress.yaml"
 echo "  → Applying Worker TLS Certificate..."
 kubectl apply -f "$MANIFESTS_DIR/11-worker-tls-secret.yaml"
 
-echo "  → Applying Worker Ingress Resource..."
-kubectl apply -f "$MANIFESTS_DIR/12-worker-ingress.yaml"
+# Note: Worker ingress is handled via the main ingress (10-ingress.yaml)
+# which routes both controller and worker traffic
 
 echo ""
 echo "  → Waiting for Controller to be ready..."
@@ -344,8 +387,8 @@ fi
 echo "==========================================="
 echo ""
 echo "Access:"
-echo "  • Ingress: https://boundary.local"
-echo "  • Worker:  https://boundary-worker.local"
+echo "  • Ingress: https://boundary.hashicorp.lab"
+echo "  • Worker:  https://boundary-worker.hashicorp.lab"
 echo "  • API:     kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200"
 echo ""
 echo "Credentials saved to: $SCRIPT_DIR/boundary-credentials.txt"

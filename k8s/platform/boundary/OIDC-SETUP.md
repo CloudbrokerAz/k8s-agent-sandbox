@@ -78,7 +78,7 @@ In Keycloak, create a new client with these settings:
 
 **Valid Redirect URIs:**
 ```
-https://boundary.local/v1/auth-methods/oidc:authenticate:callback
+https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback
 http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback
 http://localhost:9200/v1/auth-methods/oidc:authenticate:callback
 ```
@@ -114,11 +114,9 @@ The test script validates:
 ### Step 5: Authenticate with OIDC
 
 ```bash
-# Port forward to Boundary API
-kubectl port-forward -n boundary svc/boundary-controller-api 9200:9200
-
-# In another terminal, set the Boundary address
-export BOUNDARY_ADDR=http://127.0.0.1:9200
+# Set Boundary address (via ingress)
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
+export BOUNDARY_TLS_INSECURE=true
 
 # Authenticate using OIDC (browser will open)
 boundary authenticate oidc -auth-method-id=<auth-method-id>
@@ -131,10 +129,10 @@ boundary authenticate oidc -auth-method-id=<auth-method-id>
 
 ### OIDC Settings
 
-- **Keycloak URL:** `http://keycloak.keycloak.svc.cluster.local:8080`
+- **Keycloak URL:** `https://keycloak.hashicorp.lab`
 - **Realm:** `agent-sandbox`
 - **Client ID:** `boundary`
-- **Issuer:** `http://keycloak.keycloak.svc.cluster.local:8080/realms/agent-sandbox`
+- **Issuer:** `https://keycloak.hashicorp.lab/realms/agent-sandbox`
 - **Signing Algorithm:** RS256
 
 ### Managed Group Filters

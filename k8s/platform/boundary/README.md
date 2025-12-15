@@ -24,9 +24,9 @@ Boundary provides identity-based access management for dynamic infrastructure. T
 │  │                    Nginx Ingress Controller                         │   │
 │  │                    (ingress-nginx namespace)                        │   │
 │  │                                                                     │   │
-│  │  boundary.local ────────► Controller API :9200 (TLS termination)   │   │
-│  │  boundary-worker.local ──► Worker Proxy :9202 (TLS termination)    │   │
-│  │  keycloak.local ─────────► Keycloak :8080 (OIDC Provider)          │   │
+│  │  boundary.hashicorp.lab ────────► Controller API :9200 (TLS termination)   │   │
+│  │  boundary-worker.hashicorp.lab ──► Worker Proxy :9202 (TLS termination)    │   │
+│  │  keycloak.hashicorp.lab ─────────► Keycloak :8080 (OIDC Provider)          │   │
 │  └────────────────────────────────────────────────────────────────────┘   │
 │                                                                            │
 │  ┌────────────────────────────────────────────────────────────────────┐   │
@@ -98,12 +98,12 @@ Boundary is accessible via Nginx Ingress with TLS:
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| Controller API | https://boundary.local | Main API endpoint for clients |
-| Worker Proxy | https://boundary-worker.local | Session proxy endpoint |
+| Controller API | https://boundary.hashicorp.lab | Main API endpoint for clients |
+| Worker Proxy | https://boundary-worker.hashicorp.lab | Session proxy endpoint |
 
 Add to `/etc/hosts`:
 ```
-127.0.0.1 boundary.local boundary-worker.local
+127.0.0.1 boundary.hashicorp.lab boundary-worker.hashicorp.lab
 ```
 
 ## Prerequisites
@@ -164,7 +164,7 @@ The Boundary worker uses `initial_upstreams` to connect to the controller (as of
 worker {
   name = "kubernetes-worker"
   initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
-  public_addr = "boundary-worker.local:443"
+  public_addr = "boundary-worker.hashicorp.lab:443"
 }
 ```
 
@@ -177,7 +177,7 @@ This deployment supports external OIDC URLs using the `-disable-discovered-confi
 ```bash
 # OIDC configured with external Keycloak URL
 boundary auth-methods create oidc \
-  -issuer='https://keycloak.local/realms/agent-sandbox' \
+  -issuer='https://keycloak.hashicorp.lab/realms/agent-sandbox' \
   -disable-discovered-config-validation
 ```
 
@@ -242,7 +242,7 @@ After setup, connect to sandbox pods via Boundary:
 
 ```bash
 # Set Boundary address (via ingress)
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 
 # Authenticate
 boundary authenticate password -auth-method-id=<id> -login-name=admin

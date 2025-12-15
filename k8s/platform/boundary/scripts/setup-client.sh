@@ -61,8 +61,8 @@ echo ""
 echo "🔧 Checking /etc/hosts entries..."
 
 # Check for hosts entries
-HOSTS_ENTRIES="127.0.0.1 boundary.local boundary-worker.local"
-if grep -q "boundary.local" /etc/hosts; then
+HOSTS_ENTRIES="127.0.0.1 boundary.hashicorp.lab boundary-worker.hashicorp.lab"
+if grep -q "boundary.hashicorp.lab" /etc/hosts; then
     echo "  ✅ /etc/hosts entries already exist"
 else
     echo "  ⚠️  Missing /etc/hosts entries. Add the following:"
@@ -74,7 +74,7 @@ fi
 # Get auth method info
 echo ""
 echo "🔐 Fetching Boundary configuration..."
-AUTH_METHODS=$(curl -sk "https://boundary.local/v1/auth-methods?scope_id=global" 2>/dev/null || echo "{}")
+AUTH_METHODS=$(curl -sk "https://boundary.hashicorp.lab/v1/auth-methods?scope_id=global" 2>/dev/null || echo "{}")
 OIDC_AUTH_METHOD=$(echo "$AUTH_METHODS" | jq -r '.items[]? | select(.type=="oidc") | .id' 2>/dev/null || echo "")
 PASSWORD_AUTH_METHOD=$(echo "$AUTH_METHODS" | jq -r '.items[]? | select(.type=="password") | .id' 2>/dev/null || echo "")
 
@@ -90,7 +90,7 @@ cat > "$SCRIPT_DIR/boundary-env.sh" << EOF
 # Source this file: source $SCRIPT_DIR/boundary-env.sh
 
 # Boundary controller address
-export BOUNDARY_ADDR="https://boundary.local"
+export BOUNDARY_ADDR="https://boundary.hashicorp.lab"
 
 # Skip TLS verification (for self-signed certs)
 export BOUNDARY_TLS_INSECURE=true

@@ -12,10 +12,10 @@ flowchart TB
     subgraph K8s["☸️ Kubernetes Cluster"]
         subgraph ingress["🌐 Ingress Layer"]
             IngressController["NGINX Ingress<br/>TLS Termination"]
-            VaultRoute["vault.local"]
-            BoundaryRoute["boundary.local"]
-            BoundaryWorkerRoute["boundary-worker.local"]
-            KeycloakRoute["keycloak.local"]
+            VaultRoute["vault.hashicorp.lab"]
+            BoundaryRoute["boundary.hashicorp.lab"]
+            BoundaryWorkerRoute["boundary-worker.hashicorp.lab"]
+            KeycloakRoute["keycloak.hashicorp.lab"]
         end
 
         subgraph platform["🔧 Platform Services"]

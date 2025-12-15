@@ -49,7 +49,7 @@ worker {
 
 ### 3. OIDC Discovery Validation
 - **New Feature:** `-disable-discovered-config-validation` flag
-- **Benefit:** Can use external URLs (https://keycloak.local) for issuer
+- **Benefit:** Can use external URLs (https://keycloak.hashicorp.lab) for issuer
 - **Impact:** Removes need for internal URL workaround
 
 ## Upgrade Steps
@@ -90,7 +90,7 @@ worker {
   # NEW: Use initial_upstreams instead of controllers
   initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
   
-  public_addr = "boundary-worker.local:443"
+  public_addr = "boundary-worker.hashicorp.lab:443"
 }
 ```
 
@@ -247,18 +247,18 @@ kubectl exec -n boundary deployment/boundary-controller -c boundary-controller -
 # Update Keycloak realm to use external URL
 kubectl exec -n keycloak deployment/keycloak -- \
   /opt/keycloak/bin/kcadm.sh update realms/agent-sandbox \
-  -s 'attributes.frontendUrl=https://keycloak.local'
+  -s 'attributes.frontendUrl=https://keycloak.hashicorp.lab'
 
 # Create new OIDC with external issuer and discovery validation disabled
 kubectl exec -n boundary deployment/boundary-controller -c boundary-controller -- \
   boundary auth-methods create oidc \
     -scope-id='global' \
     -name='keycloak' \
-    -issuer='https://keycloak.local/realms/agent-sandbox' \
+    -issuer='https://keycloak.hashicorp.lab/realms/agent-sandbox' \
     -client-id='boundary' \
     -client-secret='xNyk1zav3KM9VUuwm5zBjtQgX1rnZO5h' \
     -signing-algorithm='RS256' \
-    -api-url-prefix='https://boundary.local' \
+    -api-url-prefix='https://boundary.hashicorp.lab' \
     -disable-discovered-config-validation
 
 # Activate OIDC
@@ -281,7 +281,7 @@ boundary authenticate password \
   -login-name=admin
 
 # 4. Test OIDC authentication
-# Visit https://boundary.local in browser
+# Visit https://boundary.hashicorp.lab in browser
 
 # 5. Verify managed groups
 boundary managed-groups list -auth-method-id=<oidc-id>
@@ -377,7 +377,7 @@ kubectl scale deployment boundary-controller -n boundary --replicas=1
    - Controller and worker images updated to `hashicorp/boundary:0.20.1`
 3. **Database Migration**: Successfully migrated database schema to 0.20.1
 4. **OIDC Reconfiguration**:
-   - Configured to use external URL: `https://keycloak.local/realms/agent-sandbox`
+   - Configured to use external URL: `https://keycloak.hashicorp.lab/realms/agent-sandbox`
    - Enabled `-disable-discovered-config-validation` flag
    - Removed internal URL workaround
 5. **Verification**: All health checks and authentication methods working correctly

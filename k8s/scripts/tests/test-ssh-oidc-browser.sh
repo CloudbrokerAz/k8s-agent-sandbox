@@ -95,12 +95,12 @@ fi
 
 # Verify /etc/hosts entries
 echo "Verifying ingress accessibility..."
-if ! grep -q "boundary.local" /etc/hosts 2>/dev/null; then
-    echo -e "${YELLOW}⚠️  boundary.local not in /etc/hosts${NC}"
-    echo "  Add: 127.0.0.1 boundary.local keycloak.local"
+if ! grep -q "boundary.hashicorp.lab" /etc/hosts 2>/dev/null; then
+    echo -e "${YELLOW}⚠️  boundary.hashicorp.lab not in /etc/hosts${NC}"
+    echo "  Add: 127.0.0.1 boundary.hashicorp.lab keycloak.hashicorp.lab"
     exit 1
 fi
-echo -e "${GREEN}✓${NC} boundary.local configured"
+echo -e "${GREEN}✓${NC} boundary.hashicorp.lab configured"
 
 # Check ingress
 INGRESS_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
@@ -112,9 +112,9 @@ fi
 source "$PLAYWRIGHT_VENV/bin/activate"
 
 # Set environment
-export BOUNDARY_URL="https://boundary.local"
-export KEYCLOAK_URL="https://keycloak.local"
-export BOUNDARY_ADDR="https://boundary.local"
+export BOUNDARY_URL="https://boundary.hashicorp.lab"
+export KEYCLOAK_URL="https://keycloak.hashicorp.lab"
+export BOUNDARY_ADDR="https://boundary.hashicorp.lab"
 export BOUNDARY_TLS_INSECURE=true
 
 echo ""

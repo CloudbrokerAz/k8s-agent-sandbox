@@ -24,10 +24,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - vault.local
+        - vault.hashicorp.lab
       secretName: vault-tls
   rules:
-    - host: vault.local
+    - host: vault.hashicorp.lab
       http:
         paths:
           - path: /

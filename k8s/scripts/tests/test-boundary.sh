@@ -127,10 +127,10 @@ if kubectl get ingress boundary -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
 
     # Check Ingress host
     INGRESS_HOST=$(kubectl get ingress boundary -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
-    if [[ "$INGRESS_HOST" == "boundary.local" ]]; then
-        test_pass "Ingress host configured (boundary.local)"
+    if [[ "$INGRESS_HOST" == "boundary.hashicorp.lab" ]]; then
+        test_pass "Ingress host configured (boundary.hashicorp.lab)"
     else
-        test_warn "Ingress host: $INGRESS_HOST (expected: boundary.local)"
+        test_warn "Ingress host: $INGRESS_HOST (expected: boundary.hashicorp.lab)"
     fi
 
     # Check Ingress TLS
@@ -157,10 +157,10 @@ if kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" &>/dev/null; the
 
     # Check Worker Ingress host
     WORKER_INGRESS_HOST=$(kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
-    if [[ "$WORKER_INGRESS_HOST" == "boundary-worker.local" ]]; then
-        test_pass "Worker Ingress host configured (boundary-worker.local)"
+    if [[ "$WORKER_INGRESS_HOST" == "boundary-worker.hashicorp.lab" ]]; then
+        test_pass "Worker Ingress host configured (boundary-worker.hashicorp.lab)"
     else
-        test_warn "Worker Ingress host: $WORKER_INGRESS_HOST (expected: boundary-worker.local)"
+        test_warn "Worker Ingress host: $WORKER_INGRESS_HOST (expected: boundary-worker.hashicorp.lab)"
     fi
 
     # Check Worker Ingress TLS

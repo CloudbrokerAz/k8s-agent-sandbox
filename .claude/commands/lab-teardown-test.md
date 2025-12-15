@@ -7,7 +7,7 @@ compete autonomously as a performance improvement process, improvement, use opus
 - remove the sandbox kind cluster
 - run ./k8s/scripts/deploy-all.sh
 - fix any identified isses with deploy-all.sh scripts ultrathink
-- ensure boundary.local and keycloak.local are accessible via the ingress and resolvable, fix issues and ensure fixes are part of ./k8s/scripts/deploy-all.sh
+- ensure boundary.hashicorp.lab and keycloak.hashicorp.lab are accessible via the ingress and resolvable, fix issues and ensure fixes are part of ./k8s/scripts/deploy-all.sh
 - validate full user auth flow using test-oidc-browser.py, report the results, and fix issues. THe user must be able to login.
 - review ./k8s/scripts/deploy-all.sh identify areas for seed optimisation and parrallel workflows
 - report the results and highlight any issues in a markdown report with date/time in ./reports/

@@ -116,10 +116,19 @@ if [[ "$RESUME" == "auto" ]] || [[ -n "${EXISTING:-}" ]]; then
     echo ""
 fi
 
+# Parallel job tracking arrays
+declare -a PARALLEL_PIDS=()
+declare -a PARALLEL_NAMES=()
+
 # Helper function to run commands in background if parallel mode
 run_parallel() {
+    local func_name="$1"
     if [[ "$PARALLEL" == "true" ]]; then
         "$@" &
+        local pid=$!
+        PARALLEL_PIDS+=("$pid")
+        PARALLEL_NAMES+=("$func_name")
+        echo "  [parallel] Started $func_name (PID: $pid)"
     else
         "$@"
     fi
@@ -129,16 +138,34 @@ run_parallel() {
 wait_parallel() {
     if [[ "$PARALLEL" == "true" ]]; then
         local failed=0
-        local job_pids=$(jobs -p)
-        for pid in $job_pids; do
+        local failed_names=()
+        local i=0
+
+        echo ""
+        echo "⏳ Waiting for ${#PARALLEL_PIDS[@]} parallel task(s)..."
+
+        for pid in "${PARALLEL_PIDS[@]}"; do
+            local name="${PARALLEL_NAMES[$i]}"
             if ! wait "$pid"; then
                 ((failed++))
+                failed_names+=("$name")
+                echo "  ❌ $name (PID: $pid) failed"
+            else
+                echo "  ✅ $name completed"
             fi
+            ((i++))
         done
+
+        # Clear tracking arrays for next batch
+        PARALLEL_PIDS=()
+        PARALLEL_NAMES=()
+
         if [[ $failed -gt 0 ]]; then
-            echo "❌ $failed parallel task(s) failed"
+            echo ""
+            echo "❌ $failed parallel task(s) failed: ${failed_names[*]}"
             return 1
         fi
+        echo "✅ All parallel tasks completed successfully"
     fi
 }
 
@@ -302,6 +329,32 @@ EOF
         exit 1
     fi
 fi
+
+# ==========================================
+# Verify Node Readiness
+# ==========================================
+echo "Verifying node readiness..."
+NODE_READY_TIMEOUT=60
+NODE_READY_INTERVAL=2
+NODE_READY_ATTEMPTS=$((NODE_READY_TIMEOUT / NODE_READY_INTERVAL))
+
+for attempt in $(seq 1 $NODE_READY_ATTEMPTS); do
+    NODE_STATUS=$(kubectl get nodes -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
+    if [[ "$NODE_STATUS" == *"True"* ]]; then
+        echo "✅ Node(s) ready"
+        break
+    fi
+    if [[ $attempt -eq $NODE_READY_ATTEMPTS ]]; then
+        echo "❌ Node(s) not ready after ${NODE_READY_TIMEOUT}s"
+        echo "   Node status: $NODE_STATUS"
+        kubectl get nodes -o wide
+        echo ""
+        echo "   Check for taints: kubectl describe nodes | grep -A5 Taints"
+        exit 1
+    fi
+    echo "  ⏳ Waiting for node(s) to be ready (attempt $attempt/$NODE_READY_ATTEMPTS)..."
+    sleep $NODE_READY_INTERVAL
+done
 
 echo "✅ Prerequisites met"
 echo ""
@@ -1309,12 +1362,12 @@ spec:
 EOF
 
         # Update Boundary controller hostAliases if Boundary is deployed
-        # IMPORTANT: For OIDC to work, keycloak.local must point to the ingress controller
+        # IMPORTANT: For OIDC to work, keycloak.hashicorp.lab must point to the ingress controller
         # (which handles TLS termination) so Boundary can validate the HTTPS issuer
         if kubectl get deployment boundary-controller -n boundary &>/dev/null; then
             echo "Updating Boundary controller hostAliases for Keycloak/Boundary connectivity..."
 
-            # Use ingress controller IP for keycloak.local (required for HTTPS OIDC validation)
+            # Use ingress controller IP for keycloak.hashicorp.lab (required for HTTPS OIDC validation)
             INGRESS_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
             if [[ -z "$INGRESS_IP" ]]; then
                 echo "⚠️  Ingress controller not found, falling back to keycloak-http service"
@@ -1329,11 +1382,11 @@ EOF
                 \"value\": [
                   {
                     \"ip\": \"$INGRESS_IP\",
-                    \"hostnames\": [\"keycloak.local\"]
+                    \"hostnames\": [\"keycloak.hashicorp.lab\"]
                   },
                   {
                     \"ip\": \"$BOUNDARY_API_IP\",
-                    \"hostnames\": [\"boundary.local\"]
+                    \"hostnames\": [\"boundary.hashicorp.lab\"]
                   }
                 ]
               }

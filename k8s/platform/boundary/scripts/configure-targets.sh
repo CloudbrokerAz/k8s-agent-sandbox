@@ -517,7 +517,7 @@ $(echo -e "$TARGETS_LIST")
 3. Connect to sandbox via Boundary:
 
    # Claude Code Sandbox:
-   export BOUNDARY_ADDR=https://boundary.local
+   export BOUNDARY_ADDR=https://boundary.hashicorp.lab
    export BOUNDARY_TLS_INSECURE=true
    boundary connect -target-id=${TARGET_IDS["claude-code-sandbox"]:-$TARGET_ID} -exec ssh -- \\
      -i /tmp/ssh-key \\
@@ -583,7 +583,7 @@ echo ""
 echo "Quick start (Port-Forward + Vault SSH CA):"
 echo "  1. kubectl port-forward -n boundary svc/boundary-worker 9202:9202 &"
 echo "  2. vault write -field=signed_key ssh/sign/devenv-access public_key=@~/.ssh/id_ed25519.pub valid_principals=node > /tmp/cert.pub"
-echo "  3. export BOUNDARY_ADDR=https://boundary.local BOUNDARY_TLS_INSECURE=true"
+echo "  3. export BOUNDARY_ADDR=https://boundary.hashicorp.lab BOUNDARY_TLS_INSECURE=true"
 echo "  4. boundary connect -target-id=<TARGET_ID> -exec ssh -- -i ~/.ssh/id_ed25519 -o CertificateFile=/tmp/cert.pub -l node -p '{{boundary.port}}' '{{boundary.ip}}'"
 echo ""
 echo "See $CREDS_FILE for detailed instructions."

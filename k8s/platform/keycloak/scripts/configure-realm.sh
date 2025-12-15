@@ -71,7 +71,7 @@ fi
 
 # Boundary redirect URIs - include internal, external (ingress), and local (port-forward) URLs
 BOUNDARY_INTERNAL_URL="${BOUNDARY_INTERNAL_URL:-http://boundary-controller-api.boundary.svc.cluster.local:9200}"
-BOUNDARY_EXTERNAL_URL="${BOUNDARY_EXTERNAL_URL:-https://boundary.local}"
+BOUNDARY_EXTERNAL_URL="${BOUNDARY_EXTERNAL_URL:-https://boundary.hashicorp.lab}"
 BOUNDARY_LOCAL_URL="${BOUNDARY_LOCAL_URL:-http://127.0.0.1:9200}"
 
 # For backwards compatibility

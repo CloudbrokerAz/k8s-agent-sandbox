@@ -11,10 +11,10 @@ flowchart TB
     subgraph ingress["ingress-nginx namespace"]
         IngressController["NGINX Ingress Controller"]
         subgraph IngressRoutes["Ingress Routes (TLS)"]
-            VaultIngress["vault.local:443"]
-            BoundaryIngress["boundary.local:443"]
-            BoundaryWorkerIngress["boundary-worker.local:443"]
-            KeycloakIngress["keycloak.local:443"]
+            VaultIngress["vault.hashicorp.lab:443"]
+            BoundaryIngress["boundary.hashicorp.lab:443"]
+            BoundaryWorkerIngress["boundary-worker.hashicorp.lab:443"]
+            KeycloakIngress["keycloak.hashicorp.lab:443"]
         end
     end
 

@@ -121,19 +121,19 @@ run_boundary() {
 }
 
 # Keycloak configuration - use external URLs for user access
-# IMPORTANT: Keycloak must have KC_HOSTNAME_URL=https://keycloak.local set
+# IMPORTANT: Keycloak must have KC_HOSTNAME_URL=https://keycloak.hashicorp.lab set
 # so that it advertises HTTPS URLs in its OIDC discovery document.
 # This is required because users access Keycloak via ingress (HTTPS),
 # while Boundary controller accesses it internally via HTTP.
 # The issuer URL MUST match what Keycloak advertises in OIDC discovery.
-KEYCLOAK_EXTERNAL_URL="https://keycloak.local"
+KEYCLOAK_EXTERNAL_URL="https://keycloak.hashicorp.lab"
 KEYCLOAK_REALM="agent-sandbox"
 KEYCLOAK_CLIENT_ID="boundary"
 OIDC_ISSUER="${KEYCLOAK_EXTERNAL_URL}/realms/${KEYCLOAK_REALM}"
 OIDC_DISCOVERY_URL="${OIDC_ISSUER}/.well-known/openid-configuration"
 
 # Boundary external URL
-BOUNDARY_EXTERNAL_URL="https://boundary.local"
+BOUNDARY_EXTERNAL_URL="https://boundary.hashicorp.lab"
 
 echo ""
 echo "Keycloak Configuration:"
@@ -230,7 +230,7 @@ get_keycloak_client_secret() (
                 "directAccessGrantsEnabled": false,
                 "serviceAccountsEnabled": false,
                 "redirectUris": [
-                    "https://boundary.local/v1/auth-methods/oidc:authenticate:callback",
+                    "https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback",
                     "http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback",
                     "http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
                 ],
@@ -455,7 +455,7 @@ else
         echo "    - Client ID: $KEYCLOAK_CLIENT_ID"
         echo "    - Client Protocol: openid-connect"
         echo "    - Access Type: confidential"
-        echo "    - Valid Redirect URIs: https://boundary.local/v1/auth-methods/oidc:authenticate:callback"
+        echo "    - Valid Redirect URIs: https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback"
         echo "                           http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback"
         echo "                           http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
         echo ""
@@ -478,7 +478,7 @@ else
     fi
 
     # Create OIDC auth method
-    # Note: Boundary controller needs hostAliases configured to resolve keycloak.local
+    # Note: Boundary controller needs hostAliases configured to resolve keycloak.hashicorp.lab
     # The issuer URL must match what Keycloak advertises in OIDC discovery
 
     # Get the Keycloak TLS CA certificate for OIDC provider validation (already base64 in k8s)
@@ -834,7 +834,7 @@ readonly            → List access (read + list on all resources)
    - Client Protocol: openid-connect
    - Access Type: confidential
    - Valid Redirect URIs:
-     * https://boundary.local/v1/auth-methods/oidc:authenticate:callback (via ingress)
+     * https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback (via ingress)
      * http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
      * http://localhost:9200/v1/auth-methods/oidc:authenticate:callback (port-forward)
 

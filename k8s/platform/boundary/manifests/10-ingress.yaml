@@ -1,5 +1,5 @@
 # Ingress resource for Boundary Controller API
-# Exposes the Boundary API via HTTPS at boundary.local
+# Exposes the Boundary API via HTTPS at boundary.hashicorp.lab
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -30,10 +30,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - boundary.local
+        - boundary.hashicorp.lab
       secretName: boundary-tls
   rules:
-    - host: boundary.local
+    - host: boundary.hashicorp.lab
       http:
         paths:
           - path: /

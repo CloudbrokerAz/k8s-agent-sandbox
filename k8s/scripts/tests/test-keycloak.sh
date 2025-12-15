@@ -109,10 +109,10 @@ if kubectl get ingress keycloak -n "$KEYCLOAK_NAMESPACE" &>/dev/null; then
 
     # Check Ingress host
     INGRESS_HOST=$(kubectl get ingress keycloak -n "$KEYCLOAK_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
-    if [[ "$INGRESS_HOST" == "keycloak.local" ]]; then
-        test_pass "Ingress host configured (keycloak.local)"
+    if [[ "$INGRESS_HOST" == "keycloak.hashicorp.lab" ]]; then
+        test_pass "Ingress host configured (keycloak.hashicorp.lab)"
     else
-        test_warn "Ingress host: $INGRESS_HOST (expected: keycloak.local)"
+        test_warn "Ingress host: $INGRESS_HOST (expected: keycloak.hashicorp.lab)"
     fi
 
     # Check Ingress TLS

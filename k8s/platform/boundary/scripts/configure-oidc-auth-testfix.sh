@@ -18,11 +18,11 @@ fi
 # ------------------------------------
 # Configuration Variables
 # ------------------------------------
-KEYCLOAK_EXTERNAL_URL="https://keycloak.local"
+KEYCLOAK_EXTERNAL_URL="https://keycloak.hashicorp.lab"
 KEYCLOAK_REALM="agent-sandbox"
 KEYCLOAK_CLIENT_ID="boundary"
 OIDC_ISSUER="${KEYCLOAK_EXTERNAL_URL}/realms/${KEYCLOAK_REALM}"
-BOUNDARY_EXTERNAL_URL="https://boundary.local"
+BOUNDARY_EXTERNAL_URL="https://boundary.hashicorp.lab"
 
 # ------------------------------------
 # Helper: Logging
@@ -198,7 +198,7 @@ get_keycloak_client_secret() {
                 "directAccessGrantsEnabled": false,
                 "serviceAccountsEnabled": false,
                 "redirectUris": [
-                    "https://boundary.local/v1/auth-methods/oidc:authenticate:callback",
+                    "https://boundary.hashicorp.lab/v1/auth-methods/oidc:authenticate:callback",
                     "http://127.0.0.1:9200/v1/auth-methods/oidc:authenticate:callback",
                     "http://localhost:9200/v1/auth-methods/oidc:authenticate:callback"
                 ],

@@ -721,8 +721,8 @@ if [[ "$DEPLOY_KEYCLOAK" == "true" ]] && kubectl get deployment boundary-control
 
     kubectl patch deployment boundary-controller -n boundary --type='json' -p="[
       {\"op\": \"replace\", \"path\": \"/spec/template/spec/hostAliases\", \"value\": [
-        {\"ip\": \"$INGRESS_IP\", \"hostnames\": [\"keycloak.local\"]},
-        {\"ip\": \"$BOUNDARY_API_IP\", \"hostnames\": [\"boundary.local\"]}
+        {\"ip\": \"$INGRESS_IP\", \"hostnames\": [\"keycloak.hashicorp.lab\"]},
+        {\"ip\": \"$BOUNDARY_API_IP\", \"hostnames\": [\"boundary.hashicorp.lab\"]}
       ]}
     ]" 2>/dev/null || true
     kubectl rollout status deployment/boundary-controller -n boundary --timeout=60s 2>/dev/null || true

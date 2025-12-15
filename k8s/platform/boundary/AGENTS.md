@@ -26,13 +26,13 @@ The main deployment script (`deploy-all.sh`) handles this order automatically.
 
 1. Keycloak must be deployed and running
 2. `keycloak-http` service must exist (port 80 -> 8080 mapping)
-3. Boundary controller must have `hostAliases` for `keycloak.local`
+3. Boundary controller must have `hostAliases` for `keycloak.hashicorp.lab`
 
 ### Configuration Flow
 
 1. `configure-oidc-auth.sh` auto-fetches the client secret from Keycloak
 2. Creates OIDC auth method in the DevOps org scope
-3. Sets `api-url-prefix` to `https://boundary.local` for callback URL generation
+3. Sets `api-url-prefix` to `https://boundary.hashicorp.lab` for callback URL generation
 4. Activates the auth method to `active-public` state
 5. Creates managed groups that map to Keycloak groups
 
@@ -40,9 +40,9 @@ The main deployment script (`deploy-all.sh`) handles this order automatically.
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| issuer | `http://keycloak.local/realms/agent-sandbox` | OIDC discovery URL |
+| issuer | `https://keycloak.hashicorp.lab/realms/agent-sandbox` | OIDC discovery URL |
 | client_id | `boundary` | Keycloak client ID |
-| api_url_prefix | `https://boundary.local` | Determines callback URL |
+| api_url_prefix | `https://boundary.hashicorp.lab` | Determines callback URL |
 | signing_algorithm | RS256 | JWT signature verification |
 | claims_scopes | profile, email, groups | Requested OIDC scopes |
 
@@ -69,9 +69,9 @@ The Boundary controller pod needs `hostAliases` to resolve both Keycloak and its
 ```yaml
 hostAliases:
   - ip: "<keycloak-http ClusterIP>"
-    hostnames: ["keycloak.local"]
+    hostnames: ["keycloak.hashicorp.lab"]
   - ip: "<boundary-controller-api ClusterIP>"
-    hostnames: ["boundary.local"]
+    hostnames: ["boundary.hashicorp.lab"]
 ```
 
 **Common Issue**: Without correct hostAliases, OIDC discovery/token exchange fails with connection errors.
@@ -124,7 +124,7 @@ This was fixed to capture output and display actual error messages.
 
 2. **`issuer did not match`**
    - Issuer URL in Boundary doesn't match Keycloak's advertised URL
-   - Must use `http://keycloak.local/realms/agent-sandbox` (what Keycloak advertises)
+   - Must use `http://keycloak.hashicorp.lab/realms/agent-sandbox` (what Keycloak advertises)
 
 3. **`unable to exchange auth code`**
    - Usually a client secret mismatch
@@ -158,7 +158,7 @@ boundary auth-methods update oidc \
 ### Checking Auth Method Configuration
 
 ```bash
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 boundary auth-methods list -scope-id=global -recursive -format=json | jq '.items[] | select(.type=="oidc")'
 ```
@@ -168,7 +168,7 @@ boundary auth-methods list -scope-id=global -recursive -format=json | jq '.items
 After OIDC authentication, users can connect to targets based on their group membership:
 
 ```bash
-export BOUNDARY_ADDR=https://boundary.local
+export BOUNDARY_ADDR=https://boundary.hashicorp.lab
 export BOUNDARY_TLS_INSECURE=true
 
 # Authenticate via OIDC

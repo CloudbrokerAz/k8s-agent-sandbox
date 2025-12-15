@@ -1,5 +1,5 @@
 # Ingress resource for Keycloak
-# Exposes Keycloak via HTTPS at keycloak.local
+# Exposes Keycloak via HTTPS at keycloak.hashicorp.lab
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -32,10 +32,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - keycloak.local
+        - keycloak.hashicorp.lab
       secretName: keycloak-tls
   rules:
-    - host: keycloak.local
+    - host: keycloak.hashicorp.lab
       http:
         paths:
           - path: /
