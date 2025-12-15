@@ -24,16 +24,23 @@ fi
 # VSO will sync the secret and rolloutRestartTargets will restart the pod
 VAULT_CA_MOUNT="/vault-ssh-ca/vault-ssh-ca.pub"
 
-if ! grep -q "TrustedUserCAKeys $VAULT_CA_MOUNT" "$SSHD_CONFIG" 2>/dev/null; then
-    echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "# Points directly to mounted secret path (synced by VSO)" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "TrustedUserCAKeys $VAULT_CA_MOUNT" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-    echo "  Configured TrustedUserCAKeys to use mount path: $VAULT_CA_MOUNT"
-else
-    echo "  TrustedUserCAKeys already configured"
+# Remove any existing TrustedUserCAKeys configuration (may point to wrong path)
+if grep -q "TrustedUserCAKeys" "$SSHD_CONFIG" 2>/dev/null; then
+    echo "  Removing existing TrustedUserCAKeys configuration..."
+    sudo sed -i '/# Vault SSH CA Authentication/d' "$SSHD_CONFIG"
+    sudo sed -i '/# Points directly to mounted secret/d' "$SSHD_CONFIG"
+    sudo sed -i '/TrustedUserCAKeys/d' "$SSHD_CONFIG"
+    sudo sed -i '/AuthorizedPrincipalsFile none/d' "$SSHD_CONFIG"
+    sudo sed -i '/# Vault CA signed key authentication/d' "$SSHD_CONFIG"
 fi
+
+# Add TrustedUserCAKeys pointing to mount path
+echo "" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+echo "# Vault SSH CA Authentication - Added by setup-ssh-ca.sh" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+echo "# Points directly to mounted secret path (synced by VSO)" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+echo "TrustedUserCAKeys $VAULT_CA_MOUNT" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+echo "  Configured TrustedUserCAKeys to use mount path: $VAULT_CA_MOUNT"
 
 if [ -f "$VAULT_CA_MOUNT" ]; then
     echo "  Vault SSH CA is available at mount path"

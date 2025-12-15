@@ -1139,12 +1139,12 @@ POLICY
         sleep 1
     done
 
-    # Restart devenv pod to pick up the newly synced secrets (SSH CA + VSO secrets)
+    # Restart devenv sandboxes to pick up the newly synced secrets (SSH CA + VSO secrets)
     # This single restart replaces the earlier SSH CA restart to avoid double restart
-    if kubectl get pod -l app=claude-code-sandbox -n devenv &>/dev/null; then
-        echo "🔄 Restarting devenv sandbox to pick up SSH CA and VSO-synced secrets..."
-        kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
-    fi
+    # Both sandboxes need restart so sshd reads the vault-ssh-ca mount at startup
+    echo "🔄 Restarting devenv sandboxes to pick up SSH CA and VSO-synced secrets..."
+    kubectl delete pod -n devenv -l app=claude-code-sandbox --wait=false 2>/dev/null || true
+    kubectl delete pod -n devenv -l app=gemini-sandbox --wait=false 2>/dev/null || true
 
     echo "✅ Vault Secrets Operator deployed"
 else

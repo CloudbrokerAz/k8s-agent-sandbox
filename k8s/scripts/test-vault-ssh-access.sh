@@ -95,13 +95,13 @@ fi
 
 # Test 1.4: SSH CA configured in sshd_config
 echo -n "  SSH CA configured in sshd... "
-if kubectl exec -n "$POD_NAMESPACE" "$POD_NAME" -- sudo grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
+if kubectl exec -n "$POD_NAMESPACE" "$POD_NAME" -- sudo grep -q "TrustedUserCAKeys /vault-ssh-ca/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
     echo -e "${GREEN}✓${NC}"
     ((TESTS_PASSED++))
 else
     echo -e "${RED}✗${NC}"
     echo "    Error: SSH CA not configured in /etc/ssh/sshd_config"
-    echo "    Run: kubectl exec -n $POD_NAMESPACE $POD_NAME -- sudo bash -c 'echo TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub >> /etc/ssh/sshd_config'"
+    echo "    Run: kubectl exec -n $POD_NAMESPACE $POD_NAME -- sudo bash -c 'echo TrustedUserCAKeys /vault-ssh-ca/vault-ssh-ca.pub >> /etc/ssh/sshd_config'"
     ((TESTS_FAILED++))
 fi
 ((TESTS_RUN++))

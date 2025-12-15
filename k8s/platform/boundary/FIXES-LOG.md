@@ -22,7 +22,7 @@ Client → kubectl port-forward → Boundary Worker → Sandbox sshd
 | Boundary Worker | `public_addr` | `localhost:9202` |
 | Boundary Worker | `tls_disable` | `true` (proxy listener) |
 | Sandbox sshd | Port | `22` |
-| Sandbox sshd | `TrustedUserCAKeys` | `/etc/ssh/vault-ssh-ca.pub` |
+| Sandbox sshd | `TrustedUserCAKeys` | `/vault-ssh-ca/vault-ssh-ca.pub` (mount path) |
 | Sandbox sshd | `AuthorizedPrincipalsFile` | `none` |
 | Vault SSH | Role | `devenv-access` |
 | Vault SSH | Principal | `node` |

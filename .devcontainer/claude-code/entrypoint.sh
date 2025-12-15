@@ -18,21 +18,25 @@ else
 fi
 
 # Configure Vault SSH CA for certificate-based authentication
+# Point directly to mount path for centralized updates
 if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
     echo "[2/5] Configuring Vault SSH CA..."
-    sudo cp /vault-ssh-ca/vault-ssh-ca.pub /etc/ssh/vault-ssh-ca.pub
-    sudo chmod 644 /etc/ssh/vault-ssh-ca.pub
 
-    # Configure SSHD for Vault CA-signed key authentication
-    if ! grep -q "TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub" /etc/ssh/sshd_config 2>/dev/null; then
-        sudo tee -a /etc/ssh/sshd_config > /dev/null << 'SSHD_APPEND'
+    # Remove any existing TrustedUserCAKeys configuration
+    if grep -q "TrustedUserCAKeys" /etc/ssh/sshd_config 2>/dev/null; then
+        sudo sed -i '/TrustedUserCAKeys/d' /etc/ssh/sshd_config
+        sudo sed -i '/AuthorizedPrincipalsFile none/d' /etc/ssh/sshd_config
+        sudo sed -i '/# Vault CA signed key authentication/d' /etc/ssh/sshd_config
+    fi
 
-# Vault CA signed key authentication
-TrustedUserCAKeys /etc/ssh/vault-ssh-ca.pub
+    # Configure SSHD to use mount path directly (allows central CA updates)
+    sudo tee -a /etc/ssh/sshd_config > /dev/null << 'SSHD_APPEND'
+
+# Vault CA signed key authentication - points to mount path
+TrustedUserCAKeys /vault-ssh-ca/vault-ssh-ca.pub
 AuthorizedPrincipalsFile none
 SSHD_APPEND
-    fi
-    echo "  ✓ Vault SSH CA configured"
+    echo "  ✓ Vault SSH CA configured (using mount path)"
 else
     echo "[2/5] Vault SSH CA not found, skipping..."
 fi

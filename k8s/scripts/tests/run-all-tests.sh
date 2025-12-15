@@ -155,12 +155,13 @@ echo ""
 echo -e "${BLUE}Phase 2: Component Tests${NC}"
 
 if [[ "$PARALLEL" == "true" ]]; then
-    echo "  Running 4 tests in parallel..."
+    echo "  Running 5 tests in parallel..."
     PARALLEL_TESTS=""
     PARALLEL_TESTS+="$(run_test_parallel "Secrets Verification" "$SCRIPT_DIR/test-secrets.sh") "
     PARALLEL_TESTS+="$(run_test_parallel "Boundary Verification" "$SCRIPT_DIR/test-boundary.sh") "
     PARALLEL_TESTS+="$(run_test_parallel "Keycloak IDP Verification" "$SCRIPT_DIR/test-keycloak.sh") "
     PARALLEL_TESTS+="$(run_test_parallel "Claude Code Sandbox" "$SCRIPT_DIR/test-sandbox.sh") "
+    PARALLEL_TESTS+="$(run_test_parallel "SSH CA Configuration" "$SCRIPT_DIR/test-ssh-ca-config.sh") "
 
     # Wait and collect results (fd 3 = terminal for output display)
     exec 3>&1
@@ -177,7 +178,8 @@ else
         "Secrets Verification:$SCRIPT_DIR/test-secrets.sh" \
         "Boundary Verification:$SCRIPT_DIR/test-boundary.sh" \
         "Keycloak IDP Verification:$SCRIPT_DIR/test-keycloak.sh" \
-        "Claude Code Sandbox:$SCRIPT_DIR/test-sandbox.sh"; do
+        "Claude Code Sandbox:$SCRIPT_DIR/test-sandbox.sh" \
+        "SSH CA Configuration:$SCRIPT_DIR/test-ssh-ca-config.sh"; do
         IFS=':' read -r name script <<< "$test_info"
         run_test_suite "$name" "$script"
         result=$?
