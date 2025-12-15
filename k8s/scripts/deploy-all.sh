@@ -326,6 +326,45 @@ if ! kubectl get namespace ingress-nginx &>/dev/null; then
 else
     echo "✅ Ingress controller already installed"
 fi
+
+# Configure nginx-ingress for optimal Keycloak/Boundary performance
+echo "Configuring nginx-ingress performance settings..."
+kubectl patch configmap ingress-nginx-controller -n ingress-nginx --type merge -p '{
+  "data": {
+    "keep-alive": "300",
+    "keep-alive-requests": "10000",
+    "upstream-keepalive-connections": "200",
+    "upstream-keepalive-timeout": "300",
+    "upstream-keepalive-requests": "100000",
+    "proxy-connect-timeout": "60",
+    "proxy-read-timeout": "3600",
+    "proxy-send-timeout": "3600",
+    "proxy-buffer-size": "128k",
+    "proxy-buffers-number": "8",
+    "client-body-buffer-size": "128k",
+    "client-header-buffer-size": "64k",
+    "large-client-header-buffers": "4 64k",
+    "use-gzip": "true",
+    "gzip-level": "5",
+    "worker-processes": "auto",
+    "max-worker-connections": "65536",
+    "enable-brotli": "true",
+    "http2-max-concurrent-streams": "128",
+    "ssl-session-cache": "true",
+    "ssl-session-cache-size": "10m",
+    "ssl-session-timeout": "10m"
+  }
+}' 2>/dev/null || echo "  ⚠️  ConfigMap patch skipped (may not exist yet)"
+
+# Increase nginx-ingress resources for better performance
+kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' -p='[
+  {"op": "replace", "path": "/spec/template/spec/containers/0/resources", "value": {
+    "requests": {"cpu": "250m", "memory": "256Mi"},
+    "limits": {"cpu": "1000m", "memory": "512Mi"}
+  }}
+]' 2>/dev/null || echo "  ⚠️  Resource patch skipped"
+
+echo "✅ Nginx-ingress configured"
 echo ""
 
 # Check for Boundary Enterprise license file (only if Boundary will be deployed)
