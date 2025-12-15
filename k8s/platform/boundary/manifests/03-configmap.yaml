@@ -89,9 +89,9 @@ data:
       # Initial upstream controller addresses (0.20.1+)
       initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
 
-      # Public address for client connections via kubectl port-forward
-      # Run: kubectl port-forward -n boundary svc/boundary-worker 9202:9202
-      public_addr = "localhost:9202"
+      # Public address for client connections
+      # Uses hostPort exposed via Kind extraPortMappings (see k8s/scripts/kind-config.yaml)
+      public_addr = "127.0.0.1:9202"
     }
 
     # Proxy listener - session connections

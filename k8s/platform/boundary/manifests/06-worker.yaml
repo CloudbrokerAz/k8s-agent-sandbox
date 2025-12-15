@@ -71,6 +71,7 @@ spec:
             - -config=/boundary/config/worker.hcl
           ports:
             - containerPort: 9202
+              hostPort: 9202  # Exposed via Kind extraPortMappings for client connections
               name: proxy
             - containerPort: 9203
               name: ops

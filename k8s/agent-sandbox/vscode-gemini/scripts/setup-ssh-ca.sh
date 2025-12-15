@@ -14,6 +14,12 @@ if grep -q "^Port 2222" "$SSHD_CONFIG" 2>/dev/null; then
     echo "  Changed sshd port from 2222 to 22"
 fi
 
+# Enable public key authentication
+if grep -q "^#PubkeyAuthentication yes" "$SSHD_CONFIG" 2>/dev/null; then
+    sudo sed -i 's/^#PubkeyAuthentication yes/PubkeyAuthentication yes/' "$SSHD_CONFIG"
+    echo "  Enabled public key authentication"
+fi
+
 # Configure Vault SSH CA if mounted
 if [ -f /vault-ssh-ca/vault-ssh-ca.pub ]; then
     echo "  Configuring Vault SSH CA..."
