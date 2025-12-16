@@ -85,8 +85,8 @@ SSH_PUBLIC_KEY=$(cat "$TEMP_DIR/boundary-ssh.pub")
 
 # Sign the public key with Vault SSH CA
 echo "  Signing key with Vault SSH CA..."
-# Sign with TTL within the role's max_ttl (24h)
-# Note: devenv-access role has max_ttl=24h, so we default to 24h
+# Sign with TTL within the role's max_ttl (720h = 30 days)
+# Default to 24h for reasonable rotation, can be overridden via CERT_TTL env var
 CERT_TTL="${CERT_TTL:-24h}"
 SIGNED_CERT=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -i -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault write -field=signed_key ssh/sign/devenv-access public_key='$SSH_PUBLIC_KEY' valid_principals=node ttl=$CERT_TTL" 2>/dev/null || echo "")
 
@@ -95,6 +95,38 @@ if [[ -z "$SIGNED_CERT" ]]; then
     exit 1
 fi
 echo "✅ Key signed by Vault SSH CA (valid for $CERT_TTL)"
+
+# Verify certificate has required extensions for VS Code Remote SSH
+echo "$SIGNED_CERT" > "$TEMP_DIR/boundary-ssh-cert.pub"
+CERT_EXTENSIONS=$(ssh-keygen -L -f "$TEMP_DIR/boundary-ssh-cert.pub" 2>/dev/null | grep -A10 "Extensions:" || echo "")
+
+if ! echo "$CERT_EXTENSIONS" | grep -q "permit-port-forwarding"; then
+    echo ""
+    echo "⚠️  WARNING: Certificate missing 'permit-port-forwarding' extension!"
+    echo "   VS Code Remote SSH will fail without this extension."
+    echo ""
+    echo "   The Vault SSH role may need to be updated. Run:"
+    echo "   kubectl exec -n vault vault-0 -i -- sh -c \"VAULT_TOKEN='<token>' vault write ssh/roles/devenv-access -\" << 'EOF'"
+    echo '   {'
+    echo '     "key_type": "ca",'
+    echo '     "allowed_users": "node,root",'
+    echo '     "default_user": "node",'
+    echo '     "allow_user_certificates": true,'
+    echo '     "ttl": "8h",'
+    echo '     "max_ttl": "720h",'
+    echo '     "allowed_extensions": "permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding",'
+    echo '     "default_extensions": {'
+    echo '       "permit-pty": "",'
+    echo '       "permit-port-forwarding": "",'
+    echo '       "permit-agent-forwarding": "",'
+    echo '       "permit-X11-forwarding": ""'
+    echo '     }'
+    echo '   }'
+    echo '   EOF'
+    echo ""
+    exit 1
+fi
+echo "✅ Certificate includes port-forwarding extension (VS Code compatible)"
 
 # ==========================================
 # Step 3: Store Credentials in Vault KV
