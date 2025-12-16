@@ -466,7 +466,8 @@ data:
     worker {
       name = "kubernetes-worker"
       initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
-      public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
+      # Uses hostPort exposed via Kind extraPortMappings
+      public_addr = "127.0.0.1:9202"
     }
     listener "tcp" { address = "0.0.0.0:9202"; purpose = "proxy"; tls_disable = true }
     listener "tcp" { address = "0.0.0.0:9203"; purpose = "ops"; tls_disable = true }

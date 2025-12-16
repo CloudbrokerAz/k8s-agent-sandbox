@@ -1022,7 +1022,8 @@ data:
     worker {
       name = "kubernetes-worker"
       initial_upstreams = ["boundary-controller-cluster.boundary.svc.cluster.local:9201"]
-      public_addr = "boundary-worker.boundary.svc.cluster.local:9202"
+      # Uses hostPort exposed via Kind extraPortMappings (see k8s/scripts/kind-config.yaml)
+      public_addr = "127.0.0.1:9202"
     }
 
     listener "tcp" {

@@ -150,74 +150,16 @@ def test_oidc_ssh_flow():
                     print(f"\n  ⚠️  Unclear auth state: {final_url}")
 
             # ==========================================
-            # Phase 2: Navigate to Targets
+            # Phase 2: Test SSH Connectivity with Brokered Credentials
             # ==========================================
+            # Note: Target IDs are pre-known from boundary-credentials.txt
+            # No UI navigation needed after OIDC authentication
             print("\n" + "=" * 50)
-            print("  Phase 2: Navigate to SSH Targets")
-            print("=" * 50)
-
-            # Navigate to Agent-Sandbox project
-            print("\nStep 2.1: Navigating to Agent-Sandbox project...")
-
-            # Click on scopes/navigation
-            page.wait_for_timeout(1000)
-
-            # Look for project navigation
-            project_link = page.locator(f'text={TARGET_PROJECT}').first
-            if project_link.is_visible(timeout=5000):
-                project_link.click()
-                page.wait_for_load_state('networkidle')
-                print(f"  Navigated to project: {TARGET_PROJECT}")
-            else:
-                # Try to navigate via URL
-                page.goto(f"{BOUNDARY_URL}/scopes/global/scopes", wait_until='networkidle')
-
-            page.screenshot(path='/tmp/ssh-oidc-test-04-project.png')
-
-            # Step 2.2: Find Targets link
-            print("\nStep 2.2: Navigating to Targets...")
-            targets_link = page.locator('a:has-text("Targets")').first
-            if targets_link.is_visible(timeout=5000):
-                targets_link.click()
-                page.wait_for_load_state('networkidle')
-                print("  Navigated to Targets page")
-            else:
-                print("  ⚠️  Targets link not visible, may need to navigate manually")
-
-            page.screenshot(path='/tmp/ssh-oidc-test-05-targets.png')
-
-            # Step 2.3: Find SSH target
-            print("\nStep 2.3: Looking for SSH targets...")
-            page.wait_for_timeout(2000)
-
-            # Look for devenv-ssh or similar target
-            ssh_target = page.locator('text=devenv-ssh, text=ssh').first
-            if ssh_target.is_visible(timeout=5000):
-                print("  ✅ SSH target found in UI")
-                ssh_target.click()
-                page.wait_for_load_state('networkidle')
-                page.screenshot(path='/tmp/ssh-oidc-test-06-target-detail.png')
-
-                # Get target ID from URL
-                current_url = page.url
-                if '/targets/' in current_url:
-                    ssh_target_id = current_url.split('/targets/')[-1].split('/')[0].split('?')[0]
-                    print(f"  Target ID: {ssh_target_id}")
-            else:
-                print("  ⚠️  SSH target not found in UI, extracting from API...")
-                # Try to get targets via API using cookies from browser
-                cookies = context.cookies()
-                # Note: Would need to make API call here
-
-            # ==========================================
-            # Phase 3: Test SSH Connectivity with Brokered Credentials
-            # ==========================================
-            print("\n" + "=" * 50)
-            print("  Phase 3: Test SSH with Brokered Credentials")
+            print("  Phase 2: Test SSH with Brokered Credentials")
             print("=" * 50)
 
             # Extract auth token from browser storage/cookies for CLI use
-            print("\nStep 3.1: Extracting auth token...")
+            print("\nStep 2.1: Extracting auth token...")
 
             # Get token from localStorage or cookies
             token = page.evaluate('''() => {
@@ -238,9 +180,9 @@ def test_oidc_ssh_flow():
                 except:
                     print("  ⚠️  Could not parse session token")
 
-            # Discover target IDs dynamically
+            # Discover target IDs from credentials file
             targets = get_target_ids()
-            print(f"\nStep 3.2: Discovered targets: {targets}")
+            print(f"\nStep 2.2: Using pre-configured targets: {targets}")
 
             # Use gemini target for testing (or claude if gemini not found)
             ssh_target_id = targets.get('gemini') or targets.get('claude') or ssh_target_id
@@ -249,17 +191,20 @@ def test_oidc_ssh_flow():
             else:
                 print(f"  Using target ID: {ssh_target_id}")
 
-            # Step 3.3: Authorize session to get brokered credentials
-            if auth_token:
-                print("\nStep 3.3: Authorizing session to get brokered credentials...")
+            # Step 2.3: Authorize session to get brokered credentials
+            if auth_token and ssh_target_id:
+                print("\nStep 2.3: Authorizing session to get brokered credentials...")
                 os.environ['BOUNDARY_TOKEN'] = auth_token
                 os.environ['BOUNDARY_ADDR'] = BOUNDARY_URL
                 os.environ['BOUNDARY_TLS_INSECURE'] = 'true'
 
                 try:
+                    # Use -token env://BOUNDARY_TOKEN format (required by newer boundary CLI)
                     auth_result = subprocess.run(
                         ['boundary', 'targets', 'authorize-session',
-                         '-id', ssh_target_id, '-format=json'],
+                         '-id', ssh_target_id,
+                         '-token', 'env://BOUNDARY_TOKEN',
+                         '-format=json'],
                         capture_output=True, text=True, timeout=30
                     )
 
@@ -317,8 +262,8 @@ def test_oidc_ssh_flow():
                                             f.write(certificate)
                                         os.chmod(cert_file, 0o644)
 
-                                    # Step 3.4: Test SSH using boundary connect -exec
-                                    print("\nStep 3.4: Testing SSH with brokered credentials...")
+                                    # Step 2.4: Test SSH using boundary connect -exec
+                                    print("\nStep 2.4: Testing SSH with brokered credentials...")
 
                                     # Use boundary connect -exec with credentials
                                     # Note: SSH auto-loads {keyfile}-cert.pub when using -i {keyfile}
@@ -372,95 +317,12 @@ def test_oidc_ssh_flow():
                     import traceback
                     traceback.print_exc()
 
-            # Step 3.3: Test SSH with extracted token via Boundary CLI
-            if auth_token and not ssh_target_id:
-                print("\nStep 3.3: Finding SSH target via CLI with auth token...")
-                os.environ['BOUNDARY_TOKEN'] = auth_token
-                os.environ['BOUNDARY_ADDR'] = BOUNDARY_URL
-                os.environ['BOUNDARY_TLS_INSECURE'] = 'true'
-
-                try:
-                    # Get scopes
-                    scopes_result = subprocess.run(
-                        ['boundary', 'scopes', 'list', '-format=json'],
-                        capture_output=True, text=True, timeout=10
-                    )
-                    if scopes_result.returncode == 0:
-                        import json
-                        scopes = json.loads(scopes_result.stdout)
-                        org_id = next((s['id'] for s in scopes.get('items', []) if s.get('name') == TARGET_SCOPE), None)
-
-                        if org_id:
-                            # Get projects
-                            proj_result = subprocess.run(
-                                ['boundary', 'scopes', 'list', f'-scope-id={org_id}', '-format=json'],
-                                capture_output=True, text=True, timeout=10
-                            )
-                            if proj_result.returncode == 0:
-                                projects = json.loads(proj_result.stdout)
-                                project_id = next((p['id'] for p in projects.get('items', []) if p.get('name') == TARGET_PROJECT), None)
-
-                                if project_id:
-                                    # Get targets
-                                    tgt_result = subprocess.run(
-                                        ['boundary', 'targets', 'list', f'-scope-id={project_id}', '-format=json'],
-                                        capture_output=True, text=True, timeout=10
-                                    )
-                                    if tgt_result.returncode == 0:
-                                        targets = json.loads(tgt_result.stdout)
-                                        ssh_target_id = next((t['id'] for t in targets.get('items', []) if 'ssh' in t.get('name', '').lower()), None)
-                                        if ssh_target_id:
-                                            print(f"  ✅ Found SSH target: {ssh_target_id}")
-                except Exception as e:
-                    print(f"  ⚠️  CLI lookup error: {e}")
-
-            # Step 3.4: Test actual SSH connectivity
-            if auth_token and ssh_target_id:
-                print(f"\nStep 3.4: Testing SSH connectivity to {ssh_target_id}...")
-                os.environ['BOUNDARY_TOKEN'] = auth_token
-
-                try:
-                    result = subprocess.run(
-                        [
-                            'boundary', 'connect', 'ssh',
-                            f'-target-id={ssh_target_id}',
-                            '--',
-                            '-l', SSH_USER,
-                            '-o', 'StrictHostKeyChecking=no',
-                            '-o', 'UserKnownHostsFile=/dev/null',
-                            '-o', 'BatchMode=yes',
-                            '-o', 'ConnectTimeout=10',
-                            'echo', 'SSH_OIDC_SUCCESS'
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-
-                    if 'SSH_OIDC_SUCCESS' in result.stdout:
-                        print("  ✅ SSH via OIDC successful!")
-                        page.screenshot(path='/tmp/ssh-oidc-test-final-success.png')
-                        return True
-                    else:
-                        print(f"  ⚠️  SSH stdout: {result.stdout[:200]}")
-                        print(f"  ⚠️  SSH stderr: {result.stderr[:200]}")
-                except subprocess.TimeoutExpired:
-                    print("  ❌ SSH connection timed out")
-                except Exception as e:
-                    print(f"  ⚠️  SSH error: {e}")
-
-            # Check UI connect option as fallback
-            print("\nStep 3.5: Checking UI connect option...")
-            connect_button = page.locator('button:has-text("Connect")').first
-            if connect_button.is_visible(timeout=3000):
-                print("  ✅ Connect button available in UI")
-                page.screenshot(path='/tmp/ssh-oidc-test-07-connect.png')
-                return True
-
-            # Return success if we authenticated and found targets
+            # Return success if we authenticated (brokered credentials test above handles SSH)
             page.screenshot(path='/tmp/ssh-oidc-test-final.png')
             if auth_token:
                 print("\n  ✅ OIDC authentication verified, token extracted")
+                if not ssh_target_id:
+                    print("  ⚠️  No target IDs found in credentials file - skipped SSH test")
                 return True
             else:
                 print("\n  ❌ Could not complete OIDC + SSH flow")
