@@ -85,8 +85,9 @@ SSH_PUBLIC_KEY=$(cat "$TEMP_DIR/boundary-ssh.pub")
 
 # Sign the public key with Vault SSH CA
 echo "  Signing key with Vault SSH CA..."
-# Sign with extended TTL (720h = 30 days)
-CERT_TTL="${CERT_TTL:-720h}"
+# Sign with TTL within the role's max_ttl (24h)
+# Note: devenv-access role has max_ttl=24h, so we default to 24h
+CERT_TTL="${CERT_TTL:-24h}"
 SIGNED_CERT=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -i -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault write -field=signed_key ssh/sign/devenv-access public_key='$SSH_PUBLIC_KEY' valid_principals=node ttl=$CERT_TTL" 2>/dev/null || echo "")
 
 if [[ -z "$SIGNED_CERT" ]]; then

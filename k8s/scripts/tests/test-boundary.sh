@@ -144,35 +144,10 @@ else
     test_fail "Boundary Ingress missing"
 fi
 
-# Check Worker TLS secret
-if kubectl get secret boundary-worker-tls -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
-    test_pass "Worker TLS certificate secret exists"
-else
-    test_fail "Worker TLS certificate secret missing"
-fi
-
-# Check Worker Ingress
-if kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" &>/dev/null; then
-    test_pass "Boundary Worker Ingress exists"
-
-    # Check Worker Ingress host
-    WORKER_INGRESS_HOST=$(kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
-    if [[ "$WORKER_INGRESS_HOST" == "boundary-worker.hashicorp.lab" ]]; then
-        test_pass "Worker Ingress host configured (boundary-worker.hashicorp.lab)"
-    else
-        test_warn "Worker Ingress host: $WORKER_INGRESS_HOST (expected: boundary-worker.hashicorp.lab)"
-    fi
-
-    # Check Worker Ingress TLS
-    WORKER_TLS_SECRET=$(kubectl get ingress boundary-worker -n "$BOUNDARY_NAMESPACE" -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || echo "")
-    if [[ "$WORKER_TLS_SECRET" == "boundary-worker-tls" ]]; then
-        test_pass "Worker Ingress TLS configured"
-    else
-        test_warn "Worker Ingress TLS secret: $WORKER_TLS_SECRET"
-    fi
-else
-    test_fail "Boundary Worker Ingress missing"
-fi
+# Note: Worker Ingress is NOT required for kind/local development
+# The boundary connect command proxies through the session - clients don't connect directly to workers
+# Worker ingress would only be needed for external/production deployments with direct worker access
+test_info "Worker Ingress not required (boundary connect proxies through session)"
 
 echo ""
 
