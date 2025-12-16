@@ -184,8 +184,8 @@ def test_oidc_ssh_flow():
             targets = get_target_ids()
             print(f"\nStep 2.2: Using pre-configured targets: {targets}")
 
-            # Use gemini target for testing (or claude if gemini not found)
-            ssh_target_id = targets.get('gemini') or targets.get('claude') or ssh_target_id
+            # Use claude target for testing (preferred)
+            ssh_target_id = targets.get('claude') or targets.get('gemini') or ssh_target_id
             if not ssh_target_id:
                 print("  ⚠️  No target IDs found in credentials file")
             else:
@@ -317,13 +317,17 @@ def test_oidc_ssh_flow():
                     import traceback
                     traceback.print_exc()
 
-            # Return success if we authenticated (brokered credentials test above handles SSH)
+            # SSH test is REQUIRED when targets are configured
+            # Only return success if SSH worked (we would have returned True earlier at line 300)
             page.screenshot(path='/tmp/ssh-oidc-test-final.png')
             if auth_token:
                 print("\n  ✅ OIDC authentication verified, token extracted")
                 if not ssh_target_id:
                     print("  ⚠️  No target IDs found in credentials file - skipped SSH test")
-                return True
+                    return True  # OK if no targets configured
+                else:
+                    print("  ❌ SSH test FAILED - authorize-session or SSH connection failed")
+                    return False  # FAIL if targets configured but SSH didn't work
             else:
                 print("\n  ❌ Could not complete OIDC + SSH flow")
                 return False

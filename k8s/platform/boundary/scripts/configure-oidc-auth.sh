@@ -644,7 +644,7 @@ create_managed_group() {
     EXISTING_GROUP=$(run_boundary managed-groups list -auth-method-id="$AUTH_METHOD_ID" -format=json 2>/dev/null | jq -r ".items[]? | select(.name==\"$GROUP_NAME\") | .id" 2>/dev/null || echo "")
 
     if [[ -n "$EXISTING_GROUP" ]]; then
-        echo "  ✅ Managed group '$GROUP_NAME' already exists ($EXISTING_GROUP)"
+        echo "  ✅ Managed group '$GROUP_NAME' already exists ($EXISTING_GROUP)" >&2
         # Ensure filter is set correctly (may have been null from previous runs)
         run_boundary managed-groups update oidc \
             -id="$EXISTING_GROUP" \
@@ -662,10 +662,10 @@ create_managed_group() {
 
         GROUP_ID=$(echo "$GROUP_RESULT" | jq -r '.item.id // empty')
         if [[ -z "$GROUP_ID" ]]; then
-            echo "  ⚠️  Failed to create managed group '$GROUP_NAME'"
+            echo "  ⚠️  Failed to create managed group '$GROUP_NAME'" >&2
             echo ""
         else
-            echo "  ✅ Created managed group: $GROUP_NAME ($GROUP_ID)"
+            echo "  ✅ Created managed group: $GROUP_NAME ($GROUP_ID)" >&2
             echo "$GROUP_ID"
         fi
     fi
