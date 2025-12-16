@@ -754,14 +754,27 @@ EOF
         kubectl exec -n vault vault-0 -- sh -c "
             export VAULT_TOKEN='$ROOT_TOKEN'
             vault write ssh/config/ca generate_signing_key=true 2>/dev/null || echo '  (CA already configured)'
-            vault write ssh/roles/devenv-access \
-                key_type=ca \
-                ttl=1h \
-                max_ttl=24h \
-                allow_user_certificates=true \
-                allowed_users='node,root' \
-                default_user=node 2>/dev/null || true
         " 2>/dev/null
+
+        # Create SSH role with extensions for VS Code Remote SSH port forwarding
+        # Using JSON input to properly set default_extensions map
+        kubectl exec -n vault vault-0 -i -- sh -c "export VAULT_TOKEN='$ROOT_TOKEN' && vault write ssh/roles/devenv-access -" << 'SSH_ROLE_EOF'
+{
+  "key_type": "ca",
+  "allowed_users": "node,root",
+  "default_user": "node",
+  "allow_user_certificates": true,
+  "ttl": "8h",
+  "max_ttl": "720h",
+  "allowed_extensions": "permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding",
+  "default_extensions": {
+    "permit-pty": "",
+    "permit-port-forwarding": "",
+    "permit-agent-forwarding": "",
+    "permit-X11-forwarding": ""
+  }
+}
+SSH_ROLE_EOF
 
         # Export SSH CA public key and create secret
         SSH_CA_KEY=$(kubectl exec -n vault vault-0 -- sh -c "
@@ -851,8 +864,26 @@ EOF
                 kubectl exec -n vault vault-0 -- sh -c "
                     export VAULT_TOKEN='$ROOT_TOKEN'
                     vault write ssh/config/ca generate_signing_key=true 2>/dev/null || true
-                    vault write ssh/roles/devenv-access key_type=ca ttl=1h max_ttl=24h allow_user_certificates=true allowed_users='node,root' default_user=node 2>/dev/null || true
                 " 2>/dev/null
+
+                # Create SSH role with extensions for VS Code Remote SSH port forwarding
+                kubectl exec -n vault vault-0 -i -- sh -c "export VAULT_TOKEN='$ROOT_TOKEN' && vault write ssh/roles/devenv-access -" << 'SSH_ROLE_EOF2'
+{
+  "key_type": "ca",
+  "allowed_users": "node,root",
+  "default_user": "node",
+  "allow_user_certificates": true,
+  "ttl": "8h",
+  "max_ttl": "720h",
+  "allowed_extensions": "permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding",
+  "default_extensions": {
+    "permit-pty": "",
+    "permit-port-forwarding": "",
+    "permit-agent-forwarding": "",
+    "permit-X11-forwarding": ""
+  }
+}
+SSH_ROLE_EOF2
 
                 # Export SSH CA public key
                 SSH_CA_KEY=$(kubectl exec -n vault vault-0 -- sh -c "export VAULT_TOKEN='$ROOT_TOKEN'; vault read -field=public_key ssh/config/ca 2>/dev/null" || echo "")

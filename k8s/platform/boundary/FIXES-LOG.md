@@ -118,3 +118,72 @@ This uses a shared pre-signed SSH key (valid for 24h). For per-user certificates
 | `configure-credential-brokering.sh` | Sets up brokered credentials |
 | `secret/boundary/ssh-credentials` | Vault KV path for SSH credentials |
 | `clvlt_*` | Vault-generic credential library ID |
+
+## VS Code Remote SSH Port Forwarding Fix
+
+**Status: FIXED** (2025-12-17)
+
+### Problem
+
+VS Code Remote SSH connections were timing out. SSH authentication succeeded (via Vault CA-signed certificates), but VS Code's `direct-tcpip` port forwarding requests were being refused:
+
+```
+refused local port forward: originator 127.0.0.1 port 54008, target 127.0.0.1 port 33203
+```
+
+### Root Cause
+
+The Vault SSH role `devenv-access` was created **without certificate extensions**. SSH certificates require explicit extensions like `permit-port-forwarding` to allow TCP forwarding.
+
+The `deploy-all.sh` script was using simple CLI arguments which don't properly set `default_extensions` (a map type):
+
+```bash
+# WRONG - extensions not set properly
+vault write ssh/roles/devenv-access key_type=ca ttl=1h ...
+```
+
+### Solution
+
+Updated all deployment scripts to use JSON input for SSH role creation:
+
+```bash
+kubectl exec -n vault vault-0 -i -- sh -c "vault write ssh/roles/devenv-access -" << 'EOF'
+{
+  "key_type": "ca",
+  "allowed_users": "node,root",
+  "default_user": "node",
+  "allow_user_certificates": true,
+  "ttl": "8h",
+  "max_ttl": "720h",
+  "allowed_extensions": "permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding",
+  "default_extensions": {
+    "permit-pty": "",
+    "permit-port-forwarding": "",
+    "permit-agent-forwarding": "",
+    "permit-X11-forwarding": ""
+  }
+}
+EOF
+```
+
+### Files Updated
+
+| File | Change |
+|------|--------|
+| `k8s/scripts/deploy-all.sh` | Two locations updated to use JSON input |
+| `k8s/scripts/deploy-all-optimized.sh` | SSH role creation updated to use JSON input |
+| `k8s/platform/vault/scripts/configure-ssh-engine.sh` | Already correct (reference implementation) |
+| `k8s/agent-sandbox/vscode-*/scripts/setup-ssh-ca.sh` | Added DEBUG3 logging for troubleshooting |
+
+### Verification
+
+```bash
+# Check role has extensions
+vault read ssh/roles/devenv-access | grep extensions
+
+# Expected output:
+# allowed_extensions    permit-pty,permit-port-forwarding,permit-agent-forwarding,permit-X11-forwarding
+# default_extensions    map[permit-X11-forwarding: permit-agent-forwarding: permit-port-forwarding: permit-pty:]
+
+# After fix, get a new certificate and retry VS Code connection
+```

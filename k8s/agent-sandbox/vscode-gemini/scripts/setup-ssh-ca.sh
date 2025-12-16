@@ -42,8 +42,16 @@ echo "# Points directly to mounted secret path (synced by VSO)" | sudo tee -a "$
 echo "TrustedUserCAKeys $VAULT_CA_MOUNT" | sudo tee -a "$SSHD_CONFIG" > /dev/null
 echo "AuthorizedPrincipalsFile none" | sudo tee -a "$SSHD_CONFIG" > /dev/null
 echo "AllowTcpForwarding yes" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+echo "LogLevel DEBUG3" | sudo tee -a "$SSHD_CONFIG" > /dev/null
 echo "  Configured TrustedUserCAKeys to use mount path: $VAULT_CA_MOUNT"
 echo "  Enabled TCP forwarding"
+echo "  Enabled DEBUG3 logging"
+
+# Setup SSH logging to file (since rsyslog is not running)
+SSH_LOG_DIR="/var/log/ssh"
+sudo mkdir -p "$SSH_LOG_DIR"
+sudo chmod 755 "$SSH_LOG_DIR"
+echo "  Created SSH log directory: $SSH_LOG_DIR"
 
 if [ -f "$VAULT_CA_MOUNT" ]; then
     echo "  Vault SSH CA is available at mount path"
@@ -65,7 +73,9 @@ if pgrep -x sshd > /dev/null; then
     sleep 1
 fi
 
-echo "  Starting SSH server on port 22..."
-sudo /usr/sbin/sshd 2>/dev/null || true
+echo "  Starting SSH server on port 22 with logging..."
+# Start sshd with logging to file (-E option) for debugging
+sudo /usr/sbin/sshd -E /var/log/ssh/sshd.log 2>/dev/null || true
+echo "  SSH logs available at: /var/log/ssh/sshd.log"
 
 echo "  SSH server configuration complete"
