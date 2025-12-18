@@ -219,7 +219,7 @@ echo ""
 echo "Step 5: Create Vault Token for Boundary"
 echo "----------------------------------------"
 
-BOUNDARY_VAULT_TOKEN=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault token create -orphan -period=24h -policy=boundary-ssh-brokered -format=json" 2>/dev/null | jq -r '.auth.client_token' || echo "")
+BOUNDARY_VAULT_TOKEN=$(kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault token create -orphan -period=24h -policy=boundary-ssh-full -format=json" 2>/dev/null | jq -r '.auth.client_token' || echo "")
 
 if [[ -z "$BOUNDARY_VAULT_TOKEN" ]]; then
     echo "❌ Failed to create Vault token"
