@@ -173,8 +173,18 @@ echo "Step 4: Create Vault Policy for Boundary"
 echo "-----------------------------------------"
 
 VAULT_POLICY='
-# Access to brokered SSH credentials
+# Access to brokered SSH credentials (KV v2)
 path "secret/data/boundary/ssh-credentials" {
+  capabilities = ["read"]
+}
+
+# Access to SSH certificate signing (for credential injection)
+path "ssh/sign/devenv-access" {
+  capabilities = ["create", "update"]
+}
+
+# Read SSH roles (for validation)
+path "ssh/roles/*" {
   capabilities = ["read"]
 }
 
@@ -206,11 +216,12 @@ path "sys/capabilities-self" {
 }
 '
 
-kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault policy write boundary-ssh-brokered - <<'EOFPOLICY'
+# Create unified policy for both brokering and injection
+kubectl exec -n "$VAULT_NAMESPACE" vault-0 -- sh -c "VAULT_TOKEN='$VAULT_ROOT_TOKEN' vault policy write boundary-ssh-full - <<'EOFPOLICY'
 $VAULT_POLICY
 EOFPOLICY" >/dev/null 2>&1
 
-echo "✅ Created Vault policy: boundary-ssh-brokered"
+echo "✅ Created Vault policy: boundary-ssh-full (supports brokering + injection)"
 
 # ==========================================
 # Step 5: Create Orphan Periodic Token
@@ -446,7 +457,7 @@ echo "  ✅ Credential Brokering Configuration Complete"
 echo "=========================================="
 echo ""
 echo "Components configured:"
-echo "  • Vault Policy:           boundary-ssh-brokered"
+echo "  • Vault Policy:           boundary-ssh-full"
 echo "  • Vault KV Secret:        secret/boundary/ssh-credentials"
 echo "  • Vault Credential Store: $VAULT_STORE_ID"
 echo "  • Credential Library:     $SSH_LIB_ID (vault-generic)"
@@ -498,7 +509,7 @@ if [[ -f "$CREDS_FILE" ]]; then
 Vault Credential Store: $VAULT_STORE_ID
 Credential Library:     $SSH_LIB_ID (vault-generic)
 Vault KV Path:          secret/boundary/ssh-credentials
-Vault Policy:           boundary-ssh-brokered
+Vault Policy:           boundary-ssh-full
 
 SSH connection (with brokered credentials):
   # Authenticate first (OIDC or password)
