@@ -1616,6 +1616,19 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
         fi
     fi
 
+    # Configure SSH credential injection (Enterprise feature - requires Vault SSH CA)
+    # This enables SSH certificate-based authentication via Vault integration
+    if [[ -z "$BOUNDARY_TARGETS_FAILED" ]] && [[ -f "$K8S_DIR/platform/boundary/scripts/configure-ssh-credential-injection.sh" ]]; then
+        echo ""
+        echo "Configuring SSH credential injection..."
+        if ! "$K8S_DIR/platform/boundary/scripts/configure-ssh-credential-injection.sh" 2>&1; then
+            echo "⚠️  SSH credential injection configuration failed (non-fatal)"
+            echo "   To retry: $K8S_DIR/platform/boundary/scripts/configure-ssh-credential-injection.sh"
+        else
+            echo "✅ SSH credential injection configured"
+        fi
+    fi
+
     # Report configuration status
     if [[ -n "$BOUNDARY_TARGETS_FAILED" ]] || [[ -n "$BOUNDARY_OIDC_FAILED" ]]; then
         echo ""
