@@ -297,6 +297,58 @@ else
 fi
 
 # ==========================================
+# Step 7: Validate Configuration
+# ==========================================
+echo ""
+echo "Step 7: Validate Configuration"
+echo "-------------------------------"
+
+# Read and validate target configuration
+TARGET_CONFIG=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary targets read -id="$TARGET_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
+
+TARGET_TYPE=$(echo "$TARGET_CONFIG" | jq -r '.item.type // empty')
+INJECTED_CREDS=$(echo "$TARGET_CONFIG" | jq -r '.item.injected_application_credential_source_ids[]? // empty' | head -1)
+
+if [[ "$TARGET_TYPE" == "ssh" ]]; then
+    echo "✅ Target type: SSH (correct for credential injection)"
+else
+    echo "⚠️  Target type: $TARGET_TYPE (should be SSH for injection)"
+fi
+
+if [[ "$INJECTED_CREDS" == "$SSH_CERT_LIB_ID" ]]; then
+    echo "✅ Injected credential source: Configured correctly"
+else
+    echo "⚠️  Injected credential source: Not found or incorrect"
+fi
+
+# Validate credential library
+LIB_CONFIG=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary credential-libraries read -id="$SSH_CERT_LIB_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
+
+LIB_TYPE=$(echo "$LIB_CONFIG" | jq -r '.item.type // empty')
+VAULT_PATH=$(echo "$LIB_CONFIG" | jq -r '.item.attributes.path // empty')
+USERNAME=$(echo "$LIB_CONFIG" | jq -r '.item.attributes.username // empty')
+
+if [[ "$LIB_TYPE" == "vault-ssh-certificate" ]]; then
+    echo "✅ Credential library type: vault-ssh-certificate"
+else
+    echo "⚠️  Credential library type: $LIB_TYPE"
+fi
+
+if [[ "$VAULT_PATH" == "ssh/sign/devenv-access" ]]; then
+    echo "✅ Vault path: ssh/sign/devenv-access"
+else
+    echo "⚠️  Vault path: $VAULT_PATH"
+fi
+
+if [[ "$USERNAME" == "node" ]]; then
+    echo "✅ Username: node"
+else
+    echo "⚠️  Username: $USERNAME"
+fi
+
+# ==========================================
 # Summary
 # ==========================================
 echo ""
@@ -319,14 +371,23 @@ echo "  2. INJECT the certificate directly into the SSH connection"
 echo "  3. User never sees the credentials (Enterprise security)"
 echo ""
 echo "Usage:"
-echo "  # Authenticate to Boundary"
+echo "  # 1. Port forward Boundary worker (in separate terminal)"
+echo "  kubectl port-forward -n boundary svc/boundary-worker 9202:9202"
+echo ""
+echo "  # 2. Authenticate to Boundary (OIDC or password)"
 echo "  export BOUNDARY_ADDR=https://boundary.hashicorp.lab"
 echo "  export BOUNDARY_TLS_INSECURE=true"
+echo "  boundary authenticate oidc -auth-method-id=<oidc-method-id>"
+echo "  # OR"
 echo "  boundary authenticate password -auth-method-id=ampw_ndMBrw5s8N -login-name=admin"
 echo ""
-echo "  # Connect with automatic credential injection"
+echo "  # 3. Connect with automatic credential injection"
 echo "  boundary connect ssh -target-id=$TARGET_ID"
 echo ""
-echo "  # Or use with exec for custom SSH options"
-echo "  boundary connect -target-id=$TARGET_ID -exec ssh -- -l node -p '{{boundary.port}}' '{{boundary.ip}}'"
+echo "  # 4. Or test with a simple command"
+echo "  boundary connect ssh -target-id=$TARGET_ID -- hostname"
+echo ""
+echo "Comparison with Brokered Credentials:"
+echo "  • claude-ssh (brokered):   Credentials returned to user"
+echo "  • claude-ssh-injected:     Credentials INJECTED (never exposed)"
 echo ""
