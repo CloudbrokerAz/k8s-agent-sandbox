@@ -180,19 +180,153 @@ else
 fi
 
 # ==========================================
+# Step 5: Find Host Catalog and Host Set
+# ==========================================
+echo ""
+echo "Step 5: Find Host Catalog and Host Set"
+echo "---------------------------------------"
+
+# Get host catalogs in the project
+HOST_CATALOGS=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary host-catalogs list -scope-id="$PROJECT_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo '{"items":[]}')
+
+CATALOG_ID=$(echo "$HOST_CATALOGS" | jq -r '.items[]? | select(.name=="devenv-hosts") | .id' 2>/dev/null | head -1 || echo "")
+
+if [[ -z "$CATALOG_ID" ]]; then
+    echo "❌ Host catalog 'devenv-hosts' not found"
+    echo "   Run configure-targets.sh first to create the host catalog"
+    exit 1
+fi
+echo "✅ Host catalog found: devenv-hosts ($CATALOG_ID)"
+
+# Get host sets in the catalog
+HOSTSETS=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary host-sets list -host-catalog-id="$CATALOG_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo '{"items":[]}')
+
+HOSTSET_ID=$(echo "$HOSTSETS" | jq -r '.items[]? | select(.name=="claude-set") | .id' 2>/dev/null | head -1 || echo "")
+
+if [[ -z "$HOSTSET_ID" ]]; then
+    echo "❌ Host set 'claude-set' not found"
+    echo "   Run configure-targets.sh first to create the host set"
+    exit 1
+fi
+echo "✅ Host set found: claude-set ($HOSTSET_ID)"
+
+# ==========================================
+# Step 6: Create Target with SSH Credential Injection
+# ==========================================
+echo ""
+echo "Step 6: Create Target with SSH Credential Injection"
+echo "----------------------------------------------------"
+
+# Check if target already exists
+TARGETS=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary targets list -scope-id="$PROJECT_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo '{"items":[]}')
+
+TARGET_ID=$(echo "$TARGETS" | jq -r '.items[]? | select(.name=="claude-ssh-injected") | .id' 2>/dev/null | head -1 || echo "")
+
+if [[ -n "$TARGET_ID" ]]; then
+    echo "✅ Target already exists: claude-ssh-injected ($TARGET_ID)"
+else
+    echo "Creating new target: claude-ssh-injected..."
+
+    # Create SSH target (required for credential injection)
+    # TCP targets only support brokered credentials, not injected
+    TARGET_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary targets create ssh \
+        -name="claude-ssh-injected" \
+        -description="SSH access to claude-code-sandbox with credential injection" \
+        -default-port=22 \
+        -scope-id="$PROJECT_ID" \
+        -recovery-config=/boundary/config/controller.hcl \
+        -format=json \
+        2>&1 || echo "{}")
+
+    TARGET_ID=$(echo "$TARGET_RESULT" | jq -r '.item.id // empty' 2>/dev/null || echo "")
+
+    if [[ -z "$TARGET_ID" ]]; then
+        echo "❌ Failed to create target"
+        echo ""
+        echo "Error output:"
+        echo "$TARGET_RESULT" | head -20
+        exit 1
+    fi
+
+    echo "✅ Created target: claude-ssh-injected ($TARGET_ID)"
+fi
+
+# Add host source to target (idempotent)
+echo "Adding host set to target..."
+kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary targets add-host-sources \
+    -id="$TARGET_ID" \
+    -host-source="$HOSTSET_ID" \
+    -recovery-config=/boundary/config/controller.hcl \
+    >/dev/null 2>&1 || echo "  (already added)"
+echo "✅ Host set attached to target"
+
+# Add SSH certificate credential library as injected credential source
+echo "Adding injected credential source to target..."
+
+# First check if credential is already attached
+TARGET_CHECK=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+    boundary targets read -id="$TARGET_ID" -recovery-config=/boundary/config/controller.hcl -format=json 2>/dev/null || echo "{}")
+
+EXISTING_INJECTED_CREDS=$(echo "$TARGET_CHECK" | jq -r '.item.injected_application_credential_source_ids // []' 2>/dev/null)
+
+if echo "$EXISTING_INJECTED_CREDS" | grep -q "$SSH_CERT_LIB_ID"; then
+    echo "✅ Injected credential already attached to target"
+else
+    # Add injected application credential source
+    ADD_RESULT=$(kubectl exec -n "$BOUNDARY_NAMESPACE" "$CONTROLLER_POD" -c boundary-controller -- \
+        boundary targets add-credential-sources \
+        -id="$TARGET_ID" \
+        -injected-application-credential-source="$SSH_CERT_LIB_ID" \
+        -recovery-config=/boundary/config/controller.hcl \
+        -format=json \
+        2>&1 || echo "{}")
+
+    if echo "$ADD_RESULT" | grep -q "already exists"; then
+        echo "✅ Injected credential already attached to target"
+    elif echo "$ADD_RESULT" | grep -q '"id"' || echo "$ADD_RESULT" | grep -q '"item"'; then
+        echo "✅ Injected credential source attached to target"
+    else
+        echo "⚠️  Result unclear when adding credential source:"
+        echo "$ADD_RESULT" | head -10
+    fi
+fi
+
+# ==========================================
 # Summary
 # ==========================================
 echo ""
 echo "=========================================="
-echo "  ✅ SSH Certificate Credential Library Ready"
+echo "  ✅ SSH Credential Injection Complete"
 echo "=========================================="
 echo ""
 echo "Components configured:"
 echo "  • Vault SSH Role:         devenv-access"
 echo "  • Vault Credential Store: $VAULT_STORE_ID"
 echo "  • SSH Cert Library:       $SSH_CERT_LIB_ID (vault-ssh-certificate)"
+echo "  • Host Catalog:           $CATALOG_ID (devenv-hosts)"
+echo "  • Host Set:               $HOSTSET_ID (claude-set)"
+echo "  • Target:                 $TARGET_ID (claude-ssh-injected)"
 echo ""
-echo "Next steps:"
-echo "  1. Create a new target using this credential library"
-echo "  2. Test SSH credential injection"
+echo "SSH Credential Injection:"
+echo "  When users connect to this target, Boundary will:"
+echo "  1. Request a signed SSH certificate from Vault"
+echo "  2. INJECT the certificate directly into the SSH connection"
+echo "  3. User never sees the credentials (Enterprise security)"
+echo ""
+echo "Usage:"
+echo "  # Authenticate to Boundary"
+echo "  export BOUNDARY_ADDR=https://boundary.hashicorp.lab"
+echo "  export BOUNDARY_TLS_INSECURE=true"
+echo "  boundary authenticate password -auth-method-id=ampw_ndMBrw5s8N -login-name=admin"
+echo ""
+echo "  # Connect with automatic credential injection"
+echo "  boundary connect ssh -target-id=$TARGET_ID"
+echo ""
+echo "  # Or use with exec for custom SSH options"
+echo "  boundary connect -target-id=$TARGET_ID -exec ssh -- -l node -p '{{boundary.port}}' '{{boundary.ip}}'"
 echo ""
