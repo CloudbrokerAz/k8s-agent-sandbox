@@ -1,0 +1,178 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs-filer
+  namespace: seaweedfs
+  labels:
+    app: seaweedfs
+    component: filer
+spec:
+  ports:
+  - name: filer
+    port: 8888
+    protocol: TCP
+    targetPort: 8888
+  - name: grpc
+    port: 18888
+    protocol: TCP
+    targetPort: 18888
+  - name: s3
+    port: 8333
+    protocol: TCP
+    targetPort: 8333
+  selector:
+    app: seaweedfs
+    component: filer
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs-filer
+  namespace: seaweedfs
+  labels:
+    app: seaweedfs
+    component: filer
+spec:
+  serviceName: seaweedfs-filer
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+      component: filer
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+        component: filer
+    spec:
+      containers:
+      - name: seaweedfs
+        image: chrislusf/seaweedfs:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - "/bin/sh"
+        - "-ec"
+        - |
+          exec /usr/bin/weed filer \
+            -master=seaweedfs-master-0.seaweedfs-master.seaweedfs.svc.cluster.local:9333 \
+            -port=8888 \
+            -ip=$(POD_NAME).seaweedfs-filer.seaweedfs.svc.cluster.local \
+            -defaultReplicaPlacement=000 \
+            -encryptVolumeData=false \
+            -dataCenter=dc1
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 8888
+          name: filer
+        - containerPort: 18888
+          name: grpc
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8888
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+      # S3 API Gateway - runs as sidecar
+      - name: s3
+        image: chrislusf/seaweedfs:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - "/bin/sh"
+        - "-ec"
+        - |
+          exec /usr/bin/weed s3 \
+            -filer=localhost:8888 \
+            -port=8333 \
+            -ip.bind=0.0.0.0 \
+            -domainName=seaweedfs-s3.seaweedfs.svc.cluster.local \
+            -config=/etc/seaweedfs/s3.json
+        ports:
+        - containerPort: 8333
+          name: s3
+        volumeMounts:
+        - name: s3-config
+          mountPath: /etc/seaweedfs
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          tcpSocket:
+            port: 8333
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          timeoutSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 8333
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+      volumes:
+      - name: s3-config
+        configMap:
+          name: seaweedfs-s3-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seaweedfs-s3-config
+  namespace: seaweedfs
+  labels:
+    app: seaweedfs
+    component: filer
+data:
+  s3.json: |
+    {
+      "identities": [
+        {
+          "name": "boundary",
+          "credentials": [
+            {
+              "accessKey": "boundary-access",
+              "secretKey": "boundary-secret-key-change-me"
+            }
+          ],
+          "actions": [
+            "Admin",
+            "Read",
+            "Write"
+          ]
+        }
+      ]
+    }

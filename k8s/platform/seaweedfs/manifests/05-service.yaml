@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs-s3
+  namespace: seaweedfs
+  labels:
+    app: seaweedfs
+    component: s3
+spec:
+  ports:
+  - name: s3
+    port: 8333
+    protocol: TCP
+    targetPort: 8333
+  selector:
+    app: seaweedfs
+    component: filer
+  type: ClusterIP
