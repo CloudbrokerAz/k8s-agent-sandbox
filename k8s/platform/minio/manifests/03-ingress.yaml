@@ -1,11 +1,10 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: seaweedfs-s3
-  namespace: seaweedfs
+  name: minio-api
+  namespace: minio
   labels:
-    app: seaweedfs
-    component: s3
+    app: minio
   annotations:
     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -21,23 +20,48 @@ metadata:
     nginx.ingress.kubernetes.io/upstream-keepalive-connections: "100"
     nginx.ingress.kubernetes.io/connection-proxy-header: "keep-alive"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    # Client timeouts for long uploads
-    nginx.ingress.kubernetes.io/client-body-timeout: "300"
-    nginx.ingress.kubernetes.io/client-header-timeout: "60"
 spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - seaweedfs-s3.hashicorp.lab
-      secretName: seaweedfs-s3-tls
+        - minio.hashicorp.lab
+      secretName: minio-tls
   rules:
-    - host: seaweedfs-s3.hashicorp.lab
+    - host: minio.hashicorp.lab
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: seaweedfs-s3
+                name: minio
                 port:
-                  number: 8333
+                  number: 9000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console
+  namespace: minio
+  labels:
+    app: minio
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - minio-console.hashicorp.lab
+      secretName: minio-console-tls
+  rules:
+    - host: minio-console.hashicorp.lab
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9001
