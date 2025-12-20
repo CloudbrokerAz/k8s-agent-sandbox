@@ -1572,6 +1572,59 @@ if [[ "$CONFIGURE_BOUNDARY_TARGETS" == "true" ]] && [[ "$DEPLOY_BOUNDARY" == "tr
         rm -f "$CONFIG_OUTPUT_FILE"
     fi
 
+    # Deploy MinIO for session recording storage (if targets configured successfully)
+    if [[ -z "$BOUNDARY_TARGETS_FAILED" ]]; then
+        echo ""
+        echo "=========================================="
+        echo "  Deploy MinIO for Session Recording"
+        echo "=========================================="
+        echo ""
+
+        # Configure BSR KMS first (required for session recording)
+        echo "Configuring BSR KMS for encryption..."
+        if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-bsr-kms.sh" ]]; then
+            if "$K8S_DIR/platform/boundary/scripts/configure-bsr-kms.sh"; then
+                echo "✅ BSR KMS configured"
+            else
+                echo "⚠️  Failed to configure BSR KMS (session recording will fail)"
+            fi
+        fi
+
+        if [[ -f "$K8S_DIR/platform/minio/scripts/deploy-minio.sh" ]]; then
+            echo ""
+            echo "Deploying MinIO S3-compatible storage..."
+            if "$K8S_DIR/platform/minio/scripts/deploy-minio.sh"; then
+                echo "✅ MinIO deployed successfully"
+
+                # Configure Boundary storage bucket
+                echo ""
+                echo "Configuring Boundary storage bucket..."
+                if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-storage-bucket.sh" ]]; then
+                    if "$K8S_DIR/platform/boundary/scripts/configure-storage-bucket.sh"; then
+                        echo "✅ Boundary storage bucket configured"
+
+                        # Enable session recording on claude-ssh-injected target
+                        echo ""
+                        echo "Enabling session recording on targets..."
+                        if [[ -f "$K8S_DIR/platform/boundary/scripts/configure-session-recording.sh" ]]; then
+                            if "$K8S_DIR/platform/boundary/scripts/configure-session-recording.sh"; then
+                                echo "✅ Session recording enabled"
+                            else
+                                echo "⚠️  Failed to enable session recording (non-critical)"
+                            fi
+                        fi
+                    else
+                        echo "⚠️  Failed to configure Boundary storage bucket (non-critical)"
+                    fi
+                fi
+            else
+                echo "⚠️  MinIO deployment failed (session recording disabled)"
+            fi
+        else
+            echo "⚠️  MinIO deployment script not found, skipping session recording setup"
+        fi
+    fi
+
     # Configure OIDC if Keycloak is deployed AND targets configuration succeeded
     # OIDC requires the DevOps organization that configure-targets.sh creates
     if [[ "$DEPLOY_KEYCLOAK" == "true" ]] && [[ -z "$BOUNDARY_TARGETS_FAILED" ]]; then
