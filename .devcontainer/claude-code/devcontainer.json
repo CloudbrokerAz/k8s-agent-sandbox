@@ -12,7 +12,7 @@
     "--privileged"
   ],
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2.13.0": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2.14.0": {}
   },
 
   "postCreateCommand": "bash /workspace/.devcontainer/claude-code/scripts/post-create.sh",
