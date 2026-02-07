@@ -21,16 +21,5 @@ export PATH="/usr/local/share/npm-global/bin:$PATH"
 export HISTFILE=/workspaces/.bash_history/.bash_history
 BASHRC
 
-# Pre-configure VS Code/code-server to disable workspace trust prompts
-mkdir -p /home/node/.local/share/code-server/Machine
-cat > /home/node/.local/share/code-server/Machine/settings.json << 'EOF'
-{
-    "security.workspace.trust.enabled": false,
-    "security.workspace.trust.startupPrompt": "never",
-    "security.workspace.trust.banner": "never"
-}
-EOF
-chown -R node:node /home/node/.local/share/code-server
-
-# Start code-server
-/usr/bin/code-server --auth=none --bind-addr=0.0.0.0:13337 /workspaces/repos
+# Keep container running (sshd is started by the devcontainer sshd feature)
+exec sleep infinity
