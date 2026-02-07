@@ -1163,7 +1163,7 @@ spec:
   backoffLimit: 1
 EOF
     echo "⏳ Initializing Boundary database..."
-    if ! kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=30s; then
+    if ! kubectl wait --for=condition=complete job/boundary-db-init -n boundary --timeout=120s; then
         echo "⚠️  Boundary database init job timed out or failed"
         echo "   Check job status: kubectl get job boundary-db-init -n boundary"
         echo "   Check logs: kubectl logs job/boundary-db-init -n boundary"
@@ -1242,7 +1242,7 @@ if [[ "$SKIP_VSO" != "true" ]]; then
         --namespace vault-secrets-operator-system \
         --set defaultVaultConnection.enabled=false \
         --set defaultAuthMethod.enabled=false \
-        --wait --timeout 2m
+        --wait --timeout 5m
 
     # Apply VSO custom resources in parallel
     {
